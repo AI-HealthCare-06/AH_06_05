@@ -52,3 +52,7 @@
 
 새 회차는 [`_TEMPLATE.md`](_TEMPLATE.md)를 복사해서 사용합니다.
 파일명: `NN_YYYY-MM-DD.md`
+
+## 질문 백로그
+
+당장 급하지 않아 이후 회차로 미룬 질문은 [BACKLOG.md](BACKLOG.md)에 모아둡니다.
