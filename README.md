@@ -112,6 +112,7 @@ OZ코딩스쿨 **AI 헬스케어 캠프 6기** 파이널 프로젝트 · **5팀*
 
 - [docs/TEAM.md](docs/TEAM.md) — 역할 분담 (R&R)
 - [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — 브랜치 · 커밋 · PR 규칙
+- [docs/mentoring/](docs/mentoring/) — 멘토링 기록 (사전 보고 · 피드백)
 
 ---
 
