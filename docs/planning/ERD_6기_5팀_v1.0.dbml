@@ -1,0 +1,469 @@
+// =====================================================================
+// 진료 기록 기반 복약 안내 및 생활습관 개선 가이드 자동 생성 시스템
+// AI 헬스케어 6기 · 5팀 · ERD v1.0
+//
+// 도구: https://dbdiagram.io  (좌측에 붙여넣으면 다이어그램 생성)
+// 기준: Figma 통합 와이어프레임(45개 화면) · API 명세서 v1.0 · 요구사항 정의서 v1.0
+//
+// [변경 이력]  ERD_6기_5팀_v1.0.xlsx '변경 이력' 탭에서 관리 (버전 요약 + 위치 · 현행(As-Is) · 개정(To-Be))
+//               테이블 · 컬럼을 바꾸면 이 dbml과 엑셀을 함께 고친다
+//
+// [표시]  🟡 = 담당자 확인 필요 (note에 누구 확인인지 적음)
+//
+// [설계 원칙]
+//  1. 외부 공공데이터는 "마스터"로 분리해 사전 적재 (요청 시 API 호출 안 함)
+//  2. DUR 규칙은 성분 단위로 정규화 (제품 87만행 → 성분 9.7만쌍)
+//  3. 민감정보는 최소 저장 (원본 이미지 미저장, 식별정보 마스킹)
+//  4. 조인 키: 심평원 제품코드(EDI) = 식약처 EDI_CODE
+//  5. 안전성 경고는 DB 조회 결과만 저장 (AI 생성 아님)
+// =====================================================================
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 1. 사용자 영역   화면 CM-01 ~ CM-07
+// ─────────────────────────────────────────────────────────────────────
+
+Table users {
+  id                 bigint       [pk, increment]
+  login_id           varchar(100) [unique, not null, note: '이메일']
+  password_hash      varchar(255) [not null]
+  nickname           varchar(50)  [note: '선택 입력. 홈 인사말용']
+  birth_year         smallint     [not null, note: '생년월일 대신 출생연도만 (최소 수집) · 노인주의 · 연령금기 판정']
+  sex                varchar(1)   [not null, note: 'M / F']
+  failed_login_count smallint     [default: 0, note: 'v1.0 · 5회 실패 시 잠금 (CM-01-E1)']
+  locked_until       timestamp    [note: 'v1.0 · 잠금 해제 시각 (CM-01-E2)']
+  created_at         timestamp    [default: `now()`]
+  updated_at         timestamp
+  deleted_at         timestamp    [note: '탈퇴 시 개인정보 파기 후 시각만 남김 (CM-07)']
+
+  Note: '성명 · 주민번호 · 연락처 미수집'
+}
+
+Table user_consents {
+  id           bigint      [pk, increment]
+  user_id      bigint      [ref: > users.id, not null]
+  consent_type varchar(30) [not null, note: 'terms / privacy / sensitive_health']
+  agreed       boolean     [not null]
+  agreed_at    timestamp
+  withdrawn_at timestamp   [note: '철회 시각. sensitive_health 철회 시 업로드 · 분석 불가 (🟡 기존 기록 처리 팀 결정)']
+
+  indexes { (user_id, consent_type) [unique] }
+  Note: 'v1.0 신규 · CM-02 가입 동의, CM-05 동의 내역'
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 2. 입력 영역 — 처방전 · 약봉투   화면 OC-01 ~ OC-02-E1
+// ─────────────────────────────────────────────────────────────────────
+
+Table prescriptions {
+  id             bigint      [pk, increment]
+  user_id        bigint      [ref: > users.id, not null]
+  doc_type       varchar(20) [not null, note: 'v1.0 · prescription(처방전) / pill_bag(약봉투). 약봉투는 질병코드 없음 → RG-05-E1']
+  issued_date    date        [note: '처방 교부일']
+  hospital_name  varchar(200)
+  ocr_raw_text   text        [note: 'OCR 원문 (원본 이미지는 저장하지 않음) · 암호화']
+  ocr_confidence decimal(5,4)
+  quality_flag   varchar(20) [note: 'v1.0 · ok / low (OC-01-E1에서 "그래도 계속 진행" 시)']
+  created_at     timestamp   [default: `now()`]
+
+  Note: '사진 1장 = 1행. 업로드된 원본 이미지는 OCR 처리 후 즉시 폐기'
+}
+
+Table prescription_diseases {
+  prescription_id bigint      [pk, ref: > prescriptions.id]
+  disease_code    varchar(10) [pk, ref: > diseases.code]
+  is_main         boolean     [note: '주상병 여부']
+
+  Note: 'v1.0 신규 · 처방전 질병분류기호는 주상병 + 부상병 여러 개'
+}
+
+Table prescription_items {
+  id              bigint        [pk, increment]
+  prescription_id bigint        [ref: > prescriptions.id, not null]
+  edi_code        varchar(9)    [ref: > drug_products.edi_code, note: '매칭 실패 · 제외 시 null']
+  raw_name        varchar(300)  [not null, note: 'OCR이 읽은 원문 약품명']
+  match_score     decimal(5,4)
+  match_status    varchar(20)   [not null, note: 'v1.0 · auto / needs_confirm / user_confirmed / unmatched / excluded(빼고 진행)']
+  dose_per_time   decimal(10,3)
+  times_per_day   smallint
+  total_days      smallint
+  timing          varchar(50)   [note: '아침 식후 등']
+
+  Note: 'needs_confirm · unmatched가 남아 있으면 분석 시작 불가 (REQ-033). 1일 총량 = dose_per_time * times_per_day'
+}
+
+Table prescription_item_candidates {
+  item_id   bigint       [pk, ref: > prescription_items.id]
+  rank      smallint     [pk]
+  edi_code  varchar(9)   [ref: > drug_products.edi_code]
+  score     decimal(5,4)
+
+  Note: 'v1.0 신규 🟡 채연 확인 · OC-02 후보 목록. 매칭 정확도(1순위 적중률 · 5순위 내 포함률) 측정에 필요'
+}
+
+Table health_checkups {
+  id           bigint [pk, increment]
+  user_id      bigint [ref: > users.id, not null]
+  checkup_date date
+  ocr_raw_text text
+  created_at   timestamp [default: `now()`]
+
+  Note: '보류 (REQ-015 · 멘토링 확인 후 결정)'
+}
+
+Table checkup_results {
+  id          bigint     [pk, increment]
+  checkup_id  bigint     [ref: > health_checkups.id, not null]
+  item_code   varchar(8) [ref: > checkup_items.code]
+  value_num   decimal(12,3)
+  value_text  varchar(200)
+
+  Note: '보류 (REQ-015)'
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 3. 분석 영역 — 비동기 처리   화면 RG-01 ~ RG-05-E1 · CM-04
+// ─────────────────────────────────────────────────────────────────────
+
+Table analyses {
+  id                     bigint      [pk, increment]
+  user_id                bigint      [ref: > users.id, not null]
+  status                 varchar(20) [not null, note: 'v1.0 · queued / running / done / failed']
+  current_step           varchar(30) [note: 'v1.0 · drug_info / safety_check / guide_generation (RG-01 진행 단계)']
+  failed_step            varchar(30) [note: 'v1.0 · 실패한 단계 (RG-01-E1)']
+  error_code             varchar(50) [note: 'GUIDE_GENERATION_FAILED / SAFETY_CHECK_FAILED / TIMEOUT']
+  retry_count            smallint    [default: 0, note: 'v1.0 · 3회 초과 시 재시도 막음 (REQ-055)']
+  user_birth_year        smallint    [note: '분석 시점 출생연도 스냅샷 — 정보 수정해도 지난 결과는 그대로 (CM-06)']
+  started_at             timestamp
+  finished_at            timestamp
+  created_at             timestamp   [default: `now()`]
+
+  Note: 'v1.0 · prescription_id 칸 삭제 → analysis_prescriptions로 1:N. job_id 대신 id로 폴링'
+}
+
+Table analysis_prescriptions {
+  analysis_id     bigint [pk, ref: > analyses.id]
+  prescription_id bigint [pk, ref: > prescriptions.id]
+
+  Note: 'v1.0 신규 · 여러 병원 처방전을 한 번에 점검 (최대 5장, REQ-013)'
+}
+
+Table analysis_diseases {
+  analysis_id  bigint      [pk, ref: > analyses.id]
+  disease_code varchar(10) [pk, ref: > diseases.code]
+  origin       varchar(20) [not null, note: 'prescription(처방전 코드) / user(RG-05-E1에서 직접 선택)']
+
+  Note: 'v1.0 신규 · 생활습관 가이드 조회 기준'
+}
+
+Table analysis_warnings {
+  id            bigint      [pk, increment]
+  analysis_id   bigint      [ref: > analyses.id, not null]
+  warning_type  varchar(30) [not null, note: 'interaction / duplicate_ingredient / duplicate_efficacy / elderly / age / pregnancy / dose_exceed / polypharmacy(v1.0 🟡)']
+  severity      varchar(10) [not null, note: 'danger / caution / info']
+  item_id_a     bigint      [ref: > prescription_items.id, note: 'v1.0 · 약 이름 대신 항목 참조 (처방 병원 표시용)']
+  item_id_b     bigint      [ref: > prescription_items.id, note: '상대 약 (병용금기 · 중복)']
+  reason        text        [note: 'DUR 금기 사유 원문']
+  summary       text        [note: 'v1.0 · 화면 표시 문장 (템플릿, AI 생성 아님 · NFR-032)']
+  source        varchar(100) [note: '식약처 고시명']
+  notice_date   date
+  daily_total   decimal(12,3) [note: '1일 최대용량 초과일 때만']
+  max_daily     decimal(12,3)
+
+  Note: 'DB 조회로 결정적으로 산출. 0건이면 RG-02-E1'
+}
+
+Table guides {
+  id           bigint      [pk, increment]
+  analysis_id  bigint      [ref: > analyses.id, not null]
+  section      varchar(30) [note: 'medication / lifestyle']
+  status       varchar(20) [note: 'v1.0 · done / failed (부분 결과 RG-01-E1 → RG-04 · RG-05 "만들지 못했어요")']
+  content      jsonb       [note: 'v1.0 · 항목 고정 JSON (약별 purpose · howToTake · caution · source) — 결과 일관성 NFR-030']
+  prompt_ver   varchar(20)
+  model_name   varchar(50)
+  tts_url      varchar(500) [note: '선택 구현 (REQ-100)']
+  created_at   timestamp   [default: `now()`]
+}
+
+Table feedbacks {
+  id          bigint   [pk, increment]
+  guide_id    bigint   [ref: > guides.id, not null]
+  user_id     bigint   [ref: > users.id, not null]
+  rating      smallint [note: '1 = 도움됐어요 / -1 = 도움 안 됐어요']
+  comment     text
+  created_at  timestamp [default: `now()`]
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 4. 챗봇 영역   화면 CB-01 ~ CB-05-E1
+// ─────────────────────────────────────────────────────────────────────
+
+Table chat_sessions {
+  id            bigint      [pk, increment]
+  user_id       bigint      [ref: > users.id, not null]
+  analysis_id   bigint      [ref: > analyses.id, note: 'null이면 일반 질문 모드 (분석 전)']
+  context_type  varchar(20) [note: 'v1.0 · warning / drug (CB-01-E2에서 무엇을 알고 시작했는지)']
+  context_ref   bigint      [note: 'v1.0 · analysis_warnings.id 또는 prescription_items.id']
+  title         varchar(100) [note: 'v1.0 🟡 수인 확인 · 대화 제목 자동 생성 · 수정 (CB-03)']
+  summary       text        [note: 'v1.0 🟡 수인 확인 · 오래된 대화 요약 (맥락 압축)']
+  created_at    timestamp   [default: `now()`]
+  updated_at    timestamp
+
+  Note: '날짜별 여러 대화 구조로 갈지 팀 확정 필요 (REQ-077)'
+}
+
+Table chat_messages {
+  id          bigint      [pk, increment]
+  session_id  bigint      [ref: > chat_sessions.id, not null]
+  role        varchar(10) [note: 'user / assistant']
+  content     text
+  answer_type varchar(20) [note: 'v1.0 · answered / refused_medical(의료진 상담 필요) / no_evidence(확인이 어렵습니다)']
+  sources     jsonb       [note: 'v1.0 · 답변 근거 출처']
+  created_at  timestamp   [default: `now()`]
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 4-1. 실천 · 보상 영역   화면 RW-01 ~ RW-06-E1   🟡 성규 확인
+//      데이터 흐름: Analysis → Recommendation → HabitGoal → HabitRecord → Reward
+// ─────────────────────────────────────────────────────────────────────
+
+Table recommendations {
+  id                 bigint      [pk, increment]
+  analysis_id        bigint      [ref: > analyses.id, not null]
+  guide_id           bigint      [ref: > lifestyle_guides.id, note: '질환 기준 추천일 때']
+  medication_link_id bigint      [ref: > lifestyle_medication_links.id, note: '약 기준 추천일 때']
+  title              varchar(100) [not null, note: '국물 남기기 등']
+  reason_label       varchar(50) [note: '고혈압 / 약과 함께 등 (화면 라벨)']
+  goal_type          varchar(20) [note: 'check / quantity']
+  target_value       decimal(10,2) [note: '수량형 목표 (예: 30)']
+  unit               varchar(20) [note: '분 등']
+  rank               smallint
+
+  Note: 'AI 추천만으로는 목표가 되지 않음 — 사용자가 골라야 habit_goals 생성 (REQ-110)'
+}
+
+Table habit_goals {
+  id                bigint      [pk, increment]
+  user_id           bigint      [ref: > users.id, not null]
+  recommendation_id bigint      [ref: > recommendations.id]
+  title             varchar(100) [not null]
+  goal_type         varchar(20) [not null, note: 'check / quantity']
+  target_value      decimal(10,2)
+  unit              varchar(20)
+  start_date        date        [not null]
+  end_date          date        [note: '주 단위 (REQ-116 재선택 흐름 🟡)']
+  status            varchar(20) [note: 'active / ended']
+  created_at        timestamp   [default: `now()`]
+
+  Note: '최대 3개 활성 (REQ-111)'
+}
+
+Table habit_records {
+  id          bigint    [pk, increment]
+  goal_id     bigint    [ref: > habit_goals.id, not null]
+  record_date date      [not null]
+  value       decimal(10,2) [note: '수량형 누적값']
+  completed   boolean   [not null, default: false]
+  created_at  timestamp [default: `now()`]
+
+  indexes { (goal_id, record_date) [unique, note: '같은 날 중복 완료 방지'] }
+}
+
+Table rewards {
+  id          bigint      [pk, increment]
+  user_id     bigint      [ref: > users.id, not null]
+  record_id   bigint      [ref: > habit_records.id, note: '목표 완료 보상일 때']
+  reward_type varchar(20) [not null, note: 'goal_done / all_done(하루 전체 완료 보너스)']
+  points      int         [not null]
+  reward_date date        [not null]
+  created_at  timestamp   [default: `now()`]
+
+  indexes { (user_id, reward_date, reward_type, record_id) [unique, note: '중복 지급 방지 (REQ-113)'] }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 5. 의약품 마스터  (식약처 허가정보 + 심평원 약제급여목록)
+// ─────────────────────────────────────────────────────────────────────
+
+Table drug_products {
+  edi_code      varchar(9)  [pk, note: '심평원 제품코드 = 식약처 EDI_CODE ← 조인 키']
+  item_seq      varchar(9)  [note: '식약처 품목기준코드']
+  item_name     varchar(300) [not null]
+  item_name_norm varchar(300) [note: '정규화된 이름 (괄호·규격 제거) — 매칭용 인덱스']
+  entp_name     varchar(200)
+  ingr_code     varchar(9)  [ref: > drug_ingredients.ingr_code, note: '심평원 주성분코드']
+  ingr_group    varchar(9)  [note: '주성분코드_동일제형 — 제형 무관 동일성분 그룹']
+  etc_otc       varchar(10) [note: '전문 / 일반']
+  class_code    varchar(10) [note: '약효분류']
+  spec_value    decimal(12,3) [note: '규격 (예: 5)']
+  spec_unit     varchar(30)   [note: '단위 (예: mg/정)']
+  price         int           [note: '급여 상한금액']
+  route         varchar(10)   [note: '내복 / 주사 / 외용']
+
+  Note: '약제급여목록 22,041품목 기준. 규격·단위는 복용 총량 계산에 사용'
+}
+
+Table drug_ingredients {
+  ingr_code  varchar(9)   [pk, note: '앞6=성분, 뒤3=제형 (ATB정제 ACH캡슐 BIJ주사)']
+  ingr_name  varchar(300) [note: '영문 성분명']
+  ingr_name_kr varchar(300)
+}
+
+Table drug_details {
+  edi_code    varchar(9) [pk, ref: - drug_products.edi_code]
+  efficacy    text [note: '효능효과 (식약처 EE_DOC_DATA 파싱)']
+  usage_dose  text [note: '용법용량 (UD_DOC_DATA)']
+  precautions text [note: '사용상의주의사항 (NB_DOC_DATA)']
+  storage     varchar(300) [note: '보관법']
+  chart       varchar(300) [note: '성상 — 낱알 식별에 활용 가능']
+  embedding_id varchar(100) [note: '벡터DB 문서 ID (RAG 검색용)']
+
+  Note: 'XML 파싱 시 <ARTICLE title="..."> 속성과 CDATA 양쪽에서 내용 추출 필요'
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 6. DUR 마스터  (심평원 m.db + CSV)
+//    ⭐ 성분 단위로 정규화. 벡터 검색이 아닌 관계형 조회
+// ─────────────────────────────────────────────────────────────────────
+
+Table dur_interaction {
+  ingr_code_a  varchar(9) [pk, note: '정렬 후 저장 (A<B) — 양방향 중복 제거']
+  ingr_code_b  varchar(9) [pk]
+  effective_from date
+  effective_to   date      [note: '99991231 = 현행']
+  reason       text        [note: '금기 사유 (DUR_SD_EFT)']
+  notice_date  date        [note: '고시일자']
+  notice_no    varchar(10)
+
+  Note: 'm.db TBJBD43 기준 성분쌍 97,326건 (제품 단위 CSV 873,147행을 정규화)'
+}
+
+Table dur_interaction_exception {
+  ingr_code_a varchar(9) [pk]
+  ingr_code_b varchar(9) [pk]
+  edi_code    varchar(9) [pk, note: '이 제품은 금기에서 제외']
+
+  Note: 'm.db TBJBD46. CSV에는 없는 데이터 — 없으면 오탐 발생'
+}
+
+Table dur_elderly {
+  ingr_code   varchar(9) [pk]
+  min_age     smallint   [note: '통상 65']
+  reason      text
+  notice_date date
+
+  Note: 'm.db TBDUC230 + 노인주의 CSV. 고령 타겟의 핵심'
+}
+
+Table dur_age_limit {
+  ingr_code    varchar(9) [pk]
+  age_value    smallint
+  age_unit     varchar(10) [note: '세 / 개월']
+  age_condition varchar(10) [note: '미만 / 이하 / 이상']
+  reason       text
+  notice_date  date
+}
+
+Table dur_pregnancy {
+  ingr_code   varchar(9) [pk]
+  grade       varchar(2) [note: '금기등급']
+  reason      text
+  notice_date date
+}
+
+Table dur_dose_limit {
+  ingr_code       varchar(9) [pk]
+  max_daily_qty   decimal(12,3) [note: '1일 최대 투여 기준량']
+  max_daily_text  varchar(100)
+  max_period_days smallint      [note: '최대 투여기간']
+
+  Note: 'm.db TBDUC200/202. prescription_items의 1일 총량과 비교해 과용량 검출'
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 7. 중복 점검 마스터
+// ─────────────────────────────────────────────────────────────────────
+
+Table dup_ingredient {
+  edi_code     varchar(9) [pk, ref: > drug_products.edi_code]
+  dur_ingr_seq smallint   [pk, note: '복합제는 성분 1~4개']
+  dur_ingr_code varchar(10) [not null, note: 'DH##### 형식']
+  dur_ingr_name varchar(300)
+
+  Note: '동일성분 중복점검 29,051품목. dur_ingr_code가 같으면 동일 성분'
+}
+
+Table dup_efficacy {
+  edi_code       varchar(9) [pk, ref: > drug_products.edi_code]
+  efficacy_group varchar(50) [note: '혈압강하작용의약품 (B) 등 9개']
+  check_code     varchar(10) [not null, note: '효능군중복점검코드 — 같으면 중복']
+  gnl_name       varchar(300)
+
+  Note: '효능군중복 11,718품목 / 점검코드 278개'
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 8. 질병 · 건강검진 · 생활습관 마스터
+// ─────────────────────────────────────────────────────────────────────
+
+Table diseases {
+  code         varchar(10) [pk, note: '상병기호 (KCD)']
+  name_kr      varchar(300) [not null]
+  name_en      varchar(500)
+  is_complete  boolean [note: '완전코드 여부']
+  main_usable  boolean [note: '주상병 사용 가능 여부']
+  sex_limit    varchar(1)
+  age_min      smallint
+  age_max      smallint
+
+  Note: '심평원 상병마스터 47,798건'
+}
+
+Table checkup_items {
+  code       varchar(8)  [pk, note: '건강검진검사항목코드']
+  name       varchar(200) [not null]
+  type_code  varchar(1)  [note: 'A=일반건강검진 1차']
+  sub_code   varchar(4)
+
+  Note: '공단 건강검진검사항목코드 1,953건'
+}
+
+Table lifestyle_guides {
+  id           bigint      [pk, increment]
+  disease_id   varchar(10) [note: '대표 상병기호 또는 질환 그룹 ID']
+  category     varchar(50) [not null, note: '나트륨 / 체중 / 운동 / 절주 / 금연 등']
+  goal         varchar(300) [note: '1일 나트륨 2000mg 이하 등']
+  actions      text        [note: '실천 방법 (JSON 배열)']
+  source       varchar(300) [note: '근거 출처']
+
+  Note: '자체 구축 팩트 테이블. 원문 인용이 아닌 사실·수치 기반 (저작권 제약 회피)'
+}
+
+Table lifestyle_medication_links {
+  id         bigint [pk, increment]
+  guide_id   bigint [ref: > lifestyle_guides.id]
+  drug_class varchar(200) [note: '이뇨제 / 와파린 / 스타틴 등']
+  caution    text
+  advice     text
+
+  Note: '⭐ 차별점 — 복용 약물과 생활수칙을 연결. 약 정보만으로도, 질환 정보만으로도 안 나오는 안내'
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// 인덱스 메모 (구현 시)
+//   drug_products(item_name_norm)   — 약품명 매칭
+//   drug_products(ingr_code)        — 성분 조회
+//   dur_interaction(ingr_code_a, ingr_code_b) — 복합 PK, 조합 조회
+//   dup_ingredient(dur_ingr_code)   — 동일성분 그룹 조회
+//   dup_efficacy(check_code)        — 효능군 중복 조회
+//   analyses(job_id)                — 폴링 조회
+// ─────────────────────────────────────────────────────────────────────
