@@ -1,6 +1,6 @@
-# API 명세서 v1.0
+# API 명세서 v1.1
 
-**5팀 · 2026. 9. 24 · 작성 이형준(PM)**
+**5팀 · 2026. 9. 28 · 작성 이형준(PM)**
 
 ## 변경 이력
 
@@ -12,6 +12,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v0.1 | 2026-09-23 | 최초 작성 — 30개 API (공통화면 · 피처2 RAG 와이어프레임, ERD v0.1 기준) | 이형준 |
 | v0.2 | 2026-09-23 | 화면 번호를 통합표 기준(CM · OC · RG · CB · RW)으로 변경 | 이형준 |
 | v1.0 | 2026-09-24 | 통합 와이어프레임(45개 화면) · ERD v1.0 반영 — 실천 · 보상 API 교체, 챗봇 2개 추가, OCR · 챗봇 응답 보완 | 이형준 |
+| v1.1 | 2026-09-28 | 리뷰 반영 — OCR 업로드 202 + 작업 조회(O-5) 추가, 생활습관 출처를 실천 항목별로, 칼륨 등 "의료진 확인" 표시, 파기 범위 제안, R-4 다제약물 반영 | 이형준 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -52,9 +53,30 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 </details>
 
+<details>
+<summary><b>v1.1</b> · 2026-09-28 · 리뷰 반영 — 세부 13건</summary>
+
+| 위치 | 현행 (As-Is) | 개정 (To-Be) |
+|---|---|---|
+| 머리말 / 작성 기준 | 요구사항 정의서 v1.0 · ERD v1.0 기준 | 요구사항 정의서 v1.3 · ERD v1.2 기준 |
+| 1. 전체 목록 / O-1 | `POST /prescriptions` 처방전 · 약봉투 업로드 + OCR | `POST /prescriptions` 처방전 · 약봉투 업로드 → OCR 작업 시작 (`202`) |
+| 1. 전체 목록 / O-5 — 신규 | (없음) | `GET /ocr-jobs/{jobId}` OCR 작업 상태 (폴링) · OC-01 → OC-02 [채연 확인 필요] |
+| 3. OCR / O-1 응답 | **`201`** `{ "prescriptionIds": [101, 102] }` — "OCR이 수 초 걸리면 R-1처럼 비동기로 바꾸는 것 검토" | **`202`** `{ "jobId": 9001, "status": "queued" }` → O-5로 결과 조회<br>사유: OCR 처리 시간이 NFR-001(P95 3초)과 충돌할 수 있어 측정 전에 비동기로 준비 [채연 확인 필요] |
+| 3. OCR / O-1 에러 코드 | `400` 파일 형식 · 크기 · 장수 / `422` `IMAGE_QUALITY_LOW` · `NOT_A_DOCUMENT` · `OCR_FAILED` (모두 O-1 응답) | `400`은 그대로 O-1에서 바로 응답. `IMAGE_QUALITY_LOW` · `NOT_A_DOCUMENT` · `OCR_FAILED`는 O-5 결과의 `failedFiles[].code`로 이동 |
+| 4. RAG / R-4 `checkedItems` | `interaction` · `duplicate` · `elderly_age` · `dose_exceed` (4개) — v1.0 이력에만 polypharmacy 추가가 적혀 있고 본문엔 없었음 | 위 4개 + `polypharmacy` "여러 약 함께 복용" (REQ-049) |
+| 4. RAG / R-4 `lifestyle.sections[].actions` | 문자열 배열 `["국물은 남기고, 하루 소금 5g 이하로", …]` | 객체 배열 `[{ "text": "…", "sourceId": 31 }]` — 실천 항목마다 출처 ID |
+| 4. RAG / R-4 `lifestyle.source` | `"source": "질병관리청 · 관련 학회 지침의 권고 수치를 정리"` (문자열 1개) | 삭제 → `lifestyle.sources[]` `{ id, org, title, edition, publishedAt, url }` 목록<br>사유: 기관 · 문서명 · 발행일 · URL이 있어야 검증 · 갱신 가능 (리뷰 지적 5) |
+| 4. RAG / R-4 `lifestyle.medicationLinks[]` | `{ itemName, advice }` | `{ itemName, advice, requiresClinician, sourceId }` — `requiresClinician: true`면 "의료진 확인" 라벨로만 표시하고 실천 목표로 만들지 않음 (예: 이뇨제 · ACE억제제/ARB와 칼륨)<br>사유: 칼륨 권고는 신장 기능 · 병용 약에 따라 위험 (리뷰 지적 3) |
+| 2. 회원 / U-3 탈퇴 | "처방 정보 · 분석 결과 · 안내문 · 챗봇 대화 · 실천 기록을 즉시 삭제" (한 줄) | 삭제 대상 표로 정리 (포인트 · 피드백 · 동의 기록 포함) [팀 확인 필요] |
+| 2. 회원 / U-5 동의 철회 | "**기존 분석 기록을 지울지는 팀 결정 필요.**" | 제안: 처방전 · 분석 · 안내문 · 피드백 · 챗봇 대화 삭제, 실천 목표는 종료하고 기록 · 포인트는 남김 (질환 라벨은 지움) [팀 확인 필요] |
+| 4. RAG / R-8 기록 삭제 | "**이 분석으로 만든 실천 목표 · 포인트를 남길지는 성규님과 결정 필요**" | 제안: 이 분석에만 쓰인 처방전까지 삭제. 이미 만든 실천 목표 · 기록 · 포인트는 남기고 추천 연결만 끊음 [성규 확인 필요] |
+| 8. 남은 결정 사항 | OCR 동기 / 비동기 · 삭제 시 실천 기록 · 동의 철회 시 기록 처리 (미정) 등 8개 | OCR은 비동기로 준비(측정 후 확정) · 삭제 · 철회는 제안안 확인으로 변경, MVP 범위 · RW-01 삭제 · RW-03~05 통합 3개 추가 (11개) |
+
+</details>
+
 ---
 
-> Figma 통합 와이어프레임(45개 화면) · 요구사항 정의서 v1.0 · ERD v1.0 기준입니다.
+> Figma 통합 와이어프레임(45개 화면) · 요구사항 정의서 v1.3 · ERD v1.2 기준입니다.
 > 화면 번호는 [화면 번호 통합표](screen_id_table.md) 기준입니다 (CM 공통 · OC OCR · RG RAG · CB 챗봇 · RW 실천·보상).
 > 피처 1 · 3 · 4 항목(🟡)은 담당자가 확정하면 변경 이력에 기록하고 상태를 ✅로 바꿔 주세요.
 >
@@ -119,10 +141,11 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | U-3 | DELETE | `/users/me` | 회원 탈퇴 | CM-07 | 공통 | ✅ |
 | U-4 | GET | `/users/me/consents` | 동의 내역 조회 | CM-05 | 공통 | ✅ |
 | U-5 | DELETE | `/users/me/consents/{type}` | 동의 철회 | CM-05 | 공통 | 🟡 철회 정책 미정 |
-| O-1 | POST | `/prescriptions` | 처방전 · 약봉투 업로드 + OCR | OC-01 | 채연님 | 🟡 |
+| O-1 | POST | `/prescriptions` | 처방전 · 약봉투 업로드 → OCR 작업 시작 (`202`) | OC-01 | 채연님 | 🟡 |
 | O-2 | GET | `/prescriptions/{id}` | 인식 결과 조회 | OC-02 | 채연님 | 🟡 |
 | O-3 | PATCH | `/prescriptions/{id}/items/{itemId}` | 인식 결과 수정 · 후보 선택 | OC-02 | 채연님 | 🟡 |
 | O-4 | GET | `/drugs/search` | 약 이름 검색 (직접 입력용) | OC-02 | 채연님 | 🟡 |
+| O-5 | GET | `/ocr-jobs/{jobId}` | OCR 작업 상태 (폴링) | OC-01 → OC-02 · OC-01-E1 · OC-01-E3 · OC-02-E1 | 채연님 | 🟡 |
 | R-1 | POST | `/analyses` | 분석 시작 | OC-02 → RG-01 | 형준 | ✅ |
 | R-2 | GET | `/analyses/{id}/status` | 분석 진행 상태 (폴링) | RG-01 · RG-01-E1 | 형준 | ✅ |
 | R-3 | POST | `/analyses/{id}/retry` | 실패한 분석 다시 시도 | RG-01-E1 | 형준 | ✅ |
@@ -281,7 +304,11 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 { "confirmed": true }
 ```
 
-응답 `204` · 처방 정보 · 분석 결과 · 안내문 · 챗봇 대화 · 실천 기록을 **즉시 삭제**, 사용자 행은 개인정보를 지운 뒤 `deleted_at`만 남김
+응답 `204` · 아래 데이터를 **즉시 삭제**하고, 사용자 행은 개인정보를 지운 뒤 `deleted_at`만 남김 🟡 팀 확인
+
+| 삭제 | 남김 |
+|---|---|
+| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 · 실천 목표 · 실천 기록 · 포인트 · 동의 기록 | `users` 행의 `id` · `deleted_at` (탈퇴 처리 확인용) |
 
 | HTTP | code | 설명 |
 |---|---|---|
@@ -307,7 +334,12 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 ### U-5. 동의 철회 `DELETE /users/me/consents/{type}` 🟡
 
 `type = sensitiveHealth`만 철회 가능. 철회하면 업로드 · 분석 API가 `403 CONSENT_REQUIRED`.
-**기존 분석 기록을 지울지는 팀 결정 필요.**
+
+**제안 — 철회 시 파기 범위** 🟡 팀 확인 (REQ-007)
+
+| 삭제 | 남김 |
+|---|---|
+| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 (건강 정보가 들어 있을 수 있음) | 실천 목표(`status = ended`로 종료, `reason_label` 질환 라벨은 지움) · 실천 기록 · 포인트 · 동의 기록(철회 시각 포함) |
 
 ---
 
@@ -320,17 +352,40 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 `multipart/form-data` · `files[]` **최대 5장** (OC-01에서 이어서 찍은 사진을 한 번에) · 1장 10MB 이하 · JPG / PNG / PDF (REQ-010~014)
 사진마다 품질 검사를 하고, 한 장이라도 문제가 있으면 해당 사진 번호를 `detail.fileIndex`로 알려줌
 
-**응답 `201`** — OCR이 수 초 걸리면 R-1처럼 비동기로 바꾸는 것 검토
+**응답 `202`** — 파일 검사만 바로 하고, OCR은 작업으로 돌린 뒤 O-5로 결과를 조회 (NFR-001 · NFR-002) 🟡 채연 확인
 ```json
-{ "prescriptionIds": [101, 102] }
+{ "jobId": 9001, "status": "queued" }
 ```
 
 | HTTP | code | 화면 |
 |---|---|---|
-| 400 | `FILE_TOO_LARGE` · `FILE_TYPE_NOT_SUPPORTED` · `TOO_MANY_FILES` | OC-01 업로드 실패 안내 |
-| 422 | `IMAGE_QUALITY_LOW` | OC-01-E1 "다시 찍어 주세요" |
-| 422 | `NOT_A_DOCUMENT` | OC-01-E3 "문서를 찾지 못했어요" |
-| 422 | `OCR_FAILED` | OC-02-E1 재촬영 + 직접 입력 경로 |
+| 400 | `FILE_TOO_LARGE` · `FILE_TYPE_NOT_SUPPORTED` · `TOO_MANY_FILES` | OC-01 업로드 실패 안내 (바로 응답) |
+
+사진 품질 · 문서 여부 · 인식 실패는 O-5 결과의 `failedFiles[].code`로 알려줌
+
+### O-5. OCR 작업 상태 `GET /ocr-jobs/{jobId}` 🟡
+
+화면 OC-01 → OC-02 · 요구사항 REQ-013 · NFR-002 — 1초 간격 폴링 (R-2와 같은 방식)
+
+**응답 `200`**
+```json
+{
+  "jobId": 9001,
+  "status": "done",
+  "prescriptionIds": [101, 102],
+  "failedFiles": [
+    { "fileIndex": 2, "code": "IMAGE_QUALITY_LOW" }
+  ]
+}
+```
+
+| `status` · `failedFiles[].code` | 화면 |
+|---|---|
+| `queued` · `running` | OC-01 "읽는 중" |
+| `done` + `failedFiles` 비어 있음 | OC-02 |
+| `IMAGE_QUALITY_LOW` | OC-01-E1 "다시 찍어 주세요" (해당 사진 번호 표시) |
+| `NOT_A_DOCUMENT` | OC-01-E3 "문서를 찾지 못했어요" |
+| `failed` · `OCR_FAILED` | OC-02-E1 재촬영 + 직접 입력 경로 |
 
 ### O-2. 인식 결과 조회 `GET /prescriptions/{id}`
 
@@ -503,7 +558,8 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
     { "type": "interaction", "label": "함께 먹으면 안 되는 약", "state": "checked" },
     { "type": "duplicate", "label": "같은 성분 · 같은 효과 중복", "state": "checked" },
     { "type": "elderly_age", "label": "어르신 주의 · 나이 금기", "state": "checked" },
-    { "type": "dose_exceed", "label": "하루 최대량 초과", "state": "checked" }
+    { "type": "dose_exceed", "label": "하루 최대량 초과", "state": "checked" },
+    { "type": "polypharmacy", "label": "여러 약 함께 복용", "state": "checked" }
   ],
 
   "medication": {
@@ -529,17 +585,25 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
       { "code": "I10", "name": "고혈압", "origin": "prescription" }
     ],
     "medicationLinks": [
-      { "itemName": "다이아벡스정", "advice": "술은 되도록 피하세요" }
+      { "itemName": "다이아벡스정", "advice": "술은 되도록 피하세요", "requiresClinician": false, "sourceId": 32 },
+      { "itemName": "히드로클로로티아지드정", "advice": "칼륨을 더 먹을지는 혈액검사를 보고 의료진이 정해요", "requiresClinician": true, "sourceId": 33 }
     ],
     "sections": [
       {
         "diseaseCode": "I10",
         "title": "고혈압",
-        "actions": ["국물은 남기고, 하루 소금 5g 이하로", "빠르게 걷기 하루 30분, 주 5일 이상"],
+        "actions": [
+          { "text": "국물은 남기고, 하루 소금 5g 이하로", "sourceId": 31 },
+          { "text": "빠르게 걷기 하루 30분, 주 5일 이상", "sourceId": 31 }
+        ],
         "conflict": null
       }
     ],
-    "source": "질병관리청 · 관련 학회 지침의 권고 수치를 정리"
+    "sources": [
+      { "id": 31, "org": "대한고혈압학회", "title": "고혈압 진료지침", "edition": "YYYY", "publishedAt": "YYYY-MM-DD", "url": "https://…" },
+      { "id": 32, "org": "…", "title": "…", "edition": null, "publishedAt": null, "url": "…" },
+      { "id": 33, "org": "…", "title": "…", "edition": null, "publishedAt": null, "url": "…" }
+    ]
   },
 
   "disclaimer": "의학적 진단 · 처방이 아닌 참고용 안내예요"
@@ -560,6 +624,8 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | `lifestyle.diseases[].origin` | `prescription`(처방전 코드) / `user`(RG-05-E1에서 직접 선택) | RG-05 |
 | `lifestyle.diseases` 빈 배열 | 질병분류기호 없음 (약봉투 등) → **RG-05-E1** | RG-05-E1 |
 | `lifestyle.sections[].conflict` | 질환끼리 권고가 부딪힐 때 `{ "message": "...", "label": "의료진 상담 필요" }` (REQ-062) | RG-05 |
+| `lifestyle.sections[].actions[].sourceId` · `lifestyle.sources[]` | 실천 항목마다 근거 출처 — 기관 · 문서명 · 판 · 발행일 · URL (REQ-060). 예시 값은 형식만 보여주는 자리표시 | RG-05 출처 |
+| `lifestyle.medicationLinks[].requiresClinician` | `true`면 "의료진 확인" 라벨로만 표시하고 실천 목표(P-1 추천)로 만들지 않음 (REQ-061) | RG-05 |
 
 | HTTP | code | 설명 |
 |---|---|---|
@@ -653,7 +719,10 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 화면 CM-04-E1 · 요구사항 REQ-081 · 응답 `204`
 
 분석 결과 · 경고 · 안내문 · 피드백 · 연결된 챗봇 대화 삭제.
-**이 분석으로 만든 실천 목표 · 포인트를 남길지는 성규님과 결정 필요** 🟡
+
+**제안 — 실천 목표 처리** 🟡 성규 확인 (REQ-081)
+- 이 분석에만 쓰인 처방전 · 처방 약도 같이 삭제 (다른 분석에도 쓰였으면 남김)
+- 이미 만든 실천 목표 · 기록 · 포인트는 남기고, 추천(`recommendations`) 연결만 끊음 — 사용자가 한 실천은 사용자 몫
 
 ---
 
@@ -786,7 +855,7 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 
 ---
 
-## 7. ERD 반영 사항 — ✅ ERD v1.0에 반영 완료
+## 7. ERD 반영 사항 — ✅ 1~9 ERD v1.0 · 10~11 ERD v1.2에 반영 완료
 
 | # | 내용 | 이유 | 관련 API |
 |---|---|---|---|
@@ -799,16 +868,21 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 | 7 | `prescriptions.doc_type` 추가 (`prescription` / `pill_bag`) | 약봉투는 질병코드가 없어 RG-05-E1로 분기 | O-2 · R-4 |
 | 8 | `prescription_items.match_status`에 `needs_confirm`, `excluded` 추가 | 확인 전 분석 시작 막기 · 점검 제외 약 표시 | O-3 · R-1 |
 | 9 | 실천 · 보상 테이블 4개 (`recommendations` · `habit_goals` · `habit_records` · `rewards`) | 피처 4 데이터 흐름 (🟡 성규 확인) | P-1~6 |
+| 10 | `ocr_jobs` 신규 · `prescriptions.ocr_job_id` · `file_index` (ERD v1.2) | OCR 비동기 | O-1 · O-5 |
+| 11 | `lifestyle_guide_sources` · `lifestyle_guide_actions` 신규, `lifestyle_medication_links.requires_clinician` · `goal_eligible` (ERD v1.2) | 실천 항목별 출처 · 칼륨 등 의료진 확인 | R-4 · P-1 |
 
 ---
 
 ## 8. 남은 결정 사항
 
 - [ ] 토큰 만료 시간 · 재발급(refresh) 도입 여부 — 고령 사용자라 자주 로그아웃되면 불편
-- [ ] OCR(O-1)을 동기로 둘지, 분석처럼 비동기로 둘지 — CLOVA OCR 응답 시간 측정 후 (9/30 키 제공)
+- [x] OCR(O-1) 동기 / 비동기 → v1.1에서 **비동기(202 + O-5)로 준비**. CLOVA OCR 응답 시간 측정(9/30 키 제공) 후 확정 🟡 채연
 - [ ] 챗봇 응답을 SSE로 할지
-- [ ] 기록 삭제 시 실천 기록 처리 (R-8)
+- [ ] 기록 삭제 시 실천 기록 처리 (R-8) — 제안안 확인 🟡 성규
 - [ ] 챗봇을 날짜별 여러 대화로 갈지 (H-4 · H-5 구현 여부)
 - [ ] 한 주가 끝난 뒤 목표 다시 고르기 흐름 (P-2)
-- [ ] 동의 철회 시 기존 기록 처리 (U-5)
+- [ ] 동의 철회 시 기존 기록 처리 (U-5) — 제안안 확인 🟡 팀
+- [ ] MVP 범위 확정 — 요구사항 정의서 v1.3 "MVP (제안)" 칸 (9/29 스프린트 회의)
+- [ ] RW-01 삭제 → RG-05 [실천 시작하기]에서 RW-02로 바로 연결할지 (P-1 화면이 RG-05만 남음) 🟡 성규
+- [ ] RW-03 · RW-04 · RW-05를 한 화면의 상태(미실천 · 일부 완료 · 전체 완료)로 합칠지 🟡 성규
 - [ ] 백엔드 프레임워크가 정해지면 자동 문서화(Swagger / OpenAPI)로 옮길지 — FastAPI · Spring 모두 지원
