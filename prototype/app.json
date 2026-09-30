@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "5팀 복약 안내 (프로토타입)",
+    "slug": "team5-prototype",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "처방전 사진을 고르려면 사진 접근이 필요해요.",
+          "cameraPermission": "처방전을 찍으려면 카메라가 필요해요."
+        }
+      ]
+    ]
+  }
+}
