@@ -1,6 +1,7 @@
 # ===== 환경변수 / 시크릿 (절대 커밋 금지) =====
 .env
 .env.*
+.*.env
 !.env.example
 *.pem
 *.key
@@ -33,7 +34,10 @@ ENV/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
+*.coverage
 htmlcov/
+wheels/
 celerybeat-schedule
 
 # ===== Node / Frontend =====
@@ -58,7 +62,11 @@ chroma/
 *.faiss
 *.index
 .cache/
-models/
+# AI 모델 파일 (app/models/는 DB 테이블 코드라 커밋해야 함)
+ai_worker/models/
+*.pt
+*.pth
+*.onnx
 
 # ===== Docker =====
 docker-compose.override.yml
