@@ -15,23 +15,17 @@ dependencies = [
 ]
 
 [dependency-groups]
-ai = [
-    "scikit-learn>=1.8.0",
-    "torch",
-    "torchvision",
-    "torchaudio",
-    "sentence-transformers>=5.2.0"
-]
+ai = []
 app = [
     "aerich>=0.9.2",
-    "asyncmy>=0.2.11",
+    "asyncpg>=0.30.0",
     "bcrypt<=4.0.1",
     "fastapi[standard]>=0.128.0",
     "httpx>=0.28.1",
     "orjson>=3.11.5",
     "passlib[bcrypt]>=1.7.4",
     "pyjwt>=2.10.1",
-    "tortoise-orm>=0.25.3",
+    "tortoise-orm>=0.25.3,<1.0.0",  # 1.x부터 generate_config가 tortoise 최상위 export에서 빠짐 (conftest.py 호환 안 됨)
     "uvicorn>=0.40.0",
 ]
 dev = [
@@ -42,16 +36,6 @@ dev = [
     "types-passlib>=1.7.7.20250602",
     "types-python-dateutil>=2.9.0.20260124",
 ]
-
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cpu" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 [tool.aerich]
 tortoise_orm = "app.core.db.databases.TORTOISE_ORM"

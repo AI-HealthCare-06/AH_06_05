@@ -44,13 +44,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     services:
-      mysql:
-        image: mysql:8.0
+      postgres:
+        image: postgres:16
         env:
-          MYSQL_ROOT_PASSWORD: pw1234
-          MYSQL_DATABASE: ai_health
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: pw1234
+          POSTGRES_DB: ai_health
         ports:
-          - 3306:3306
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -80,6 +86,8 @@ jobs:
 
       - name: Run Tests with Coverage
         if: steps.check_tests.outputs.has_tests == 'true'
+        env:
+          PGDATABASE: postgres  # DB 생성 전 접속용 기본 DB (없으면 유저명과 같은 DB를 찾다가 실패함)
         run: |
           uv run coverage run -m pytest app
           uv run coverage report -m
