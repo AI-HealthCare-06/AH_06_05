@@ -13,6 +13,13 @@ service-account*.json
 # 실제 진료기록·처방전 등은 커밋하지 않습니다
 data/raw/
 data/private/
+
+# 인수인계·참고자료 (git 추적 제외)
+00_인수인계_리뷰.md
+02_참고문서/
+03_기획산출물/
+04_프로토타입/
+*.patch
 uploads/
 *.dcm
 
