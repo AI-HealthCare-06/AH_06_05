@@ -12,8 +12,7 @@ TORTOISE_APP_MODELS = [
 TORTOISE_ORM = {
     "connections": {
         "default": {
-            "engine": "tortoise.backends.mysql",
-            "dialect": "asyncmy",
+            "engine": "tortoise.backends.asyncpg",
             "credentials": {
                 "host": config.DB_HOST,
                 "port": config.DB_PORT,
