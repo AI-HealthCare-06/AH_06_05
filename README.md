@@ -73,21 +73,22 @@ OZ코딩스쿨 **AI 헬스케어 캠프 6기** 파이널 프로젝트 · **5팀*
 
 ---
 
-## 기술 스택 *(초안 — 협의 및 멘토링 검증 후 확정)*
+## 기술 스택 *(10/2 확정)*
 
-| 구분 | 후보 |
+| 구분 | 사용 |
 |---|---|
-| Backend | FastAPI, Celery, Redis |
-| Frontend | *미정* |
-| DB | *미정* + 벡터 DB (ChromaDB 등) |
-| AI | OpenAI API, LangChain, CLOVA OCR |
-| Infra | AWS EC2, Docker / Docker Compose |
+| Backend | FastAPI, Tortoise ORM |
+| 비동기 작업 | Redis + arq (10/2 메모리 측정: arq 워커 약 31MB, Celery 약 49MB) |
+| Frontend | Expo (React Native) — `frontend/` 폴더 |
+| DB | PostgreSQL 16 + pgvector |
+| AI | OpenAI API (LangChain 없이 직접 호출), CLOVA OCR |
+| Infra | AWS EC2 t3.small (2GB) 1대 · Docker / Docker Compose · nginx — 이미지는 로컬에서 빌드해 Docker Hub에 올리고, 서버는 받기만 함 |
 
 캠프 제공 모델 제약
 - 개발 기간: `gpt-4o-mini` / `text-embedding-3-small`
 - 배포 기간: `gpt-4o` / `text-embedding-3-large`
 
-> API 키는 09/30 제공 예정
+> API 키는 `envs/.local.env`에만 넣고 커밋하지 않습니다.
 
 ---
 
