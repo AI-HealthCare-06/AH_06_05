@@ -24,7 +24,7 @@ app = [
     "orjson>=3.11.5",
     "passlib[bcrypt]>=1.7.4",
     "pyjwt>=2.10.1",
-    "tortoise-orm>=0.25.3",
+    "tortoise-orm>=0.25.3,<1.0.0",  # 1.x부터 generate_config가 tortoise 최상위 export에서 빠짐 (conftest.py 호환 안 됨)
     "uvicorn>=0.40.0",
 ]
 dev = [
