@@ -12,15 +12,14 @@ TORTOISE_APP_MODELS = [
 TORTOISE_ORM = {
     "connections": {
         "default": {
-            "engine": "tortoise.backends.mysql",
-            "dialect": "asyncmy",
+            "engine": "tortoise.backends.asyncpg",
             "credentials": {
                 "host": config.DB_HOST,
                 "port": config.DB_PORT,
                 "user": config.DB_USER,
                 "password": config.DB_PASSWORD,
                 "database": config.DB_NAME,
-                "connect_timeout": config.DB_CONNECT_TIMEOUT,
+                "timeout": config.DB_CONNECT_TIMEOUT,
                 "maxsize": config.DB_CONNECTION_POOL_MAXSIZE,
             },
         },
