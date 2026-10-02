@@ -86,6 +86,8 @@ jobs:
 
       - name: Run Tests with Coverage
         if: steps.check_tests.outputs.has_tests == 'true'
+        env:
+          PGDATABASE: postgres  # DB 생성 전 접속용 기본 DB (없으면 유저명과 같은 DB를 찾다가 실패함)
         run: |
           uv run coverage run -m pytest app
           uv run coverage report -m
