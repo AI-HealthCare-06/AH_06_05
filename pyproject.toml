@@ -5,6 +5,7 @@ description = "AI 헬스케어 파이널 프로젝트 예시용"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "arq==0.25.0",  # 0.26+ 부터 redis<6 제약이 생겨 redis>=7.1.0과 충돌함
     "cryptography>=46.0.3",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
