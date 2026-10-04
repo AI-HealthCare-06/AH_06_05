@@ -15,4 +15,4 @@ RUN uv sync --group ai --no-dev --frozen
 COPY ./ai_worker ./
 
 # 5. arq 워커 실행 (WorkerSettings는 main.py에 정의)
-CMD ["uv", "run", "arq", "main.WorkerSettings"]
+CMD ["uv", "run", "--no-sync", "arq", "main.WorkerSettings"]
