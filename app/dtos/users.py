@@ -1,40 +1,40 @@
-from datetime import date, datetime
+"""내 정보 (API U-1 · U-2) — JSON은 camelCase"""
+
+from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import ConfigDict, Field
 
-from app.core.validators import optional_after_validator, validate_birthday, validate_phone_number
-from app.dtos.base import BaseSerializerModel
-from app.models.users import Gender
-
-
-class UserUpdateRequest(BaseModel):
-    name: Annotated[str | None, Field(None, min_length=2, max_length=20)]
-    email: Annotated[
-        EmailStr | None,
-        Field(None, max_length=40),
-    ]
-    phone_number: Annotated[
-        str | None,
-        Field(None, description="Available Format: +8201011112222, 01011112222, 010-1111-2222"),
-        optional_after_validator(validate_phone_number),
-    ]
-    birthday: Annotated[
-        date | None,
-        Field(None, description="Date Format: YYYY-MM-DD"),
-        optional_after_validator(validate_birthday),
-    ]
-    gender: Annotated[
-        Gender | None,
-        Field(None, description="'MALE' or 'FEMALE'"),
-    ]
+from app.core.validators import optional_after_validator, validate_birth_year
+from app.dtos.base import CamelModel
+from app.models.users import Sex, User
 
 
-class UserInfoResponse(BaseSerializerModel):
+class UserUpdateRequest(CamelModel):
+    """바꿀 칸만 보냄. email 등 없는 칸을 보내면 VALIDATION_ERROR (U-2)"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nickname: Annotated[str | None, Field(None, max_length=50)]
+    birth_year: Annotated[int | None, Field(None), optional_after_validator(validate_birth_year)]
+    sex: Sex | None = None
+
+
+class UserInfoResponse(CamelModel):
     id: int
-    name: str
     email: str
-    phone_number: str
-    birthday: date
-    gender: Gender
+    nickname: str | None
+    birth_year: int
+    sex: Sex
     created_at: datetime
+
+    @classmethod
+    def from_user(cls, user: User) -> "UserInfoResponse":
+        return cls(
+            id=user.id,
+            email=user.login_id,
+            nickname=user.nickname,
+            birth_year=user.birth_year,
+            sex=user.sex,
+            created_at=user.created_at,
+        )

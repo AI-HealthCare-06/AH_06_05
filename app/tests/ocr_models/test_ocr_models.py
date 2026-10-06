@@ -1,5 +1,3 @@
-from datetime import date
-
 from tortoise.contrib.test import TestCase
 from tortoise.exceptions import IntegrityError
 
@@ -14,18 +12,11 @@ from app.models.ocr import (
     PrescriptionItem,
     PrescriptionItemCandidate,
 )
-from app.models.users import Gender, User
+from app.models.users import Sex, User
 
 
 async def make_user(email: str) -> User:
-    return await User.create(
-        email=email,
-        hashed_password="x",
-        name="테스터",
-        gender=Gender.FEMALE,
-        birthday=date(1950, 1, 1),
-        phone_number="01000000000",
-    )
+    return await User.create(login_id=email, password_hash="x", birth_year=1950, sex=Sex.F)
 
 
 async def make_prescription(user: User) -> Prescription:

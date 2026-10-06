@@ -7,86 +7,90 @@ from tortoise.contrib.test import TestCase
 
 from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.main import app
+from app.models.users import User
+from app.tests.helpers import PASSWORD, signup
 
 
 class TestLoginAPI(TestCase):
     async def test_login_success(self):
-        # 먼저 사용자 등록
-        signup_data = {
-            "email": "login_test@example.com",
-            "password": "Password123!",
-            "name": "로그인테스터",
-            "gender": "FEMALE",
-            "birth_date": "1995-05-05",
-            "phone_number": "01011112222",
-        }
-        login_data = {"email": "login_test@example.com", "password": "Password123!"}
-
+        """A-2: 출입증 · 재발급권(본문) · 내 정보, 재발급권 쿠키도 같이"""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup(client, "login@example.com")
+            response = await client.post(
+                "/api/v1/auth/login", json={"email": "login@example.com", "password": PASSWORD}
+            )
 
-            # 로그인 시도
-            response = await client.post("/api/v1/auth/login", json=login_data)
         assert response.status_code == status.HTTP_200_OK
-        assert "access_token" in response.json()
-        # 쿠키 검증 대신 응답 헤더 확인
-        assert any("refresh_token" in header for header in response.headers.get_list("set-cookie"))
+        body = response.json()
+        assert set(body) == {"accessToken", "refreshToken", "user"}
+        assert body["user"]["nickname"] == "홍길동"
+        assert AccessToken(body["accessToken"]).payload["type"] == "access"
+        assert RefreshToken(body["refreshToken"]).payload["type"] == "refresh"
+        assert any(h.startswith("refresh_token=") for h in response.headers.get_list("set-cookie"))
 
-    async def test_login_invalid_credentials(self):
-        login_data = {"email": "nonexistent@example.com", "password": "WrongPassword123!"}
+    async def test_login_unknown_email_and_wrong_password_same_error(self):
+        """이메일이 없을 때와 비밀번호가 틀렸을 때 같은 코드 · 문구"""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/v1/auth/login", json=login_data)
+            await signup(client, "same@example.com")
+            unknown = await client.post("/api/v1/auth/login", json={"email": "none@example.com", "password": PASSWORD})
+            wrong = await client.post("/api/v1/auth/login", json={"email": "same@example.com", "password": "wrong123"})
 
-        # AuthService.authenticate 에서 실패 시 HTTP_400_BAD_REQUEST 발생
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        for response in (unknown, wrong):
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
+            assert response.json()["error"]["code"] == "AUTH_INVALID_CREDENTIALS"
+            assert response.json()["error"]["message"] == "이메일 또는 비밀번호가 맞지 않아요."
+        assert wrong.json()["error"]["detail"] == {"remainingAttempts": 4}
 
-    async def test_login_refresh_token_lifetime(self):
-        """재발급 토큰과 쿠키 만료가 설정값(14일)과 비슷해야 한다 (55년 · 57년으로 나오던 버그 방지)"""
-        signup_data = {
-            "email": "lifetime_test@example.com",
-            "password": "Password123!",
-            "name": "만료테스터",
-            "gender": "FEMALE",
-            "birth_date": "1995-05-05",
-            "phone_number": "01033334444",
-        }
-        login_data = {"email": "lifetime_test@example.com", "password": "Password123!"}
-
+    async def test_login_locked_after_five_failures(self):
+        """CM-01-E1 남은 횟수 → 5번째에 CM-01-E2 잠금 (맞는 비밀번호도 10분 동안 거부)"""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
-            response = await client.post("/api/v1/auth/login", json=login_data)
+            await signup(client, "lock@example.com")
+            remaining = []
+            for _ in range(4):
+                r = await client.post("/api/v1/auth/login", json={"email": "lock@example.com", "password": "wrong123"})
+                remaining.append(r.json()["error"]["detail"]["remainingAttempts"])
+            fifth = await client.post("/api/v1/auth/login", json={"email": "lock@example.com", "password": "wrong123"})
+            right = await client.post("/api/v1/auth/login", json={"email": "lock@example.com", "password": PASSWORD})
 
+        assert remaining == [4, 3, 2, 1]
+        for response in (fifth, right):
+            assert response.status_code == status.HTTP_423_LOCKED
+            error = response.json()["error"]
+            assert error["code"] == "AUTH_LOCKED"
+            assert error["detail"]["lockedUntil"].endswith("+09:00")
+
+    async def test_login_unlocks_after_lock_time(self):
+        """잠금 시각이 지나면 다시 로그인되고, 틀린 횟수는 0부터 다시 셈"""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await signup(client, "unlock@example.com")
+            for _ in range(5):
+                await client.post("/api/v1/auth/login", json={"email": "unlock@example.com", "password": "wrong123"})
+            user = await User.get(login_id="unlock@example.com")
+            user.locked_until = user.locked_until.replace(year=2000)  # 잠금이 이미 지난 것처럼
+            await user.save(update_fields=["locked_until"])
+
+            wrong = await client.post(
+                "/api/v1/auth/login", json={"email": "unlock@example.com", "password": "wrong123"}
+            )
+            right = await client.post("/api/v1/auth/login", json={"email": "unlock@example.com", "password": PASSWORD})
+
+        assert wrong.json()["error"]["detail"] == {"remainingAttempts": 4}
+        assert right.status_code == status.HTTP_200_OK
+        user = await User.get(login_id="unlock@example.com")
+        assert user.failed_login_count == 0 and user.locked_until is None
+
+    async def test_login_token_lifetimes(self):
+        """출입증 60분 · 재발급권 14일 · 쿠키 14일 (PR #45 버그 3개 다시 생기지 않게)"""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await signup(client, "lifetime@example.com")
+            response = await client.post(
+                "/api/v1/auth/login", json={"email": "lifetime@example.com", "password": PASSWORD}
+            )
+
+        body = response.json()
         cookie = next(h for h in response.headers.get_list("set-cookie") if h.startswith("refresh_token="))
-        parts = [part.strip() for part in cookie.split(";")]
-        token_value = parts[0].split("=", 1)[1]
-        expires = next(part.split("=", 1)[1] for part in parts if part.lower().startswith("expires="))
-
+        expires = next(p.split("=", 1)[1] for p in cookie.split("; ") if p.lower().startswith("expires="))
         day = 24 * 60 * 60
-        token_left = RefreshToken(token_value).payload["exp"] - time.time()
-        cookie_left = parsedate_to_datetime(expires).timestamp() - time.time()
-
-        # 14일 설정, 앞뒤로 하루씩 여유 (시간대 계산 오차 허용)
-        assert 13 * day < token_left < 15 * day, f"재발급 토큰 만료까지 {token_left / day:.1f}일"
-        assert 13 * day < cookie_left < 15 * day, f"재발급 쿠키 만료까지 {cookie_left / day:.1f}일"
-
-    async def test_login_access_token_lifetime(self):
-        """출입증(access) 토큰 만료가 설정값(60분)과 비슷해야 한다 (한국 시각을 UTC로 읽어 600분으로 나오던 버그 방지)"""
-        signup_data = {
-            "email": "access_lifetime_test@example.com",
-            "password": "Password123!",
-            "name": "출입증테스터",
-            "gender": "FEMALE",
-            "birth_date": "1995-05-05",
-            "phone_number": "01055556666",
-        }
-        login_data = {"email": "access_lifetime_test@example.com", "password": "Password123!"}
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
-            response = await client.post("/api/v1/auth/login", json=login_data)
-
-        access_token = response.json()["access_token"]
-        minutes_left = (AccessToken(access_token).payload["exp"] - time.time()) / 60
-
-        # 60분 설정, 앞뒤로 5분씩 여유
-        assert 55 < minutes_left < 65, f"출입증 토큰 만료까지 {minutes_left:.1f}분"
+        assert 55 * 60 < AccessToken(body["accessToken"]).payload["exp"] - time.time() < 65 * 60
+        assert 13 * day < RefreshToken(body["refreshToken"]).payload["exp"] - time.time() < 15 * day
+        assert 13 * day < parsedate_to_datetime(expires).timestamp() - time.time() < 15 * day
