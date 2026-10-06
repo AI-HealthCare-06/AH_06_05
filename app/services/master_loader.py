@@ -71,7 +71,7 @@ def parse_drug_row(r: tuple) -> dict | None:
 
 
 def read_drug_list(path: Path) -> list[dict]:
-    import openpyxl  # 로컬에서 넣을 때만 필요: uv run --with openpyxl ...
+    import openpyxl  # type: ignore[import-untyped]  # 로컬에서 넣을 때만 필요: uv run --with openpyxl ...
 
     ws = openpyxl.load_workbook(path, read_only=True).worksheets[0]
     rows = ws.iter_rows(values_only=True)

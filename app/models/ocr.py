@@ -4,8 +4,13 @@
 """
 
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from tortoise import fields, models
+
+if TYPE_CHECKING:
+    from app.models.masters import Disease, DrugProduct
+    from app.models.users import User
 
 
 class OcrJobStatus(StrEnum):
@@ -37,7 +42,9 @@ class OcrJob(models.Model):
     """O-1 업로드 = 작업 1개 (사진 최대 5장). O-5로 상태 조회"""
 
     id = fields.BigIntField(primary_key=True)
-    user = fields.ForeignKeyField("models.User", related_name="ocr_jobs", on_delete=fields.CASCADE)
+    user: fields.ForeignKeyRelation["User"] = fields.ForeignKeyField(
+        "models.User", related_name="ocr_jobs", on_delete=fields.CASCADE
+    )
     status = fields.CharEnumField(enum_type=OcrJobStatus, max_length=20, default=OcrJobStatus.QUEUED)
     file_count = fields.SmallIntField(description="한 번에 올린 사진 수 (최대 5)")
     error_code = fields.CharField(max_length=50, null=True, description="전체 실패 시 OCR_FAILED 등")
@@ -50,8 +57,10 @@ class OcrJob(models.Model):
 
 class Prescription(models.Model):
     id = fields.BigIntField(primary_key=True)
-    user = fields.ForeignKeyField("models.User", related_name="prescriptions", on_delete=fields.CASCADE)
-    ocr_job = fields.ForeignKeyField(
+    user: fields.ForeignKeyRelation["User"] = fields.ForeignKeyField(
+        "models.User", related_name="prescriptions", on_delete=fields.CASCADE
+    )
+    ocr_job: fields.ForeignKeyNullableRelation[OcrJob] = fields.ForeignKeyField(
         "models.OcrJob", related_name="prescriptions", null=True, on_delete=fields.SET_NULL
     )
     file_index = fields.SmallIntField(null=True, description="작업 안에서 몇 번째 사진인지")
@@ -71,9 +80,11 @@ class PrescriptionDisease(models.Model):
     """처방전 질병분류기호 (주상병 + 부상병 여러 개). ERD 복합 PK → id + unique"""
 
     id = fields.BigIntField(primary_key=True)
-    prescription = fields.ForeignKeyField("models.Prescription", related_name="diseases", on_delete=fields.CASCADE)
+    prescription: fields.ForeignKeyRelation["Prescription"] = fields.ForeignKeyField(
+        "models.Prescription", related_name="diseases", on_delete=fields.CASCADE
+    )
     # 칸 이름은 disease_id (값은 상병기호). source_field로 바꾸면 unique_together가 깨짐 (Tortoise 0.25)
-    disease = fields.ForeignKeyField(
+    disease: fields.ForeignKeyRelation["Disease"] = fields.ForeignKeyField(
         "models.Disease", related_name="prescriptions", to_field="code", on_delete=fields.RESTRICT
     )
     is_main = fields.BooleanField(default=False, description="주상병 여부")
@@ -87,8 +98,10 @@ class PrescriptionItem(models.Model):
     """처방 약 1줄. needs_confirm · unmatched가 남으면 분석 시작 불가 (REQ-033)"""
 
     id = fields.BigIntField(primary_key=True)
-    prescription = fields.ForeignKeyField("models.Prescription", related_name="items", on_delete=fields.CASCADE)
-    drug = fields.ForeignKeyField(
+    prescription: fields.ForeignKeyRelation["Prescription"] = fields.ForeignKeyField(
+        "models.Prescription", related_name="items", on_delete=fields.CASCADE
+    )
+    drug: fields.ForeignKeyNullableRelation["DrugProduct"] = fields.ForeignKeyField(
         "models.DrugProduct",
         related_name="prescription_items",
         to_field="edi_code",
@@ -113,9 +126,11 @@ class PrescriptionItemCandidate(models.Model):
     """OC-02 후보 목록 (1순위 적중률 · 5순위 내 포함률 측정용). ERD 복합 PK → id + unique"""
 
     id = fields.BigIntField(primary_key=True)
-    item = fields.ForeignKeyField("models.PrescriptionItem", related_name="candidates", on_delete=fields.CASCADE)
+    item: fields.ForeignKeyRelation["PrescriptionItem"] = fields.ForeignKeyField(
+        "models.PrescriptionItem", related_name="candidates", on_delete=fields.CASCADE
+    )
     rank = fields.SmallIntField()
-    drug = fields.ForeignKeyField(
+    drug: fields.ForeignKeyRelation["DrugProduct"] = fields.ForeignKeyField(
         "models.DrugProduct",
         related_name="candidate_items",
         to_field="edi_code",

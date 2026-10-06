@@ -116,12 +116,12 @@ COMMENT ON TABLE "prescription_item_candidates" IS 'OC-02 후보 목록 (1순위
 
 async def downgrade(db: BaseDBAsyncClient) -> str:
     return """
+        DROP TABLE IF EXISTS "prescription_item_candidates";
+        DROP TABLE IF EXISTS "prescription_items";
+        DROP TABLE IF EXISTS "prescription_diseases";
+        DROP TABLE IF EXISTS "prescriptions";
         DROP TABLE IF EXISTS "ocr_jobs";
         DROP TABLE IF EXISTS "drug_products";
-        DROP TABLE IF EXISTS "prescriptions";
-        DROP TABLE IF EXISTS "prescription_items";
-        DROP TABLE IF EXISTS "prescription_item_candidates";
-        DROP TABLE IF EXISTS "prescription_diseases";
         DROP TABLE IF EXISTS "diseases";"""
 
 
