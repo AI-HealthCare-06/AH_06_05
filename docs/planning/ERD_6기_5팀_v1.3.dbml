@@ -1,11 +1,12 @@
 // =====================================================================
 // 진료 기록 기반 복약 안내 및 생활습관 개선 가이드 자동 생성 시스템
-// AI 헬스케어 6기 · 5팀 · ERD v1.2
+// AI 헬스케어 6기 · 5팀 · ERD v1.3
 //
 // 도구: https://dbdiagram.io  (좌측에 붙여넣으면 다이어그램 생성)
-// 기준: Figma 통합 와이어프레임(45개 화면) · API 명세서 v1.1 · 요구사항 정의서 v1.3
+// 기준: Figma 통합 와이어프레임(53개 화면) · API 명세서 v1.3 · 요구사항 정의서 v1.5
+// DB: PostgreSQL 16 + pgvector (10/2 확정)
 //
-// [변경 이력]  ERD_6기_5팀_v1.2.xlsx '변경 이력' 탭에서 관리 (버전 요약 + 위치 · 현행(As-Is) · 개정(To-Be))
+// [변경 이력]  ERD_6기_5팀_v1.3.xlsx '변경 이력' 탭에서 관리 (버전 요약 + 위치 · 현행(As-Is) · 개정(To-Be))
 //               테이블 · 컬럼을 바꾸면 이 dbml과 엑셀을 함께 고친다
 //
 // [표시]  🟡 = 담당자 확인 필요 (note에 누구 확인인지 적음)
@@ -14,7 +15,7 @@
 //  1. 외부 공공데이터는 "마스터"로 분리해 사전 적재 (요청 시 API 호출 안 함)
 //  2. DUR 규칙은 성분 단위로 정규화 (제품 87만행 → 성분 9.7만쌍)
 //  3. 민감정보는 최소 저장 (원본 이미지 미저장, 식별정보 마스킹)
-//  4. 조인 키: 심평원 제품코드(EDI) = 식약처 EDI_CODE
+//  4. 조인 키: 허가정보는 식약처 품목기준코드(item_seq) 기준. 급여목록 약은 EDI 제품코드로 찾고, 허가정보와는 drug_products.item_seq로 이음
 //  5. 안전성 경고는 DB 조회 결과만 저장 (AI 생성 아님)
 // =====================================================================
 
@@ -74,7 +75,7 @@ Table prescriptions {
   ocr_job_id     bigint      [ref: > ocr_jobs.id, note: 'v1.2 · 어느 업로드 작업에서 나온 사진인지']
   file_index     smallint    [note: 'v1.2 · 작업 안에서 몇 번째 사진인지 (실패 사진 안내용)']
   doc_type       varchar(20) [not null, note: 'v1.0 · prescription(처방전) / pill_bag(약봉투). 약봉투는 질병코드 없음 → RG-05-E1']
-  issued_date    date        [note: '처방 교부일']
+  issued_date    date        [note: '처방 교부일 (약봉투는 조제일) — 약봉투에는 교부일이 없고, 조제일이 약을 받은 날']
   hospital_name  varchar(200)
   ocr_raw_text   text        [note: 'OCR 원문 (원본 이미지는 저장하지 않음) · 암호화']
   ocr_confidence decimal(5,4)
@@ -85,9 +86,14 @@ Table prescriptions {
 }
 
 Table prescription_diseases {
-  prescription_id bigint      [pk, ref: > prescriptions.id]
-  disease_code    varchar(10) [pk, ref: > diseases.code]
+  id              bigint      [pk, increment, note: 'v1.3 · 코드 맞춤 (Tortoise는 복합 PK 미지원)']
+  prescription_id bigint      [ref: > prescriptions.id, not null]
+  disease_id      varchar(10) [ref: > diseases.code, not null, note: 'v1.3 · 값은 상병기호 (예: I10)']
   is_main         boolean     [note: '주상병 여부']
+
+  indexes {
+    (prescription_id, disease_id) [unique]
+  }
 
   Note: 'v1.0 신규 · 처방전 질병분류기호는 주상병 + 부상병 여러 개'
 }
@@ -95,7 +101,8 @@ Table prescription_diseases {
 Table prescription_items {
   id              bigint        [pk, increment]
   prescription_id bigint        [ref: > prescriptions.id, not null]
-  edi_code        varchar(9)    [ref: > drug_products.edi_code, note: '매칭 실패 · 제외 시 null']
+  edi_code        varchar(9)    [ref: > drug_products.edi_code, note: '매칭 실패 · 제외 · 급여목록에 없는 약이면 null']
+  item_seq        varchar(9)    [ref: > drug_details.item_seq, note: 'v1.3 · 급여목록에 없는 약(일반약 등)만 채움 — 있는 약은 edi_code로 약 정보까지 이어짐']
   raw_name        varchar(300)  [not null, note: 'OCR이 읽은 원문 약품명']
   match_score     decimal(5,4)
   match_status    varchar(20)   [not null, note: 'v1.0 · auto / needs_confirm / user_confirmed / unmatched / excluded(빼고 진행)']
@@ -104,16 +111,22 @@ Table prescription_items {
   total_days      smallint
   timing          varchar(50)   [note: '아침 식후 등']
 
-  Note: 'needs_confirm · unmatched가 남아 있으면 분석 시작 불가 (REQ-033). 1일 총량 = dose_per_time * times_per_day'
+  Note: 'needs_confirm · unmatched가 남아 있으면 분석 시작 불가 (REQ-033). 1일 총량 = dose_per_time * times_per_day. 약이 정해졌으면(auto · user_confirmed) edi_code · item_seq 중 하나는 있음'
 }
 
 Table prescription_item_candidates {
-  item_id   bigint       [pk, ref: > prescription_items.id]
-  rank      smallint     [pk]
-  edi_code  varchar(9)   [ref: > drug_products.edi_code]
+  id        bigint       [pk, increment, note: 'v1.3 · 코드 맞춤 (Tortoise는 복합 PK 미지원)']
+  item_id   bigint       [ref: > prescription_items.id, not null]
+  rank      smallint     [not null]
+  edi_code  varchar(9)   [ref: > drug_products.edi_code, note: '급여목록에 있는 약']
+  item_seq  varchar(9)   [ref: > drug_details.item_seq, note: 'v1.3 · 급여목록에 없는 약']
   score     decimal(5,4)
 
-  Note: 'v1.0 신규 🟡 채연 확인 · OC-02 후보 목록. 매칭 정확도(1순위 적중률 · 5순위 내 포함률) 측정에 필요'
+  indexes {
+    (item_id, rank) [unique]
+  }
+
+  Note: 'v1.0 신규 🟡 채연 확인 · OC-02 후보 목록. 매칭 정확도(1순위 적중률 · 5순위 내 포함률) 측정에 필요. 후보는 항상 약 하나를 가리킴 — edi_code · item_seq 중 하나는 꼭 있음'
 }
 
 Table health_checkups {
@@ -225,8 +238,13 @@ Table chat_sessions {
   summary       text        [note: 'v1.0 🟡 수인 확인 · 오래된 대화 요약 (맥락 압축)']
   created_at    timestamp   [default: `now()`]
   updated_at    timestamp
+  client_request_id varchar(64) [note: 'v1.3 · 앱이 만든 요청 번호 — H-1을 다시 보내도 대화를 새로 만들지 않음']
 
-  Note: '날짜별 여러 대화 구조로 갈지 팀 확정 필요 (REQ-077)'
+  indexes {
+    (user_id, client_request_id) [unique]
+  }
+
+  Note: '날짜별 여러 대화 구조 (PR #3 10/2 답변으로 확정). 1단계는 하루 한 대화로 쓰고, 분석 결과에서 들어오면 맥락 카드를 붙임 (H-7)'
 }
 
 Table chat_messages {
@@ -234,9 +252,15 @@ Table chat_messages {
   session_id  bigint      [ref: > chat_sessions.id, not null]
   role        varchar(10) [note: 'user / assistant']
   content     text
-  answer_type varchar(20) [note: 'v1.0 · answered / refused_medical(의료진 상담 필요) / no_evidence(확인이 어렵습니다)']
-  sources     jsonb       [note: 'v1.0 · 답변 근거 출처']
+  answer_type varchar(20) [note: 'v1.3 · normal / clarify / partial / no_evidence / refer / emergency / crisis (error는 프론트 전용, 저장 안 함)']
+  sources     jsonb       [note: 'v1.3 · 답변 근거 출처 [{ title, basedOn }]']
+  client_request_id varchar(64) [note: 'v1.3 · 다시 시도 때 같은 질문을 두 번 저장하지 않음']
+  context_card jsonb      [note: 'v1.3 · 1단계 맥락 카드 { analysisId, context } (H-7)']
   created_at  timestamp   [default: `now()`]
+
+  indexes {
+    (session_id, client_request_id) [unique]
+  }
 }
 
 
@@ -264,7 +288,7 @@ Table recommendations {
 Table habit_goals {
   id                bigint      [pk, increment]
   user_id           bigint      [ref: > users.id, not null]
-  recommendation_id bigint      [ref: > recommendations.id]
+  recommendation_id bigint      [note: 'v1.3 · 추천(분석)이 지워지면 비움 (ON DELETE SET NULL, 아래 Ref) — 목표 · 기록 · 포인트는 남김 (기록 삭제 · 동의 철회)']
   title             varchar(100) [not null]
   goal_type         varchar(20) [not null, note: 'check / quantity']
   target_value      decimal(10,2)
@@ -276,6 +300,8 @@ Table habit_goals {
 
   Note: '최대 3개 활성 (REQ-111)'
 }
+
+Ref: habit_goals.recommendation_id > recommendations.id [delete: set null]
 
 Table habit_records {
   id          bigint    [pk, increment]
@@ -291,13 +317,13 @@ Table habit_records {
 Table rewards {
   id          bigint      [pk, increment]
   user_id     bigint      [ref: > users.id, not null]
-  record_id   bigint      [ref: > habit_records.id, note: '목표 완료 보상일 때']
+  record_id   bigint      [ref: > habit_records.id, note: '목표 완료 보상일 때 (all_done은 비움)']
   reward_type varchar(20) [not null, note: 'goal_done / all_done(하루 전체 완료 보너스)']
   points      int         [not null]
   reward_date date        [not null]
   created_at  timestamp   [default: `now()`]
 
-  indexes { (user_id, reward_date, reward_type, record_id) [unique, note: '중복 지급 방지 (REQ-113)'] }
+  indexes { (user_id, reward_date, reward_type, record_id) [unique, note: '중복 지급 방지 (REQ-113). v1.3 · NULLS NOT DISTINCT — record_id가 빈 all_done도 하루 1번만 (PostgreSQL 15+, Tortoise로 안 만들어져 마이그레이션에 SQL 직접)'] }
 }
 
 
@@ -306,8 +332,8 @@ Table rewards {
 // ─────────────────────────────────────────────────────────────────────
 
 Table drug_products {
-  edi_code      varchar(9)  [pk, note: '심평원 제품코드 = 식약처 EDI_CODE ← 조인 키']
-  item_seq      varchar(9)  [note: '식약처 품목기준코드']
+  edi_code      varchar(9)  [pk, note: '심평원 제품코드 = 식약처 EDI_CODE (허가정보를 넣을 때 item_seq를 채우는 열쇠)']
+  item_seq      varchar(9)  [ref: > drug_details.item_seq, note: '식약처 품목기준코드 — 허가정보와 잇는 칸. 한 허가 품목에 EDI 제품이 여러 개일 수 있음']
   item_name     varchar(300) [not null]
   item_name_norm varchar(300) [note: '정규화된 이름 (괄호·규격 제거) — 매칭용 인덱스']
   entp_name     varchar(200)
@@ -315,12 +341,12 @@ Table drug_products {
   ingr_group    varchar(9)  [note: '주성분코드_동일제형 — 제형 무관 동일성분 그룹']
   etc_otc       varchar(10) [note: '전문 / 일반']
   class_code    varchar(10) [note: '약효분류']
-  spec_value    decimal(12,3) [note: '규격 (예: 5)']
-  spec_unit     varchar(30)   [note: '단위 (예: mg/정)']
+  spec_value    decimal(12,3) [note: 'v1.3 · 포장 규격 숫자 (예: 1) — 성분 함량 아님']
+  spec_unit     varchar(30)   [note: 'v1.3 · 포장 단위 (예: 정, mL/병)']
   price         int           [note: '급여 상한금액']
   route         varchar(10)   [note: '내복 / 주사 / 외용']
 
-  Note: '약제급여목록 22,041품목 기준. 규격·단위는 복용 총량 계산에 사용'
+  Note: '약제급여목록 22,045품목 (2026.9.1.). 복용 총량 계산에는 제품명의 함량(예: "_(3.39mg/1정)")을 씀'
 }
 
 Table drug_ingredients {
@@ -330,7 +356,11 @@ Table drug_ingredients {
 }
 
 Table drug_details {
-  edi_code    varchar(9) [pk, ref: - drug_products.edi_code]
+  item_seq    varchar(9) [pk, note: 'v1.3 · 식약처 품목기준코드 — 허가 품목 1개 = 1행 (EDI 제품코드 기준이 아님)']
+  item_name   varchar(300) [not null, note: 'v1.3 · 허가 제품명 — 급여목록에 없는 약의 이름 맞추기 · 표시용 (O-4)']
+  item_name_norm varchar(300) [note: 'v1.3 · 정규화된 이름 (drug_products와 같은 함수) — 매칭용 인덱스']
+  entp_name   varchar(200) [note: 'v1.3 · 업체명']
+  etc_otc     varchar(10)  [note: 'v1.3 · 전문 / 일반']
   efficacy    text [note: '효능효과 (식약처 EE_DOC_DATA 파싱)']
   usage_dose  text [note: '용법용량 (UD_DOC_DATA)']
   precautions text [note: '사용상의주의사항 (NB_DOC_DATA)']
@@ -338,7 +368,7 @@ Table drug_details {
   chart       varchar(300) [note: '성상 — 낱알 식별에 활용 가능']
   embedding_id varchar(100) [note: '벡터DB 문서 ID (RAG 검색용)']
 
-  Note: 'XML 파싱 시 <ARTICLE title="..."> 속성과 CDATA 양쪽에서 내용 추출 필요'
+  Note: 'XML 파싱 시 <ARTICLE title="..."> 속성과 CDATA 양쪽에서 내용 추출 필요. 허가정보는 EDI 코드가 없는 품목이 많고(10/2에 받은 42,707건 중 허가가 살아 있는 35,194건 가운데 14,436건) 한 품목에 EDI 코드가 여러 개인 경우도 있어서(858건) item_seq를 키로 씀. 허가 취소 품목은 뺌'
 }
 
 
@@ -439,7 +469,7 @@ Table diseases {
   age_min      smallint
   age_max      smallint
 
-  Note: '심평원 상병마스터 47,798건'
+  Note: '심평원 상병마스터 2025-09-30 — 47,798줄 중 상병기호 21,299개 (동의어 여러 줄, 첫 줄 이름만)'
 }
 
 Table checkup_items {
