@@ -46,6 +46,15 @@ def test_normalize_name_unifies_mg_spelling():
     assert normalize_name("노바스크정5밀리그램(암로디핀베실산염)") == normalize_name("노바스크정 5mg(암로디핀베실산염)")
 
 
+def test_normalize_name_nfkc_compat_characters():
+    # 식약처 · 심평원 이름에는 ㎎ · ㎖ 같은 한 글자짜리 단위가 섞여 있음 → mg · ml로 풀려야 같은 약으로 맞춤
+    assert normalize_name("아스피린프로텍트정100㎎") == normalize_name("아스피린프로텍트정100mg")
+    assert normalize_name("타이레놀정500㎎") == "타이레놀정500밀리그램"
+    assert normalize_name("어떤시럽100㎖") == normalize_name("어떤시럽100ml")
+    # 전각 괄호 뒤의 규격도 떼어짐
+    assert normalize_name("노바스크정５밀리그램（암로디핀）_(6.944mg/1정)") == "노바스크정5밀리그램(암로디핀)"
+
+
 def test_parse_spec():
     assert parse_spec("95(1)") == Decimal("95")
     assert parse_spec("0.5") == Decimal("0.5")

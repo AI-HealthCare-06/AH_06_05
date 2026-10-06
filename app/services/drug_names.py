@@ -4,6 +4,7 @@
 """
 
 import re
+import unicodedata
 
 
 def base_name(name: str) -> str:
@@ -17,4 +18,5 @@ def unify(name: str) -> str:
 
 
 def normalize_name(name: str) -> str:
-    return unify(base_name(name))
+    """NFKC로 호환 문자를 먼저 풀어 줌 (㎎ → mg · ㎖ → ml · 전각 괄호 → 반각). 그다음 규격 · 공백 · 표기 통일"""
+    return unify(base_name(unicodedata.normalize("NFKC", name)))
