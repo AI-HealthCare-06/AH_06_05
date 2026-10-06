@@ -70,7 +70,7 @@ class Token:
         assert lifetime is not None
 
         dt = from_time + lifetime
-        self.payload["exp"] = timegm(dt.timetuple())
+        self.payload["exp"] = timegm(dt.utctimetuple())
 
     def set_jti(self) -> None:
         self.payload["jti"] = uuid4().hex
@@ -89,7 +89,7 @@ class AccessToken(Token):
 
 class RefreshToken(Token):
     token_type = "refresh"
-    lifetime = timedelta(days=config.REFRESH_TOKEN_EXPIRE_MINUTES)
+    lifetime = timedelta(minutes=config.REFRESH_TOKEN_EXPIRE_MINUTES)
     no_copy_claims = ("type", "exp", "jti")
 
     @property
