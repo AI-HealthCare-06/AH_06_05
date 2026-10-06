@@ -14,7 +14,15 @@ export const copy = {
     home: '홈',
     challenge: '실천',
     me: '내정보',
+    menu: '주 메뉴',
   },
+  // CM-03-E1 처음 홈 — 큰 버튼 (와이어프레임 HomeEmpty)
+  home: {
+    heroTitle: '처방전이나 약봉투를\n찍어 보세요',
+    heroBody: '먹는 약을 함께 점검하고 복약 안내를 만들어 드려요',
+    capture: '처방전 찍기',
+  },
+  preparing: '준비 중인 화면이에요',
   // CM-01 로그인 · CM-01-E1 로그인 실패 · CM-01-E2 로그인 잠김
   login: {
     title: '로그인',
@@ -44,6 +52,7 @@ export const copy = {
     launcher: 'AI 챗봇 열기',
     launcherNew: 'AI 챗봇 열기, 새 답변 있음',
     close: '챗봇 닫기',
+    title: 'AI 챗봇',
     recommended: [
       '약은 언제 먹는 게 좋나요?',
       '같이 먹으면 안 되는 음식이 있나요?',
