@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, status
@@ -37,7 +38,8 @@ async def login(
         httponly=True,
         secure=True if config.ENV == Env.PROD else False,
         domain=config.COOKIE_DOMAIN or None,
-        expires=tokens["access_token"].payload["exp"],
+        # 정수를 넣으면 "지금부터 몇 초 뒤"로 읽혀 수십 년이 되므로, 날짜 객체로 넘겨서 재발급 토큰 만료와 맞춘다
+        expires=datetime.fromtimestamp(tokens["refresh_token"].payload["exp"], tz=UTC),
     )
     return resp
 
