@@ -1,6 +1,6 @@
-# API 명세서 v1.2
+# API 명세서 v1.3
 
-**5팀 · 2026. 9. 29 · 작성 이형준(PM)**
+**5팀 · 2026. 10. 6 · 작성 이형준 · 수정 김채연(PM)**
 
 ## 변경 이력
 
@@ -14,6 +14,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.0 | 2026-09-24 | 통합 와이어프레임(45개 화면) · ERD v1.0 반영 — 실천 · 보상 API 교체, 챗봇 2개 추가, OCR · 챗봇 응답 보완 | 이형준 |
 | v1.1 | 2026-09-28 | 리뷰 반영 — OCR 업로드 202 + 작업 조회(O-5) 추가, 생활습관 출처를 실천 항목별로, 칼륨 등 "의료진 확인" 표시, 파기 범위 제안, R-4 다제약물 반영 | 이형준 |
 | v1.2 | 2026-09-29 | RW-01 제외 확정 반영 (P-1 화면을 RG-05로), 기준 화면 수 50개 | 이형준 |
+| v1.3 | 2026-10-06 | 챗봇 1단계 반영 (PR #3) — answerType 8가지, H-1 · H-3 `clientRequestId` · `sources` 형식, H-2 응답 형식, 대화 삭제(H-6) · 맥락 추가(H-7) 추가 / 기준 화면 수 53개 · 요구사항 v1.5 · ERD v1.3 / RAG 담당 채연 / 10/6: 로그인 재발급(A-4 신규) · 로그아웃 제외 · 약 이름 검색 결과 3가지(O-4) | 김채연 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -88,10 +89,50 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 </details>
 
+<details>
+<summary><b>v1.3</b> · 2026-10-06 · 챗봇 1단계 · 담당 변경 · 로그인 재발급 · 약 이름 검색 — 세부 32건</summary>
+
+| 위치 | 현행 (As-Is) | 개정 (To-Be) |
+|---|---|---|
+| 머리말 / 작성 기준 | Figma 통합 와이어프레임(50개 화면) · 요구사항 정의서 v1.4 · ERD v1.2 기준 | Figma 통합 와이어프레임(53개 화면, 화면 번호표 v0.5) · 요구사항 정의서 v1.5 · ERD v1.3 기준 |
+| 머리말 / 영역 코드 | CM 공통 · OC OCR · RG RAG · CB 챗봇 · RW 실천·보상 | CM 공통 · MY 내정보 설정 · OC OCR · RG RAG · CB 챗봇 · RW 실천·보상 |
+| 1. 전체 목록 / R-1 ~ R-10 담당 · 4장 제목 | 형준 | 채연 (10/1 역할 재분배) |
+| 1. 전체 목록 / H-6 | (없음) | `DELETE /chat/sessions/{id}` 대화 삭제 · CB-03 · MY-S1 |
+| 1. 전체 목록 / H-7 | (없음) | `POST /chat/sessions/{id}/context` 맥락 추가 · CB-01-E2 |
+| 5. 챗봇 / H-1 요청 | `{ analysisId, context }` | `clientRequestId` 추가 (다시 시도 때 대화 중복 생성 방지) |
+| 5. 챗봇 / H-2 응답 | 형식 없음 | `{ items: Message[] }` — `id` · `role` · `content` · `answerType` · `sources` · `contextCard` · `createdAt` |
+| 5. 챗봇 / H-3 요청 | `{ content }` | `{ content, clientRequestId }` |
+| 5. 챗봇 / H-3 응답 | `{ messageId, answerType: "answered", sources: ["식약처 의약품 허가정보"] }` | `{ messageId, answerType, content, sources: [{ title, basedOn }] }` |
+| 5. 챗봇 / answerType | `answered` / `refused_medical` / `no_evidence` 3가지 | `normal` · `clarify` · `partial` · `no_evidence` · `refer` · `emergency` · `crisis` 7가지 + 프론트 전용 `error` (챗봇 설계 메모 3-1) |
+| 5. 챗봇 / H-3 응답 방식 | 글자가 차례로 나오는 방식(SSE) 검토 — 담당자 확정 필요 | 1단계는 답을 다 만든 뒤 검사하고 한 번에 보냄 (수인 제안, 10/6 회의 확인) |
+| 5. 챗봇 / 1단계 대화 규칙 | (없음) | 1단계는 하루 한 대화, 분석 결과에서 들어오면 H-7로 오늘 대화에 맥락 카드를 붙임 |
+| 8. 남은 결정 사항 / 백엔드 프레임워크 | [ ] 백엔드 프레임워크가 정해지면 자동 문서화(Swagger / OpenAPI)로 옮길지 | [x] FastAPI로 확정 (템플릿) — 서버를 켜면 `/api/docs`에서 자동 문서 확인 |
+| 8. 남은 결정 사항 / 챗봇 API 후보 | (없음) | 오늘 대화 찾기 · 긴급 기록 API는 챗봇 서버 담당이 정해지면 추가 (설계 메모 3-2) |
+| 8. 남은 결정 사항 / MVP 범위 | 요구사항 정의서 v1.4 "MVP (제안)" 칸 (다음 팀 회의) | 요구사항 정의서 v1.5 "MVP (제안)" 칸 (10/6 팀 회의) |
+| 2. 회원 / U-5 철회 시 남김 | 실천 목표(`status = ended`로 종료, `reason_label` 질환 라벨은 지움) | 실천 목표(`status = ended`로 종료, 추천 연결 `recommendation_id`는 비움 — 질환 라벨 `reason_label`은 추천과 함께 삭제). `reason_label`은 `habit_goals`가 아니라 `recommendations`에 있음 (성규 10/6 확인) |
+| 4. RAG / R-8 실천 목표 처리 | 추천(`recommendations`) 연결만 끊음 | 같은 내용 + 근거 "ERD v1.3: `habit_goals.recommendation_id` ON DELETE SET NULL" (성규 10/6 확인 — 없으면 분석 삭제가 막힘) |
+| 0. 공통 규칙 / 인증 | 로그인 후 받은 토큰을 헤더에 넣음 | 출입증 60분 · 끝나면 재발급권(14일)으로 A-4 (10/6) |
+| 1. 전체 목록 / A-3 로그아웃 | `POST /auth/logout` ✅ | 넣지 않음 (10/6 결정) |
+| 1. 전체 목록 / A-4 — 신규 | (없음) | `POST /auth/token/refresh` 출입증 다시 받기 (10/6) |
+| 2. 회원 / A-2 응답 | `accessToken` · `user` | + `refreshToken` (앱 보안 저장소용), 쿠키도 같이 (10/6) |
+| 2. 회원 / A-4 — 신규 | (없음, 코드는 `GET` · 쿠키에서만 읽음) | `POST` · 본문 `refreshToken` (없으면 쿠키) · 에러 2가지 · 앱 처리 순서 (10/6) |
+| 3. OCR / O-4 응답 | `{ items[ediCode, itemName, entpName, score] }` | `status`(matched · candidates · not_found) 추가, `items`에 `itemSeq` · `etcOtc` 추가, 찾는 범위 급여목록 + 허가정보, 챗봇도 같이 씀 (10/6 수인 요청) |
+| 8. 남은 결정 / 토큰 | [ ] 만료 시간 · 재발급 도입 여부 | [x] 60분 · 14일 · 앱 보안 저장소 (10/6) |
+| 2. 회원 / A-1 응답 | `accessToken` · `user` | + `refreshToken` · 재발급권 쿠키 (A-2와 같은 모양, 가입하자마자 앱 보안 저장소에 저장) (10/6) |
+| 3. OCR / O-2 응답 | `items[].ediCode` · `candidates[].ediCode` | `itemSeq` 추가 (급여목록에 없는 약은 `itemSeq`만), `issuedDate`는 약봉투면 조제일 (수인 PR #48 리뷰, 10/6) |
+| 1. 전체 목록 / 담당 열 | 공통 · 채연님 · 수인님 · 성규님 (피처별) | `서버 담당`으로 이름을 바꾸고 전부 채연 — 화면은 수인 (10/6 서면 결정, 성규님 조기 수료로 2인 체제). 5 · 6 · 3 · 2장 제목도 같이 고침 |
+| 2. 회원 / U-3 · U-5 · 4. RAG / R-8 | 파기 범위 · 실천 목표 처리 [팀 확인 필요] | 확정 — 삭제 · 남김 표 그대로 (10/6 서면 결정 3번). U-5 상태 🟡 → ✅ |
+| 5. 챗봇 / H-1 | (없음) | 동의하지 않았거나 철회한 사용자도 챗봇 사용 가능 — 일반 정보만 답하고 내 약 · 분석 결과는 안 넣음, 챗봇 API에는 `403 CONSENT_REQUIRED`를 쓰지 않음 (10/6 결정 3번 · 수인 설계 메모 9번) |
+| 3. OCR / O-3 요청 | `ediCode`로 약을 고름 | 급여목록에 없는 약은 `itemSeq`로 고름, 점검에서 빼려면 `ediCode` · `itemSeq` 둘 다 null + `exclude` (10/6) |
+| 8. 남은 결정 / RW-03 · 04 · 05 합치기 | [ ] 한 화면의 상태로 합칠지 🟡 성규 | 담당을 수인으로 바꿈 — 화면 쪽 결정이라서 (10/6 수인 PR #74 리뷰) |
+| 0. 공통 / 공통 에러 코드 | (없음 — 403은 `CONSENT_REQUIRED`만 있음) | `403 FORBIDDEN` 추가 — 앱은 `UNAUTHORIZED`를 받으면 로그인 화면으로 보내서, 권한 오류와 구분함 (10/6 수인 PR #77 리뷰) |
+
+</details>
+
 ---
 
-> Figma 통합 와이어프레임(50개 화면) · 요구사항 정의서 v1.4 · ERD v1.2 기준입니다.
-> 화면 번호는 [화면 번호 통합표](screen_id_table.md) 기준입니다 (CM 공통 · OC OCR · RG RAG · CB 챗봇 · RW 실천·보상).
+> Figma 통합 와이어프레임(53개 화면) · 요구사항 정의서 v1.5 · ERD v1.3 기준입니다.
+> 화면 번호는 [화면 번호 통합표](screen_id_table.md) 기준입니다 (CM 공통 · MY 내정보 설정 · OC OCR · RG RAG · CB 챗봇 · RW 실천·보상).
 > 피처 1 · 3 · 4 항목(🟡)은 담당자가 확정하면 변경 이력에 기록하고 상태를 ✅로 바꿔 주세요.
 >
 > 상태 표시 — ✅ 초안 작성 완료 · 🟡 담당자 확정 필요 · ⚪ 선택 구현
@@ -104,7 +145,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 |---|---|
 | 기본 주소 | `/api/v1` |
 | 형식 | 요청 · 응답 모두 JSON (`Content-Type: application/json`). 업로드만 `multipart/form-data` |
-| 인증 | 로그인 후 받은 토큰을 헤더에 넣음 — `Authorization: Bearer {accessToken}` |
+| 인증 | 로그인 후 받은 출입증(`accessToken`, 60분)을 헤더에 넣음 — `Authorization: Bearer {accessToken}`. 끝나면(`401 TOKEN_EXPIRED`) 재발급권(`refreshToken`, 14일)으로 A-4를 불러 새로 받음 |
 | 권한 | 본인 데이터만 조회 가능. 남의 데이터 요청 시 `404` (존재 여부도 숨김) — NFR-010 |
 | 시간 | ISO 8601, 한국 시간 — `2026-09-23T14:05:00+09:00` |
 | 이름 규칙 | 주소는 복수형 명사 + kebab-case (`/analyses`), JSON 필드는 camelCase (`birthYear`) |
@@ -136,6 +177,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | 401 | `TOKEN_EXPIRED` | 로그인 만료 | CM-08 "다시 로그인해 주세요" → CM-01 |
 | 401 | `UNAUTHORIZED` | 토큰 없음 · 잘못됨 | CM-01 로그인 |
 | 403 | `CONSENT_REQUIRED` | 민감정보 동의 안 함 | 동의 안내 (업로드 · 분석 불가) |
+| 403 | `FORBIDDEN` | 권한이 없음 (지금은 쓰는 곳 없음 — 나중에 권한 오류가 생길 때 `UNAUTHORIZED`와 구분하려고 만들어 둠) | 로그인 화면으로 보내지 않고 `message`를 안내 [수인 확인 필요] |
 | 404 | `NOT_FOUND` | 없음 (또는 남의 데이터) | CM-08 또는 목록으로 |
 | 429 | `TOO_MANY_REQUESTS` | 요청이 너무 많음 | CM-08 "잠시 후 다시" |
 | 500 | `INTERNAL_ERROR` | 서버 오류 | CM-08 "잠시 문제가 생겼어요" |
@@ -145,49 +187,52 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 ## 1. 전체 목록
 
-| # | 메서드 | 주소 | 설명 | 화면 | 담당 | 상태 |
+| # | 메서드 | 주소 | 설명 | 화면 | 서버 담당 | 상태 |
 |---|---|---|---|---|---|---|
-| A-1 | POST | `/auth/signup` | 회원가입 | CM-02 · CM-02-E1 | 공통 | ✅ |
-| A-2 | POST | `/auth/login` | 로그인 | CM-01 · CM-01-E1 · CM-01-E2 | 공통 | ✅ |
-| A-3 | POST | `/auth/logout` | 로그아웃 | CM-05 | 공통 | ✅ |
-| U-1 | GET | `/users/me` | 내 정보 조회 | CM-03 · CM-05 | 공통 | ✅ |
-| U-2 | PATCH | `/users/me` | 내 정보 수정 | CM-06 | 공통 | ✅ |
-| U-3 | DELETE | `/users/me` | 회원 탈퇴 | CM-07 | 공통 | ✅ |
-| U-4 | GET | `/users/me/consents` | 동의 내역 조회 | CM-05 | 공통 | ✅ |
-| U-5 | DELETE | `/users/me/consents/{type}` | 동의 철회 | CM-05 | 공통 | 🟡 철회 정책 미정 |
-| O-1 | POST | `/prescriptions` | 처방전 · 약봉투 업로드 → OCR 작업 시작 (`202`) | OC-01 | 채연님 | 🟡 |
-| O-2 | GET | `/prescriptions/{id}` | 인식 결과 조회 | OC-02 | 채연님 | 🟡 |
-| O-3 | PATCH | `/prescriptions/{id}/items/{itemId}` | 인식 결과 수정 · 후보 선택 | OC-02 | 채연님 | 🟡 |
-| O-4 | GET | `/drugs/search` | 약 이름 검색 (직접 입력용) | OC-02 | 채연님 | 🟡 |
-| O-5 | GET | `/ocr-jobs/{jobId}` | OCR 작업 상태 (폴링) | OC-01 → OC-02 · OC-01-E1 · OC-01-E3 · OC-02-E1 | 채연님 | 🟡 |
-| R-1 | POST | `/analyses` | 분석 시작 | OC-02 → RG-01 | 형준 | ✅ |
-| R-2 | GET | `/analyses/{id}/status` | 분석 진행 상태 (폴링) | RG-01 · RG-01-E1 | 형준 | ✅ |
-| R-3 | POST | `/analyses/{id}/retry` | 실패한 분석 다시 시도 | RG-01-E1 | 형준 | ✅ |
-| R-4 | GET | `/analyses/{id}` | 분석 결과 (탭 3개 전체) | RG-02 · RG-02-E1 · RG-04 · RG-05 | 형준 | ✅ |
-| R-5 | GET | `/analyses/{id}/warnings/{warningId}` | 경고 자세히 | RG-03 | 형준 | ✅ |
-| R-6 | PUT | `/analyses/{id}/diseases` | 질환 직접 선택 | RG-05-E1 | 형준 | ✅ |
-| R-7 | GET | `/analyses` | 지난 기록 목록 | CM-03 · CM-04 | 형준 | ✅ |
-| R-8 | DELETE | `/analyses/{id}` | 기록 삭제 | CM-04-E1 | 형준 | ✅ |
-| R-9 | POST | `/guides/{guideId}/feedback` | 안내문 피드백 | RG-04 | 형준 | ✅ |
-| R-10 | GET | `/guides/{guideId}/tts` | 안내문 음성 | RG-04 | 형준 | ⚪ |
-| H-1 | POST | `/chat/sessions` | 대화 시작 | CB-01 · CB-01-E1 · CB-01-E2 | 수인님 | 🟡 |
-| H-2 | GET | `/chat/sessions/{id}/messages` | 이전 대화 조회 | CB-01 | 수인님 | 🟡 |
-| H-3 | POST | `/chat/sessions/{id}/messages` | 질문 보내기 (글자가 차례로 나오는 응답) | CB-01 · CB-01-E2 | 수인님 | 🟡 |
-| H-4 | GET | `/chat/sessions?date=` · `?month=` | 날짜별 대화 목록 | CB-02 · CB-03 | 수인님 | ⚪ |
-| H-5 | PATCH | `/chat/sessions/{id}` | 대화 제목 수정 | CB-03 | 수인님 | ⚪ |
-| P-1 | GET | `/recommendations?analysisId=` | 생활습관 추천 목록 | RG-05 | 성규님 | 🟡 |
-| P-2 | POST | `/habit-goals` | 실천 목표 만들기 (최대 3개) | RW-02 | 성규님 | 🟡 |
-| P-3 | GET | `/habit-goals/today` | 오늘의 실천 | CM-03 · RW-03~05 · RW-03-E2 | 성규님 | 🟡 |
-| P-4 | POST | `/habit-goals/{goalId}/records` | 실천 기록 (체크 · 수량) | RW-03 · RW-04 · RW-03-E1 | 성규님 | 🟡 |
-| P-5 | GET | `/habit-goals/history?period=week` | 주간 달성 현황 | RW-06 · RW-06-E1 | 성규님 | 🟡 |
-| P-6 | GET | `/rewards/summary` | 포인트 요약 | RW-05 · RW-06 | 성규님 | 🟡 |
+| A-1 | POST | `/auth/signup` | 회원가입 | CM-02 · CM-02-E1 | 채연 | ✅ |
+| A-2 | POST | `/auth/login` | 로그인 | CM-01 · CM-01-E1 · CM-01-E2 | 채연 | ✅ |
+| ~~A-3~~ | ~~POST~~ | ~~`/auth/logout`~~ | 로그아웃 — **10/6 결정으로 넣지 않음** | - | 채연 | - |
+| A-4 | POST | `/auth/token/refresh` | 출입증 다시 받기 | (화면 없음 · 모든 화면 공통) | 채연 | ✅ |
+| U-1 | GET | `/users/me` | 내 정보 조회 | CM-03 · CM-05 | 채연 | ✅ |
+| U-2 | PATCH | `/users/me` | 내 정보 수정 | CM-06 | 채연 | ✅ |
+| U-3 | DELETE | `/users/me` | 회원 탈퇴 | CM-07 | 채연 | ✅ |
+| U-4 | GET | `/users/me/consents` | 동의 내역 조회 | CM-05 | 채연 | ✅ |
+| U-5 | DELETE | `/users/me/consents/{type}` | 동의 철회 | CM-05 | 채연 | ✅ |
+| O-1 | POST | `/prescriptions` | 처방전 · 약봉투 업로드 → OCR 작업 시작 (`202`) | OC-01 | 채연 | 🟡 |
+| O-2 | GET | `/prescriptions/{id}` | 인식 결과 조회 | OC-02 | 채연 | 🟡 |
+| O-3 | PATCH | `/prescriptions/{id}/items/{itemId}` | 인식 결과 수정 · 후보 선택 | OC-02 | 채연 | 🟡 |
+| O-4 | GET | `/drugs/search` | 약 이름 검색 (직접 입력용) | OC-02 | 채연 | 🟡 |
+| O-5 | GET | `/ocr-jobs/{jobId}` | OCR 작업 상태 (폴링) | OC-01 → OC-02 · OC-01-E1 · OC-01-E3 · OC-02-E1 | 채연 | 🟡 |
+| R-1 | POST | `/analyses` | 분석 시작 | OC-02 → RG-01 | 채연 | ✅ |
+| R-2 | GET | `/analyses/{id}/status` | 분석 진행 상태 (폴링) | RG-01 · RG-01-E1 | 채연 | ✅ |
+| R-3 | POST | `/analyses/{id}/retry` | 실패한 분석 다시 시도 | RG-01-E1 | 채연 | ✅ |
+| R-4 | GET | `/analyses/{id}` | 분석 결과 (탭 3개 전체) | RG-02 · RG-02-E1 · RG-04 · RG-05 | 채연 | ✅ |
+| R-5 | GET | `/analyses/{id}/warnings/{warningId}` | 경고 자세히 | RG-03 | 채연 | ✅ |
+| R-6 | PUT | `/analyses/{id}/diseases` | 질환 직접 선택 | RG-05-E1 | 채연 | ✅ |
+| R-7 | GET | `/analyses` | 지난 기록 목록 | CM-03 · CM-04 | 채연 | ✅ |
+| R-8 | DELETE | `/analyses/{id}` | 기록 삭제 | CM-04-E1 | 채연 | ✅ |
+| R-9 | POST | `/guides/{guideId}/feedback` | 안내문 피드백 | RG-04 | 채연 | ✅ |
+| R-10 | GET | `/guides/{guideId}/tts` | 안내문 음성 | RG-04 | 채연 | ⚪ |
+| H-1 | POST | `/chat/sessions` | 대화 시작 | CB-01 · CB-01-E1 · CB-01-E2 | 채연 | 🟡 |
+| H-2 | GET | `/chat/sessions/{id}/messages` | 이전 대화 조회 | CB-01 | 채연 | 🟡 |
+| H-3 | POST | `/chat/sessions/{id}/messages` | 질문 보내기 (글자가 차례로 나오는 응답) | CB-01 · CB-01-E2 | 채연 | 🟡 |
+| H-4 | GET | `/chat/sessions?date=` · `?month=` | 날짜별 대화 목록 | CB-02 · CB-03 | 채연 | ⚪ |
+| H-5 | PATCH | `/chat/sessions/{id}` | 대화 제목 수정 | CB-03 | 채연 | ⚪ |
+| H-6 | DELETE | `/chat/sessions/{id}` | 대화 삭제 | CB-03 · MY-S1 | 채연 | ✅ |
+| H-7 | POST | `/chat/sessions/{id}/context` | 오늘 대화에 분석 맥락 붙이기 (1단계) | CB-01-E2 | 채연 | 🟡 |
+| P-1 | GET | `/recommendations?analysisId=` | 생활습관 추천 목록 | RG-05 | 채연 | 🟡 |
+| P-2 | POST | `/habit-goals` | 실천 목표 만들기 (최대 3개) | RW-02 | 채연 | 🟡 |
+| P-3 | GET | `/habit-goals/today` | 오늘의 실천 | CM-03 · RW-03~05 · RW-03-E2 | 채연 | 🟡 |
+| P-4 | POST | `/habit-goals/{goalId}/records` | 실천 기록 (체크 · 수량) | RW-03 · RW-04 · RW-03-E1 | 채연 | 🟡 |
+| P-5 | GET | `/habit-goals/history?period=week` | 주간 달성 현황 | RW-06 · RW-06-E1 | 채연 | 🟡 |
+| P-6 | GET | `/rewards/summary` | 포인트 요약 | RW-05 · RW-06 | 채연 | 🟡 |
 
 > 홈(CM-03)은 별도 API를 만들지 않고 U-1 + R-7(`size=1`) + P-3을 함께 호출합니다.
 > 프론트가 1명이라 **API 개수를 늘리지 않는 쪽**으로 잡았습니다. 결과 화면도 탭별로 나누지 않고 R-4 한 번에 받습니다.
 
 ---
 
-## 2. 인증 · 회원 (공통)
+## 2. 인증 · 회원 (공통 — 서버 채연 · 화면 수인)
 
 ### A-1. 회원가입 `POST /auth/signup`
 
@@ -218,13 +263,15 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | sex | ✅ | `M` / `F` |
 | consents.* | ✅ | 세 개 모두 `true`여야 가입 가능 |
 
-**응답 `201`** — 가입과 동시에 로그인 처리
+**응답 `201`** — 가입과 동시에 로그인 처리 (A-2 로그인 응답과 같은 모양)
 ```json
 {
   "accessToken": "eyJhbGciOi...",
+  "refreshToken": "eyJhbGciOi...",
   "user": { "id": 12, "nickname": "홍길동", "birthYear": 1958, "sex": "M" }
 }
 ```
+- 재발급권 쿠키 `refresh_token`도 같이 보냄 (A-2와 같음)
 
 **에러**
 | HTTP | code | 화면 |
@@ -250,9 +297,13 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 ```json
 {
   "accessToken": "eyJhbGciOi...",
+  "refreshToken": "eyJhbGciOi...",
   "user": { "id": 12, "nickname": "홍길동", "birthYear": 1958, "sex": "M" }
 }
 ```
+
+- `accessToken` (출입증): 60분. `refreshToken` (재발급권): 14일 — 앱은 expo-secure-store에 저장 (10/6 결정)
+- 쿠키 `refresh_token`도 같이 보냄 (웹 · Swagger에서 시험할 때용, 앱은 안 써도 됨)
 
 **에러**
 | HTTP | code | detail | 화면 |
@@ -264,11 +315,40 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 ---
 
-### A-3. 로그아웃 `POST /auth/logout`
+### ~~A-3. 로그아웃 `POST /auth/logout`~~ — 넣지 않음 (10/6 결정)
 
-화면 CM-05 · 요구사항 REQ-003
+멘토님 "없어도 됨"에 따라 10/6 결정으로 넣지 않음. 앱에 저장한 값은 탈퇴 · 동의 철회 때만 지움
 
-요청 본문 없음 · 응답 `204` · 서버에서 해당 토큰을 즉시 무효화
+---
+
+### A-4. 출입증 다시 받기 `POST /auth/token/refresh`
+
+화면 없음 (모든 화면 공통) · 요구사항 REQ-008 · 인증 불필요
+
+**요청**
+```json
+{ "refreshToken": "eyJhbGciOi..." }
+```
+- 본문이 없으면 쿠키 `refresh_token`을 읽음 (웹 · Swagger용)
+- `GET`이 아니라 `POST`인 이유: `GET` 요청에는 본문을 실을 수 없음
+
+**응답 `200`**
+```json
+{ "accessToken": "eyJhbGciOi..." }
+```
+- 재발급권은 새로 주지 않음 → 로그인 14일 뒤에는 다시 로그인 (10/6 결정)
+
+**에러**
+| HTTP | code | 언제 | 화면 |
+|---|---|---|---|
+| 401 | `TOKEN_EXPIRED` | 재발급권도 끝남 (14일 지남) | CM-08 "다시 로그인해 주세요" → CM-01 |
+| 401 | `UNAUTHORIZED` | 재발급권이 없거나 잘못됨 (출입증을 넣은 경우 포함) | CM-01 로그인 |
+
+**앱에서 하는 순서**
+1. 아무 API나 부름 → `401 TOKEN_EXPIRED` (출입증 60분 끝남)
+2. A-4를 부름 → 새 출입증을 저장
+3. 1번 요청을 **한 번만** 다시 보냄
+4. A-4도 401이면 → 저장한 두 값을 지우고 로그인 화면
 
 ---
 
@@ -318,7 +398,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 { "confirmed": true }
 ```
 
-응답 `204` · 아래 데이터를 **즉시 삭제**하고, 사용자 행은 개인정보를 지운 뒤 `deleted_at`만 남김 🟡 팀 확인
+응답 `204` · 아래 데이터를 **즉시 삭제**하고, 사용자 행은 개인정보를 지운 뒤 `deleted_at`만 남김 (10/6 확정)
 
 | 삭제 | 남김 |
 |---|---|
@@ -345,19 +425,19 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 }
 ```
 
-### U-5. 동의 철회 `DELETE /users/me/consents/{type}` 🟡
+### U-5. 동의 철회 `DELETE /users/me/consents/{type}`
 
 `type = sensitiveHealth`만 철회 가능. 철회하면 업로드 · 분석 API가 `403 CONSENT_REQUIRED`.
 
-**제안 — 철회 시 파기 범위** 🟡 팀 확인 (REQ-007)
+**철회 시 파기 범위** (10/6 확정, REQ-007)
 
 | 삭제 | 남김 |
 |---|---|
-| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 (건강 정보가 들어 있을 수 있음) | 실천 목표(`status = ended`로 종료, `reason_label` 질환 라벨은 지움) · 실천 기록 · 포인트 · 동의 기록(철회 시각 포함) |
+| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 (건강 정보가 들어 있을 수 있음) | 실천 목표(`status = ended`로 종료, 추천 연결 `recommendation_id`는 비움 — 질환 라벨 `reason_label`은 추천과 함께 삭제) · 실천 기록 · 포인트 · 동의 기록(철회 시각 포함) |
 
 ---
 
-## 3. 피처 1 — OCR (채연님) 🟡
+## 3. 피처 1 — OCR (서버 채연 · 화면 수인) 🟡
 
 > 피처 2와 **주고받는 형식만** 먼저 맞추기 위한 최소 정의입니다. 세부 사항은 담당자가 확정해 주세요.
 
@@ -418,9 +498,10 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
       "rawName": "암로디핀5mg",
       "matchStatus": "needs_confirm",
       "ediCode": null,
+      "itemSeq": null,
       "candidates": [
-        { "ediCode": "645301220", "itemName": "노바스크정5밀리그람", "score": 0.82 },
-        { "ediCode": "...", "itemName": "아모디핀정5밀리그람", "score": 0.79 }
+        { "ediCode": "645301220", "itemSeq": null, "itemName": "노바스크정5밀리그람", "score": 0.82 },
+        { "ediCode": "...", "itemSeq": null, "itemName": "아모디핀정5밀리그람", "score": 0.79 }
       ],
       "dosePerTime": 1,
       "timesPerDay": 1,
@@ -433,23 +514,51 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 - `docType`: `prescription`(처방전) / `pill_bag`(약봉투) — 약봉투는 `diseaseCodes`가 빈 배열 → RG-05-E1로 이어짐
 - `matchStatus`: `auto`(자동 확정) / `needs_confirm`(후보 선택 필요) / `user_confirmed` / `unmatched`(끝내 못 찾음)
+- `issuedDate`: 처방전은 처방 교부일, 약봉투는 조제일 (약봉투에는 교부일이 없음)
+- `ediCode` · `itemSeq`: 약이 정해진 항목과 후보는 둘 중 하나는 꼭 있음 (O-4와 같은 규칙). 급여목록에 없는 약(일반약 등)은 `itemSeq`만 있고 `ediCode`는 null (예시의 `itemSeq: null`은 값을 비워 둔 것)
 
 ### O-3. 인식 결과 수정 `PATCH /prescriptions/{id}/items/{itemId}`
 
 ```json
 { "ediCode": "645301220", "dosePerTime": 1, "timesPerDay": 1, "totalDays": 30 }
 ```
-`ediCode: null` + `"exclude": true` → 이 약은 점검에서 빼고 진행 (REQ-032)
+- 급여목록에 없는 약을 고르면 `ediCode` 대신 `itemSeq`를 보냄 (O-4 결과의 값 그대로)
+- `ediCode: null` · `itemSeq: null` + `"exclude": true` → 이 약은 점검에서 빼고 진행 (REQ-032)
 
-### O-4. 약 이름 검색 `GET /drugs/search?q=암로디핀&size=5`
+### O-4. 약 이름 검색 `GET /drugs/search?q=타이래놀&size=5`
 
+화면 OC-02 (직접 입력) · 챗봇에서도 같이 씀 · 이름 맞추기는 OCR과 같은 함수 (`app/services/drug_names.py`)
+
+- `q`: 사용자가 친 이름 (오타 · 띄어쓰기 · "mg"/"밀리그람" 섞여도 됨)
+- `size`: 후보 최대 개수 (기본 5)
+
+**응답 `200`**
 ```json
-{ "items": [ { "ediCode": "645301220", "itemName": "노바스크정5밀리그람", "entpName": "한국화이자", "score": 0.91 } ] }
+{
+  "status": "candidates",
+  "items": [
+    { "itemSeq": "199903123", "ediCode": null, "itemName": "타이레놀정500밀리그램(아세트아미노펜)", "entpName": "한국존슨앤드존슨판매(유)", "etcOtc": "일반", "score": 0.82 },
+    { "itemSeq": null, "ediCode": "672300240", "itemName": "타이레놀8시간이알서방정(아세트아미노펜)", "entpName": "한국존슨앤드존슨판매(유)", "etcOtc": "일반", "score": 0.74 }
+  ]
+}
 ```
+(모양을 보여 주는 예시 — `itemSeq` 숫자는 지어낸 값)
+
+| `status` | 뜻 | 언제 | 화면 (제안) |
+|---|---|---|---|
+| `matched` | 확실 | 이름을 맞춘 결과가 정확히 같은 약 1개 | 그 약으로 바로 진행 (`items` 1개) |
+| `candidates` | 애매 → 후보 | 비슷한 약이 여러 개, 또는 정확히 같지 않음 | 후보에서 고르기 (`items` 최대 `size`개, 점수 높은 순) |
+| `not_found` | 못 찾음 | 기준 점수를 넘는 약이 없음 | "약 이름을 다시 확인해 주세요" + 다시 입력 (`items` 빈 배열) |
+
+- OCR 설계 결정과 같은 기준: 정확히 같을 때만 확실. 이름이 비슷한 다른 약(노바스크 ↔ 노바크) · 함량만 다른 약(노바스크 2.5 · 5 · 10)은 항상 후보로
+- 기준 점수는 만들 때 시험 문장으로 정함 🟡 채연
+- `itemSeq`(식약처 품목기준코드)와 `ediCode`(심평원 제품코드) 중 하나는 꼭 있음 — 일반약은 급여목록에 없어서 `ediCode`가 비는 경우가 많음
+- 찾는 범위: 약제급여목록 22,045개 + 식약처 허가정보 42,707건 (허가정보는 RAG 작업 때 DB에 넣음)
+- 챗봇 (제안, 챗봇 설계 수인 확정): 질문에서 약 이름을 찾으면 H-3 응답에 같은 모양을 `drugMatch: { status, items }`로 넣고, `candidates` · `not_found`면 `answerType: "clarify"`로 다시 물음
 
 ---
 
-## 4. 피처 2 — RAG 분석 (형준) ✅
+## 4. 피처 2 — RAG 분석 (채연) ✅
 
 ### R-1. 분석 시작 `POST /analyses`
 
@@ -734,9 +843,9 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 분석 결과 · 경고 · 안내문 · 피드백 · 연결된 챗봇 대화 삭제.
 
-**제안 — 실천 목표 처리** 🟡 성규 확인 (REQ-081)
+**실천 목표 처리** (10/6 확정, REQ-081)
 - 이 분석에만 쓰인 처방전 · 처방 약도 같이 삭제 (다른 분석에도 쓰였으면 남김)
-- 이미 만든 실천 목표 · 기록 · 포인트는 남기고, 추천(`recommendations`) 연결만 끊음 — 사용자가 한 실천은 사용자 몫
+- 이미 만든 실천 목표 · 기록 · 포인트는 남기고, 추천(`recommendations`) 연결만 끊음 — 사용자가 한 실천은 사용자 몫 (ERD v1.3: `habit_goals.recommendation_id` ON DELETE SET NULL)
 
 ---
 
@@ -764,31 +873,65 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 ---
 
-## 5. 피처 3 — 챗봇 (수인님) 🟡
+## 5. 피처 3 — 챗봇 (설계 · 화면 수인 · 서버 채연) 🟡
 
 ### H-1. 대화 시작 `POST /chat/sessions`
 
 ```json
-{ "analysisId": 5001, "context": { "type": "warning", "id": 9001 } }
+{ "analysisId": 5001, "context": { "type": "warning", "id": 9001 }, "clientRequestId": "c-20261002-0001" }
 ```
 - `analysisId` 없으면 일반 질문 모드 (CM-03-E1에서 분석 전에 들어온 경우)
 - `context`: RG-03 [이 경고 물어보기] · RG-04 [이 약 물어보기]에서 넘어올 때 (`warning` / `drug`)
+- `clientRequestId`: 앱이 만드는 요청 번호. 다시 시도할 때 같은 값을 보내면 대화를 새로 만들지 않음
+- 민감정보 동의를 하지 않았거나 철회한 사용자도 챗봇은 쓸 수 있음 (10/6 결정). 일반 정보만 답하고 내 약 · 분석 결과는 넣지 않음. 그래서 챗봇 API에는 `403 CONSENT_REQUIRED`를 쓰지 않음 (업로드 · 분석 API만)
 
 **응답 `201`** `{ "sessionId": 301 }`
 
 ### H-2. 이전 대화 `GET /chat/sessions/{id}/messages`
 
+**응답 `200`**
+```json
+{
+  "items": [
+    { "id": 9100, "role": "assistant", "content": "", "contextCard": { "analysisId": 5001, "context": { "type": "warning", "id": 9001 } }, "createdAt": "2026-10-02T09:10:00+09:00" },
+    { "id": 9101, "role": "user", "content": "이 약은 밥 먹고 먹어야 하나요?", "createdAt": "2026-10-02T09:11:00+09:00" },
+    { "id": 9102, "role": "assistant", "content": "...", "answerType": "normal", "sources": [{ "title": "식약처 의약품 허가정보", "basedOn": "2026-09 기준" }], "createdAt": "2026-10-02T09:11:05+09:00" }
+  ]
+}
+```
+- `contextCard`: H-7로 붙인 분석 맥락 카드. 다시 들어왔을 때 카드를 그대로 그림
+- 그 밖의 칸(재질문 칩 · 후속 질문 · 첨부 등)은 2단계 범위가 정해지면 추가 (챗봇 설계 메모 3-3)
+
 ### H-3. 질문 보내기 `POST /chat/sessions/{id}/messages`
 
 ```json
-{ "content": "이 약은 밥 먹고 먹어야 하나요?" }
+{ "content": "이 약은 밥 먹고 먹어야 하나요?", "clientRequestId": "c-20261002-0002" }
 ```
-응답은 **글자가 차례로 나오는 방식(SSE)** 검토 — 담당자 확정 필요.
-응답 끝에 답변 종류와 출처를 함께 내려줌:
+- `clientRequestId`: 다시 시도(CB-01-E6) 때 같은 값을 보내면 질문을 두 번 저장하지 않음
+- 응답 방식: 1단계는 답을 **다 만든 뒤 검사하고 한 번에** 보냄 (수인 제안, 10/6 회의 확인). 글자가 차례로 나오는 방식(SSE)은 2단계에 다시 봄
+
+**응답 `201`**
 ```json
-{ "messageId": 9101, "answerType": "answered", "sources": ["식약처 의약품 허가정보"] }
+{
+  "messageId": 9102,
+  "answerType": "normal",
+  "content": "...",
+  "sources": [{ "title": "식약처 의약품 허가정보", "basedOn": "2026-09 기준" }]
+}
 ```
-- `answerType`: `answered` / `refused_medical`(의료진 상담 필요) / `no_evidence`(확인이 어렵습니다) — CB-01 말풍선 라벨과 1:1
+
+`answerType` — CB-01 말풍선 라벨과 1:1 (챗봇 설계 메모 3-1)
+
+| 값 | 라벨 | 화면 |
+|---|---|---|
+| `normal` | (없음) | CB-01 정상 답변 + 출처 |
+| `clarify` | 정보 확인 | CB-01-E3 재질문 |
+| `partial` | 일부만 확인됐어요 | CB-01-E3 부분 근거 |
+| `no_evidence` | 확인이 어렵습니다 | CB-01 근거 없음 (REQ-073) |
+| `refer` | 의료진 상담 필요 | CB-01 일반 정보 + 상담 안내 (REQ-074) |
+| `emergency` | 긴급 안내 | CB-01-E4 (REQ-130) |
+| `crisis` | 도움 연결 | CB-01-E5 (REQ-131) |
+| `error` | 연결 오류 | CB-01-E6 — **프론트 전용**, 서버는 보내지 않음 (REQ-132) |
 
 ### H-4. 날짜별 대화 목록 `GET /chat/sessions?date=2026-09-16` ⚪
 
@@ -804,9 +947,28 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 { "title": "혈압약 복용 시간" }
 ```
 
+### H-6. 대화 삭제 `DELETE /chat/sessions/{id}`
+
+**응답 `204`** (내용 없음)
+- CB-03 대화 삭제에서 씀. MY-S1 전체 삭제는 (제안) 대화마다 이 API를 부르고, 대화가 많아지면 전체 삭제 API를 따로 만듦
+- 지운 대화는 되돌릴 수 없음. 서버에서도 30일 안에 완전히 지움 (MY-S1 안내 문구)
+- 남의 대화 · 없는 대화는 `404`
+
+### H-7. 맥락 추가 `POST /chat/sessions/{id}/context` 🟡
+
+1단계는 대화를 고르는 화면이 없어서 **하루 한 대화**로 씀 (챗봇 설계 메모 3-5, v0.7). 분석 결과(RG-02 ~ RG-04)에서 챗봇을 열면 새 대화를 만들지 않고, 오늘 대화에 맥락 카드를 붙임.
+
+```json
+{ "analysisId": 5001, "context": { "type": "drug", "id": 7001 }, "clientRequestId": "c-20261002-0003" }
+```
+**응답 `201`** `{ "firstMessage": { "id": 9103, "role": "assistant", "content": "...", "answerType": "normal", "sources": [], "createdAt": "..." } }`
+- 맥락 카드 메시지(`contextCard`)를 대화에 넣고, `context`가 있으면 첫 답변(`firstMessage`)도 함께 줌. 없으면 `firstMessage` 생략
+- 오늘 대화가 아직 없으면 H-1로 먼저 만든 뒤 호출
+- 10/6 회의에서 확인 (챗봇 설계 v0.7)
+
 ---
 
-## 6. 피처 4 — 실천 · 보상 (성규님) 🟡
+## 6. 피처 4 — 실천 · 보상 (서버 채연 · 화면 수인) 🟡
 
 > 성규님 데이터 흐름 기준: Analysis → **Recommendation** → **HabitGoal** → **HabitRecord** → **Reward**
 > 추천(Recommendation)은 사용자가 골라야 목표(HabitGoal)가 됨. 아래 요청 · 응답은 화면에 필요한 최소 형식이며 담당자가 확정
@@ -869,7 +1031,7 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 
 ---
 
-## 7. ERD 반영 사항 — ✅ 1~9 ERD v1.0 · 10~11 ERD v1.2에 반영 완료
+## 7. ERD 반영 사항 — ✅ 1~9 ERD v1.0 · 10~11 ERD v1.2 · 12 ERD v1.3에 반영 완료
 
 | # | 내용 | 이유 | 관련 API |
 |---|---|---|---|
@@ -884,19 +1046,21 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 | 9 | 실천 · 보상 테이블 4개 (`recommendations` · `habit_goals` · `habit_records` · `rewards`) | 피처 4 데이터 흐름 (🟡 성규 확인) | P-1~6 |
 | 10 | `ocr_jobs` 신규 · `prescriptions.ocr_job_id` · `file_index` (ERD v1.2) | OCR 비동기 | O-1 · O-5 |
 | 11 | `lifestyle_guide_sources` · `lifestyle_guide_actions` 신규, `lifestyle_medication_links.requires_clinician` · `goal_eligible` (ERD v1.2) | 실천 항목별 출처 · 칼륨 등 의료진 확인 | R-4 · P-1 |
+| 12 | `drug_details` 키를 `edi_code` → `item_seq`로, `prescription_items` · `prescription_item_candidates`에 `item_seq` 추가 (ERD v1.3) | 급여목록에 없는 약(허가정보에만 있는 약)도 담기 — 허가정보 유효 35,194건 중 14,436건은 EDI 코드가 없음 | O-2 · O-3 · O-4 |
 
 ---
 
 ## 8. 남은 결정 사항
 
-- [ ] 토큰 만료 시간 · 재발급(refresh) 도입 여부 — 고령 사용자라 자주 로그아웃되면 불편
+- [x] 토큰 만료 시간 · 재발급 → 출입증 60분 · 재발급권 14일, 재발급권은 앱 보안 저장소 · A-4 본문으로 (10/6 결정, 버그 3개는 PR #45)
 - [x] OCR(O-1) 동기 / 비동기 → v1.1에서 **비동기(202 + O-5)로 준비**. CLOVA OCR 응답 시간 측정(9/30 키 제공) 후 확정 🟡 채연
-- [ ] 챗봇 응답을 SSE로 할지
-- [ ] 기록 삭제 시 실천 기록 처리 (R-8) — 제안안 확인 🟡 성규
+- [ ] 챗봇 응답을 SSE로 할지 — 1단계는 한 번에 보내는 쪽으로 제안 (H-3, 10/6 회의)
+- [ ] 오늘 대화 찾기 `GET /chat/sessions/today` · 긴급 기록 `POST /chat/sessions/{id}/safety-events` (챗봇 설계 메모 3-2) — 챗봇 서버(채연)를 만들 때 정해서 추가
+- [x] 기록 삭제 시 실천 기록 처리 (R-8) — 그 분석만 삭제, 실천 목표 · 포인트는 남김 (10/6 확정)
 - [ ] 챗봇을 날짜별 여러 대화로 갈지 (H-4 · H-5 구현 여부)
 - [ ] 한 주가 끝난 뒤 목표 다시 고르기 흐름 (P-2)
-- [ ] 동의 철회 시 기존 기록 처리 (U-5) — 제안안 확인 🟡 팀
-- [ ] MVP 범위 확정 — 요구사항 정의서 v1.4 "MVP (제안)" 칸 (다음 팀 회의)
+- [x] 동의 철회 시 기존 기록 처리 (U-5) — 위 표대로 (10/6 확정)
+- [x] MVP 범위 확정 — 요구사항 정의서 v1.5 "MVP" 칸 (10/6 확정, 후순위 12건은 여유 있을 때만)
 - [x] RW-01 제외 확정 (2026-09-28, 한성규) — RG-05 [이 목표로 실천 시작하기]에서 RW-02로 바로 연결
-- [ ] RW-03 · RW-04 · RW-05를 한 화면의 상태(미실천 · 일부 완료 · 전체 완료)로 합칠지 🟡 성규
-- [ ] 백엔드 프레임워크가 정해지면 자동 문서화(Swagger / OpenAPI)로 옮길지 — FastAPI · Spring 모두 지원
+- [ ] RW-03 · RW-04 · RW-05를 한 화면의 상태(미실천 · 일부 완료 · 전체 완료)로 합칠지 🟡 수인
+- [x] FastAPI로 확정 (템플릿) — 서버를 켜면 `/api/docs`에서 자동 문서 확인
