@@ -1,17 +1,23 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Text } from 'react-native';
 
-// 임시 첫 화면 — #56 내비 뼈대에서 홈(상단 내비 A안)으로 바꿈
+import { copy } from '@/shared/copy';
+import { C, T } from '@/shared/theme';
+import { Btn, Card, Chip, Disclaimer, Screen, Section } from '@/shared/ui';
+
+// 임시 첫 화면 — 공통 부품 확인용. #56 내비 뼈대에서 홈(상단 내비 A안)으로 바꿈
 export default function Index() {
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>[서비스명]</Text>
-      <Text style={styles.body}>frontend 뼈대 준비 중</Text>
-    </View>
+    <Screen title={copy.appName} back={false} footer={<Btn label={copy.login.submit} />}>
+      <Text style={T.title}>{copy.appName}</Text>
+      <Text style={[T.body, { color: C.text2, marginTop: 8 }]}>{copy.login.tagline}</Text>
+      <Section title="공통 부품">
+        <Card tone="info">
+          <Chip label="확인 필요" tone="caution" />
+          <Text style={[T.body, { marginTop: 8 }]}>{copy.chatbot.attachNotice}</Text>
+        </Card>
+        <Btn label={copy.common.retry} kind="secondary" />
+      </Section>
+      <Disclaimer />
+    </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F4F7FB' },
-  title: { fontSize: 24, fontWeight: '800', color: '#0F172A' },
-  body: { marginTop: 8, fontSize: 16, color: '#475569' },
-});
