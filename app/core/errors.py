@@ -16,6 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 DEFAULT_MESSAGES = {
     "VALIDATION_ERROR": "입력한 내용을 다시 확인해 주세요.",
     "UNAUTHORIZED": "로그인이 필요해요.",
+    "FORBIDDEN": "이 내용은 볼 수 없어요.",
     "TOKEN_EXPIRED": "로그인이 끝났어요. 다시 로그인해 주세요.",
     "NOT_FOUND": "찾을 수 없어요.",
     "METHOD_NOT_ALLOWED": "지원하지 않는 요청이에요.",
@@ -26,7 +27,7 @@ DEFAULT_MESSAGES = {
 STATUS_CODES = {
     status.HTTP_400_BAD_REQUEST: "VALIDATION_ERROR",
     status.HTTP_401_UNAUTHORIZED: "UNAUTHORIZED",
-    status.HTTP_403_FORBIDDEN: "UNAUTHORIZED",
+    status.HTTP_403_FORBIDDEN: "FORBIDDEN",
     status.HTTP_404_NOT_FOUND: "NOT_FOUND",
     status.HTTP_405_METHOD_NOT_ALLOWED: "METHOD_NOT_ALLOWED",
     status.HTTP_429_TOO_MANY_REQUESTS: "TOO_MANY_REQUESTS",
