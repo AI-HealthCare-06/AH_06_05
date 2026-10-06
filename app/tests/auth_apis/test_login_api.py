@@ -5,7 +5,7 @@ from httpx import ASGITransport, AsyncClient
 from starlette import status
 from tortoise.contrib.test import TestCase
 
-from app.core.jwt.tokens import RefreshToken
+from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.main import app
 
 
@@ -68,3 +68,25 @@ class TestLoginAPI(TestCase):
         # 14일 설정, 앞뒤로 하루씩 여유 (시간대 계산 오차 허용)
         assert 13 * day < token_left < 15 * day, f"재발급 토큰 만료까지 {token_left / day:.1f}일"
         assert 13 * day < cookie_left < 15 * day, f"재발급 쿠키 만료까지 {cookie_left / day:.1f}일"
+
+    async def test_login_access_token_lifetime(self):
+        """출입증(access) 토큰 만료가 설정값(60분)과 비슷해야 한다 (한국 시각을 UTC로 읽어 600분으로 나오던 버그 방지)"""
+        signup_data = {
+            "email": "access_lifetime_test@example.com",
+            "password": "Password123!",
+            "name": "출입증테스터",
+            "gender": "FEMALE",
+            "birth_date": "1995-05-05",
+            "phone_number": "01055556666",
+        }
+        login_data = {"email": "access_lifetime_test@example.com", "password": "Password123!"}
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/v1/auth/signup", json=signup_data)
+            response = await client.post("/api/v1/auth/login", json=login_data)
+
+        access_token = response.json()["access_token"]
+        minutes_left = (AccessToken(access_token).payload["exp"] - time.time()) / 60
+
+        # 60분 설정, 앞뒤로 5분씩 여유
+        assert 55 < minutes_left < 65, f"출입증 토큰 만료까지 {minutes_left:.1f}분"

@@ -70,7 +70,7 @@ class Token:
         assert lifetime is not None
 
         dt = from_time + lifetime
-        self.payload["exp"] = timegm(dt.timetuple())
+        self.payload["exp"] = timegm(dt.utctimetuple())
 
     def set_jti(self) -> None:
         self.payload["jti"] = uuid4().hex
