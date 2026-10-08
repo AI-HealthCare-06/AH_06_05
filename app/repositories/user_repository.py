@@ -1,12 +1,11 @@
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
-from pydantic import EmailStr
+from tortoise.transactions import in_transaction
 
 from app.core import config
-from app.models.users import Gender, User
+from app.models.users import ConsentType, Sex, User, UserConsent
 
-ALLOWED_UPDATE_FIELDS = ["name", "phone_number", "gender", "birthday"]
 UPDATED_AT_FIELD = "updated_at"
 
 
@@ -14,53 +13,62 @@ class UserRepository:
     def __init__(self):
         self._model = User
 
-    async def get_all(self):
-        return await self._model.all()
-
     async def get_user(self, user_id: int) -> User | None:
-        return await self._model.get_or_none(id=user_id)
-
-    async def create_user(
-        self,
-        email: str | EmailStr,
-        hashed_password: str,
-        name: str,
-        phone_number: str,
-        gender: Gender,
-        birthday: date,
-        *,
-        is_active: bool = True,
-        is_admin: bool = False,
-    ) -> User:
-        return await self._model.create(
-            email=email,
-            hashed_password=hashed_password,
-            name=name,
-            phone_number=phone_number,
-            gender=gender,
-            birthday=birthday,
-            is_active=is_active,
-            is_admin=is_admin,
-        )
+        """탈퇴한 회원(deleted_at)은 없는 회원으로 봄"""
+        return await self._model.get_or_none(id=user_id, deleted_at=None)
 
     async def get_user_by_email(self, email: str) -> User | None:
-        return await self._model.get_or_none(email=email)
+        return await self._model.get_or_none(login_id=email, deleted_at=None)
 
     async def exists_by_email(self, email: str) -> bool:
-        return await self._model.filter(email=email).exists()
+        return await self._model.filter(login_id=email).exists()
 
-    async def exists_by_phone_number(self, phone_number: str) -> bool:
-        return await self._model.filter(phone_number=phone_number).exists()
+    async def create_user_with_consents(
+        self,
+        *,
+        email: str,
+        password_hash: str,
+        nickname: str | None,
+        birth_year: int,
+        sex: Sex,
+        consents: dict[ConsentType, bool],
+    ) -> User:
+        now = datetime.now(config.TIMEZONE)
+        async with in_transaction():
+            user = await self._model.create(
+                login_id=email,
+                password_hash=password_hash,
+                nickname=nickname,
+                birth_year=birth_year,
+                sex=sex,
+            )
+            await UserConsent.bulk_create(
+                [
+                    UserConsent(user=user, consent_type=consent_type, agreed=agreed, agreed_at=now if agreed else None)
+                    for consent_type, agreed in consents.items()
+                ]
+            )
+        return user
 
-    async def update_last_login(self, user_id: int) -> None:
-        await self._model.filter(id=user_id).update(last_login=datetime.now(config.TIMEZONE))
+    async def record_login_failure(self, user: User, *, lock_until: datetime | None) -> None:
+        """틀린 횟수 +1. 잠그면 횟수는 0으로 되돌리고 잠금 시각을 넣음"""
+        if lock_until is None:
+            user.failed_login_count += 1
+        else:
+            user.failed_login_count = 0
+        user.locked_until = lock_until
+        await user.save(update_fields=["failed_login_count", "locked_until"])
+
+    async def reset_login_failures(self, user: User) -> None:
+        if user.failed_login_count or user.locked_until:
+            user.failed_login_count = 0
+            user.locked_until = None
+            await user.save(update_fields=["failed_login_count", "locked_until"])
 
     async def update_instance(self, user: User, data: dict[str, Any]) -> None:
-        update_fields = []
+        update_fields = list(data.keys())
         for key, value in data.items():
-            if value is not None:
-                setattr(user, key, value)
-                update_fields.append(key)
+            setattr(user, key, value)
         if update_fields:
             user.updated_at = datetime.now(config.TIMEZONE)
             update_fields.append(UPDATED_AT_FIELD)

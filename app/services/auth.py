@@ -1,15 +1,30 @@
-from fastapi.exceptions import HTTPException
-from pydantic import EmailStr
-from starlette import status
-from tortoise.transactions import in_transaction
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
-from app.core.jwt.tokens import AccessToken, RefreshToken
-from app.core.utils.common import normalize_phone_number
+from starlette import status
+
+from app.core import config
+from app.core.errors import AppError
 from app.core.utils.security import hash_password, verify_password
 from app.dtos.auth import LoginRequest, SignUpRequest
-from app.models.users import User
+from app.models.users import LOCK_MINUTES, MAX_LOGIN_FAILURES, ConsentType, User
 from app.repositories.user_repository import UserRepository
 from app.services.jwt import JwtService
+
+INVALID_CREDENTIALS_MESSAGE = "이메일 또는 비밀번호가 맞지 않아요."
+LOCKED_MESSAGE = f"비밀번호를 {MAX_LOGIN_FAILURES}번 틀려서 {LOCK_MINUTES}분 동안 로그인할 수 없어요."
+
+
+@dataclass(frozen=True)
+class IssuedTokens:
+    access_token: str
+    refresh_token: str
+    refresh_expires_at: datetime  # 쿠키 만료를 재발급권과 맞춤
+
+
+def _aware(value: datetime) -> datetime:
+    """DB에서 시간대 없이 읽힌 값은 한국 시간으로 봄"""
+    return value if value.tzinfo else value.replace(tzinfo=config.TIMEZONE)
 
 
 class AuthService:
@@ -18,57 +33,77 @@ class AuthService:
         self.jwt_service = JwtService()
 
     async def signup(self, data: SignUpRequest) -> User:
-        # 이메일 중복 체크
-        await self.check_email_exists(data.email)
+        # 필수 동의 3개 (A-1) — 빠진 첫 항목을 field로 알려 줌
+        consents = {
+            ConsentType.TERMS: data.consents.terms,
+            ConsentType.PRIVACY: data.consents.privacy,
+            ConsentType.SENSITIVE_HEALTH: data.consents.sensitive_health,
+        }
+        for field, agreed in (
+            ("consents.terms", data.consents.terms),
+            ("consents.privacy", data.consents.privacy),
+            ("consents.sensitiveHealth", data.consents.sensitive_health),
+        ):
+            if not agreed:
+                raise AppError(
+                    status.HTTP_400_BAD_REQUEST, "CONSENT_REQUIRED", "필수 동의 항목에 모두 동의해 주세요.", field=field
+                )
 
-        # 입력받은 휴대폰 번호를 노말라이즈
-        normalized_phone_number = normalize_phone_number(data.phone_number)
+        email = str(data.email)
+        if await self.user_repo.exists_by_email(email):
+            raise AppError(status.HTTP_409_CONFLICT, "EMAIL_DUPLICATED", "이미 가입된 이메일이에요.", field="email")
 
-        # 휴대폰 번호 중복 체크
-        await self.check_phone_number_exists(normalized_phone_number)
-
-        # 유저 생성
-        async with in_transaction():
-            user = await self.user_repo.create_user(
-                email=data.email,
-                hashed_password=hash_password(data.password),  # 해시화된 비밀번호를 사용
-                name=data.name,
-                phone_number=normalized_phone_number,
-                gender=data.gender,
-                birthday=data.birth_date,
-            )
-
-            return user
+        return await self.user_repo.create_user_with_consents(
+            email=email,
+            password_hash=hash_password(data.password),
+            nickname=data.nickname,
+            birth_year=data.birth_year,
+            sex=data.sex,
+            consents=consents,
+        )
 
     async def authenticate(self, data: LoginRequest) -> User:
-        # 이메일로 사용자 조회
-        email = str(data.email)
-        user = await self.user_repo.get_user_by_email(email)
+        """A-2. 이메일이 없을 때와 비밀번호가 틀렸을 때 같은 코드 · 문구로 응답"""
+        user = await self.user_repo.get_user_by_email(str(data.email))
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="이메일 또는 비밀번호가 올바르지 않습니다."
+            raise AppError(status.HTTP_401_UNAUTHORIZED, "AUTH_INVALID_CREDENTIALS", INVALID_CREDENTIALS_MESSAGE)
+
+        now = datetime.now(config.TIMEZONE)
+        if user.locked_until and _aware(user.locked_until) > now:
+            raise self._locked_error(_aware(user.locked_until))
+
+        if not verify_password(data.password, user.password_hash):
+            failures = (0 if user.locked_until else user.failed_login_count) + 1
+            if failures >= MAX_LOGIN_FAILURES:
+                lock_until = now + timedelta(minutes=LOCK_MINUTES)
+                await self.user_repo.record_login_failure(user, lock_until=lock_until)
+                raise self._locked_error(lock_until)
+            if user.locked_until:  # 지난 잠금은 지우고 1번째 실패부터 다시 셈
+                user.failed_login_count = 0
+            await self.user_repo.record_login_failure(user, lock_until=None)
+            raise AppError(
+                status.HTTP_401_UNAUTHORIZED,
+                "AUTH_INVALID_CREDENTIALS",
+                INVALID_CREDENTIALS_MESSAGE,
+                detail={"remainingAttempts": MAX_LOGIN_FAILURES - failures},
             )
 
-        # 비밀번호 검증
-        if not verify_password(data.password, user.hashed_password):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="이메일 또는 비밀번호가 올바르지 않습니다."
-            )
-
-        # 활성 사용자 체크
-        if not user.is_active:
-            raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="비활성화된 계정입니다.")
-
+        await self.user_repo.reset_login_failures(user)
         return user
 
-    async def login(self, user: User) -> dict[str, AccessToken | RefreshToken]:
-        await self.user_repo.update_last_login(user.id)
-        return self.jwt_service.issue_jwt_pair(user)
+    def issue_tokens(self, user: User) -> IssuedTokens:
+        pair = self.jwt_service.issue_jwt_pair(user)
+        return IssuedTokens(
+            access_token=str(pair["access_token"]),
+            refresh_token=str(pair["refresh_token"]),
+            refresh_expires_at=datetime.fromtimestamp(pair["refresh_token"].payload["exp"], tz=UTC),
+        )
 
-    async def check_email_exists(self, email: str | EmailStr) -> None:
-        if await self.user_repo.exists_by_email(email):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 사용중인 이메일입니다.")
-
-    async def check_phone_number_exists(self, phone_number: str) -> None:
-        if await self.user_repo.exists_by_phone_number(phone_number):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 사용중인 휴대폰 번호입니다.")
+    @staticmethod
+    def _locked_error(locked_until: datetime) -> AppError:
+        return AppError(
+            status.HTTP_423_LOCKED,
+            "AUTH_LOCKED",
+            LOCKED_MESSAGE,
+            detail={"lockedUntil": locked_until.astimezone(config.TIMEZONE).isoformat(timespec="seconds")},
+        )

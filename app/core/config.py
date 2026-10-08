@@ -23,7 +23,7 @@ class Config(BaseSettings):
     TEMPLATE_DIR: str = os.path.join(Path(__file__).resolve().parent.parent, "templates")
 
     DB_HOST: str = "localhost"
-    DB_PORT: int = 3306
+    DB_PORT: int = 5432
     DB_USER: str = "root"
     DB_PASSWORD: str = "pw1234"
     DB_NAME: str = "ai_health"

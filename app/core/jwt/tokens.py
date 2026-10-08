@@ -34,6 +34,9 @@ class Token:
                 raise ExpiredTokenError("Token is expired") from err
             except TokenBackendError as err:
                 raise TokenError("Token is invalid") from err
+            # 출입증 자리에 재발급권(또는 그 반대)을 넣으면 거부
+            if self.payload.get("type") != self.token_type:
+                raise TokenError("Token type mismatch")
         else:
             self.payload = {"type": self.token_type}
             self.set_exp(from_time=self.current_time, lifetime=self.lifetime)
@@ -70,7 +73,7 @@ class Token:
         assert lifetime is not None
 
         dt = from_time + lifetime
-        self.payload["exp"] = timegm(dt.timetuple())
+        self.payload["exp"] = timegm(dt.utctimetuple())
 
     def set_jti(self) -> None:
         self.payload["jti"] = uuid4().hex
@@ -89,7 +92,7 @@ class AccessToken(Token):
 
 class RefreshToken(Token):
     token_type = "refresh"
-    lifetime = timedelta(days=config.REFRESH_TOKEN_EXPIRE_MINUTES)
+    lifetime = timedelta(minutes=config.REFRESH_TOKEN_EXPIRE_MINUTES)
     no_copy_claims = ("type", "exp", "jti")
 
     @property
