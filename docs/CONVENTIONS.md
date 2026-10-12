@@ -8,16 +8,15 @@
 
 ```
 main        배포 가능한 안정 버전 (직접 push 금지)
- └ develop  개발 통합 브랜치
-    └ feature/*   기능 개발
-    └ fix/*       버그 수정
+ └ feature/*   기능 개발
+ └ fix/*       버그 수정
 ```
 
 ### 규칙
 
 - **`main` 직접 push 금지** — 반드시 PR로 병합
 - 모든 작업은 `feature/*` 브랜치에서 진행
-- `feature` → `develop` → `main` 순서로 병합
+- `feature/*` 등 작업 브랜치에서 작업하고 `main`으로 PR을 올려 병합
 
 ### 브랜치 이름
 
@@ -89,6 +88,7 @@ docs: 요구사항 정의서 초안 작성
 
 - 작업 단위로 이슈 생성 후 브랜치 작업
 - PR 본문에 `Closes #이슈번호` 표기
+- 끝낸 일은 GitHub Projects AH_06_05 칸반에 카드로 남기고, 담당과 피처 꼬리표를 붙인다
 - 라벨 예시: `feature` `bug` `docs` `AI` `frontend` `backend` `infra`
 
 ---
