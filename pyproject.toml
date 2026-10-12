@@ -31,6 +31,7 @@ app = [
 dev = [
     "coverage>=7.13.2",
     "mypy>=1.19.1",
+    "pre-commit>=4.6.2",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.14.14",
     "types-passlib>=1.7.7.20250602",
@@ -68,7 +69,7 @@ ignore = ["UP046", "E501"]
 # 특정 파일에서 무시할 규칙들
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"db/migrations/*" = ["ALL"]
+"**/db/migrations/**" = ["ALL"]
 
 [tool.ruff.format]
 # 포매터 설정
