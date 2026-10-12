@@ -11,10 +11,10 @@ OZ코딩스쿨 **AI 헬스케어 캠프 6기** 파이널 프로젝트 · **5팀*
 
 | 이름 | 역할 | GitHub |
 |---|---|---|
-| 이형준 | PM · 기획 · AI 품질 검증 | [@neohj87](https://github.com/neohj87) |
-| 이수인 | 프론트엔드 | [@lsi01](https://github.com/lsi01) |
-| 김채연 | 백엔드 | [@meix2be](https://github.com/meix2be) |
-| 한성규 | 백엔드 | [@skhansk1611-cloud](https://github.com/skhansk1611-cloud) |
+| 김채연 | 팀장(PM), OCR, RAG | [@meix2be](https://github.com/meix2be) |
+| 이수인 | 챗봇, 공통화면 | [@lsi01](https://github.com/lsi01) |
+
+이전 참여: 이형준(PM, 9/30까지), 한성규(인프라, 10/6까지)
 
 상세 역할 분담(R&R)은 [docs/TEAM.md](docs/TEAM.md) 참고
 
