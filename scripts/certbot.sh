@@ -89,4 +89,3 @@ EOF
 else
   echo "${COLOR_BLUE} 스크립트를 종료합니다.${COLOR_NC}"
 fi
-
