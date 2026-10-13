@@ -18,6 +18,7 @@ npx expo start              # 휴대폰 Expo Go 앱으로 QR 찍기, 웹은 w
 - 패키지 추가는 `npx expo install <이름>` (SDK에 맞는 버전으로 설치됨)
 - 타입 검사: `npm run typecheck`
 - 서버가 준비되기 전에는 `EXPO_PUBLIC_USE_MOCK=true`로 API 명세서 응답 모양의 가짜 응답을 씀
+  - 가짜 응답 로그인: 이메일은 아무 값, 비밀번호를 비우거나 `1234`면 실패(5번이면 10분 잠김), 그 밖에는 성공
 
 ## 폴더
 

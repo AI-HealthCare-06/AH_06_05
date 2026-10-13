@@ -9,8 +9,8 @@ import { copy } from '@/shared/copy';
 import { C, L } from '@/shared/theme';
 import { ChatbotIcon } from '@/shared/ui/icons';
 
-// 버튼을 숨기는 화면 — 챗봇 창 자체 · 촬영 · 인식 확인 · 분석 중 (경로는 화면을 만들 때 맞춤)
-const HIDDEN = ['/chat', '/capture', '/recognize', '/analyzing'];
+// 버튼을 숨기는 화면 — 챗봇 창 자체 · 촬영 · 인식 확인 · 분석 중 · 로그인 (경로는 화면을 만들 때 맞춤)
+const HIDDEN = ['/chat', '/capture', '/recognize', '/analyzing', '/login'];
 // 하단 내비가 있는 화면 — 버튼을 내비 위로 올림
 const WITH_BOTTOM_NAV = ['/challenge', '/me'];
 
