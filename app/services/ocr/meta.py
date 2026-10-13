@@ -20,7 +20,17 @@ def parse_meta(text: str, today: date | None = None) -> tuple[date | None, int |
     flags: list[str] = []
     issued: date | None = None
     birth: int | None = None
-    m = re.search(r"(\d{4})\s*[년.\-/]\s*(\d{1,2})\s*[월.\-/]\s*(\d{1,2})\s*일?", t)
+    # 조제연월일 · 조제일자 옆의 날짜는 교부일이 아니다 (교부일 칸이 비어 있으면 조제일을 교부일로 읽는 오독이 있었음)
+    m = next(
+        (
+            x
+            for x in re.finditer(r"(\d{4})\s*[년.\-/]\s*(\d{1,2})\s*[월.\-/]\s*(\d{1,2})\s*일?", t)
+            if not re.search(
+                r"조제\s*(?:연|년)\s*월\s*일|조제\s*일자|복용\s*완료", t[max(0, x.start() - 12) : x.start()]
+            )
+        ),
+        None,
+    )
     if m:
         try:
             issued = date(int(m[1]), int(m[2]), int(m[3]))

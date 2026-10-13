@@ -103,7 +103,7 @@ def read(  # noqa: C901
     )
 
     if table.disease_raw:
-        i0 = next((i for i, f in enumerate(pfields) if "질병분류기호" in f["inferText"]), None)
+        i0 = next((i for i, f in enumerate(pfields) if re.search(r"질병\s*분류\s*기호|^기호$", f["inferText"])), None)
         seg: list[float] = []
         if i0 is not None:
             for f in pfields[i0 + 1 : i0 + 6]:

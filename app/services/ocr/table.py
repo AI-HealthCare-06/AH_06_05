@@ -12,6 +12,12 @@ from app.services.ocr.prepare import center
 
 _NUM = re.compile(r"\d+(\.\d+)?")
 _HEAD_WORDS = ((0, r"투[약여]량"), (1, r"투[약여]\s*횟수"), (2, r"투[약여]\s*일수"))
+# 표가 끝났다는 표시: 약 줄 아래의 "조제시 참고사항", "주사제 처방내역", "사용기간", "이하 여백", 구분선 (실제 양식 5장 시험에서 추가)
+_TABLE_END = re.compile(r"조제시|참고사항|주사제|사용기간|이하\s*여백|={3,}")
+_SPLIT_HEAD = (re.compile(r"투[약여]"), re.compile(r"량|횟수|일수"))
+# 질병분류기호 칸 뒤에서 값을 읽을 때 멈추는 말
+_DZ_LABEL = r"질\s*병\s*분\s*류\s*기\s*호(?![를은는이가]\s*기재)"
+_DZ_STOP = r"(?:처방|면허\s*종류|※|환자의\s*요구)"
 
 
 @dataclass
@@ -28,9 +34,46 @@ class Table:
     disease_raw: str | None  # 질병분류기호 원문
 
 
+def _merge_split_heads(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """머리글이 "투약"과 "량"처럼 쪼개져 읽히면 한 글자 묶음으로 합친다 (글자 위치는 두 칸을 감싸는 상자)"""
+    out: list[dict[str, Any]] = []
+    i = 0
+    while i < len(fields):
+        a = fields[i]
+        b = fields[i + 1] if i + 1 < len(fields) else None
+        if b and _SPLIT_HEAD[0].fullmatch(a["inferText"]) and _SPLIT_HEAD[1].fullmatch(b["inferText"]):
+            pts = [(v["x"], v["y"]) for f in (a, b) for v in f["boundingPoly"]["vertices"]]
+            x0, x1 = min(x for x, _ in pts), max(x for x, _ in pts)
+            y0, y1 = min(y for _, y in pts), max(y for _, y in pts)
+            out.append(
+                {
+                    **a,
+                    "inferText": a["inferText"] + b["inferText"],
+                    "inferConfidence": min(a.get("inferConfidence", 1.0), b.get("inferConfidence", 1.0)),
+                    "boundingPoly": {
+                        "vertices": [{"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1}, {"x": x0, "y": y1}]
+                    },
+                }
+            )
+            i += 2
+        else:
+            out.append(a)
+            i += 1
+    return out
+
+
+def join_code_boxes(raw: str) -> str:
+    """칸이 나뉜 질병분류기호("A 1 2 3 B 2 3 4")를 글자별로 붙임 → "A123 B234" """
+    return re.sub(
+        r"(?<![0-9A-Za-z])([A-Za-z])\s(\d)\s(\d)(?:\s(\d))?(?![0-9A-Za-z])",
+        lambda m: "".join(g for g in m.groups() if g),
+        raw,
+    )
+
+
 def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 폴더에서 검증한 코드를 그대로 옮긴 것이라 나누지 않음
     """머리글을 못 읽으면 None (사진이 흐리거나 표가 잘림)"""
-    fields = data["images"][0]["fields"]
+    fields = _merge_split_heads(data["images"][0]["fields"])
     tokens = [f["inferText"] for f in fields]
     text = " ".join(tokens)
     head = next((i for i, t in enumerate(tokens) if re.search(r"투[약여]\s*일수", t)), None)
@@ -38,6 +81,8 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
         return None
     start = head + 1
     end = next((i for i, t in enumerate(tokens) if t.startswith("용법")), len(tokens))
+    # 약 줄 아래에 붙은 문구가 가짜 약 줄이 되지 않게, 표 끝 표시가 먼저 나오면 거기서 자른다
+    end = min(end, next((i for i in range(start, len(tokens)) if _TABLE_END.match(tokens[i])), len(tokens)))
 
     col_x: dict[int, float] = {}
     for key, word in _HEAD_WORDS:
@@ -123,5 +168,6 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
             if abs(row.y - cy) <= 40 and abs(col_x[col] - cx) <= 120 and row.nums[col] is None:
                 row.nums[col] = float(f["inferText"])
 
-    dz = re.search(r"질병분류기호\s*(.+?)\s*면허종류", text) or re.search(r"질병분류기호\s*(\S+)", text)
-    return Table(rows=rows, n_anchor=n_anchor, disease_raw=dz[1] if dz else None)
+    # 라벨이 "질병 분류 기호"로 쪼개져도 찾고, 아래 안내문("질병분류기호를 기재하지 …")은 건너뜀
+    dz = re.search(_DZ_LABEL + r"\s*(.+?)\s*" + _DZ_STOP, text) or re.search(_DZ_LABEL + r"\s*(\S+)", text)
+    return Table(rows=rows, n_anchor=n_anchor, disease_raw=join_code_boxes(dz[1]) if dz else None)

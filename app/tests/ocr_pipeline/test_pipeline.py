@@ -100,3 +100,79 @@ def test_header_missing_or_empty_gives_retake():
     empty = {"images": [{"fields": []}]}
     assert read(empty, matcher(), CODES).status == "retake"
     assert read({}, matcher(), CODES).status == "retake"
+
+
+# ── 실제 양식 5장 시험(10/13)에서 찾은 문제: 합성 글자 목록으로 재현 ──────────────────────────────
+def _fld(text: str, x: float, y: float, w: float = 80, h: float = 24) -> dict:
+    return {
+        "inferText": text,
+        "inferConfidence": 0.99,
+        "boundingPoly": {
+            "vertices": [{"x": x, "y": y}, {"x": x + w, "y": y}, {"x": x + w, "y": y + h}, {"x": x, "y": y + h}]
+        },
+    }
+
+
+def _table(split_head: bool, tail: list[dict]) -> dict:
+    head = (
+        [_fld("투약", 380, 100, 40), _fld("량", 425, 100, 30), _fld("투여", 480, 100, 40), _fld("횟수", 525, 100, 40)]
+        + [_fld("투약", 580, 100, 40), _fld("일수", 625, 100, 40)]
+        if split_head
+        else [_fld("투약량", 380, 100), _fld("투여횟수", 480, 100), _fld("총투약일수", 580, 100)]
+    )
+    rows = [_fld("명칭", 100, 100)] + head
+    for i, (name, a, b, c) in enumerate((("돔페리돈", 1, 3, 2), ("라니티딘", 3, 2, 5))):
+        y = 200 + i * 60
+        rows += [_fld(name, 100, y), _fld(str(a), 400, y, 20), _fld(str(b), 500, y, 20), _fld(str(c), 600, y, 20)]
+    return {"images": [{"fields": rows + tail}]}
+
+
+def test_table_stops_at_end_markers():
+    from app.services.ocr.table import parse_table
+
+    tail = [
+        _fld("조제시", 100, 700),
+        _fld("참고사항", 200, 700),
+        _fld("사용기간", 100, 900),
+        _fld("교부일로부터", 300, 900),
+    ]
+    t = parse_table(_table(False, tail))
+    assert t is not None
+    assert [r.name for r in t.rows] == ["돔페리돈", "라니티딘"]
+    assert t.rows[1].nums == [3.0, 2.0, 5.0]
+
+
+def test_split_head_words_are_merged():
+    from app.services.ocr.table import parse_table
+
+    t = parse_table(_table(True, []))
+    assert t is not None
+    assert [r.nums for r in t.rows] == [[1.0, 3.0, 2.0], [3.0, 2.0, 5.0]]
+
+
+def test_disease_label_split_and_notice_sentence():
+    from app.services.ocr.table import join_code_boxes, parse_table
+
+    notice = [_fld("※", 100, 400), _fld("환자의 요구가 있는 때에는 질병분류기호를 기재하지 아니합니다.", 100, 420, 600)]
+    label = [_fld("질병", 100, 150), _fld("분류", 160, 150), _fld("기호", 220, 150), _fld("I219", 300, 150),
+             _fld("처방", 380, 150), _fld("의료인의", 430, 150)]  # fmt: skip
+    t = parse_table(_table(False, label + notice))
+    assert t is not None and t.disease_raw == "I219"
+    only_notice = parse_table(_table(False, notice))
+    assert only_notice is not None and only_notice.disease_raw is None  # "를"을 코드로 읽지 않음
+    assert join_code_boxes("A 1 2 3 B 2 3 4") == "A123 B234"
+    assert join_code_boxes("I10 E11") == "I10 E11"
+
+
+def test_issue_date_ignores_dispensing_date():
+    from datetime import date
+
+    from app.services.ocr.meta import parse_meta
+
+    today = date(2026, 10, 13)
+    issued, _b, flags = parse_meta("교부연월일 및 번호 20 년 월 일 제 호 조제연월일 2018.05.30", today)
+    assert issued is None and "교부일 못 읽음" in flags
+    issued, _b, _f = parse_meta("교부연월일 2022년 12월 1일 제113호 조제연월일 2021 12 1", today)
+    assert issued == date(2022, 12, 1)
+    issued, _b, _f = parse_meta("교부번호 2018 년 08 월 07 일 조제년월일 2018.08.09", today)
+    assert issued == date(2018, 8, 7)
