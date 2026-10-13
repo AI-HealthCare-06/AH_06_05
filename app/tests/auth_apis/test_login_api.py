@@ -1,13 +1,17 @@
 import time
+import uuid
 from email.utils import parsedate_to_datetime
+from unittest.mock import patch
 
 from httpx import ASGITransport, AsyncClient
+from redis.exceptions import ConnectionError as RedisConnectionError
 from starlette import status
 from tortoise.contrib.test import TestCase
 
 from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.main import app
 from app.models.users import User
+from app.services import unknown_email_attempts
 from app.tests.helpers import PASSWORD, signup
 
 
@@ -32,14 +36,62 @@ class TestLoginAPI(TestCase):
         """이메일이 없을 때와 비밀번호가 틀렸을 때 같은 코드 · 문구"""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await signup(client, "same@example.com")
-            unknown = await client.post("/api/v1/auth/login", json={"email": "none@example.com", "password": PASSWORD})
+            none_email = f"none-{uuid.uuid4().hex[:8]}@example.com"  # Redis 횟수가 시험마다 쌓이지 않게
+            unknown = await client.post("/api/v1/auth/login", json={"email": none_email, "password": PASSWORD})
             wrong = await client.post("/api/v1/auth/login", json={"email": "same@example.com", "password": "wrong123"})
 
         for response in (unknown, wrong):
             assert response.status_code == status.HTTP_401_UNAUTHORIZED
             assert response.json()["error"]["code"] == "AUTH_INVALID_CREDENTIALS"
             assert response.json()["error"]["message"] == "이메일 또는 비밀번호가 맞지 않아요."
-        assert wrong.json()["error"]["detail"] == {"remainingAttempts": 4}
+            # 가입 여부가 드러나지 않게 detail 모양도 같음
+            assert response.json()["error"]["detail"] == {"remainingAttempts": 4}
+
+    async def test_login_unknown_email_counts_and_locks_like_real_account(self):
+        """가입하지 않은 이메일도 남은 횟수가 4 → 1로 줄고 5번째에 잠김. 응답만으로 가입 여부를 알 수 없게 (A-2 같은 에러)"""
+        unknown_email = f"nobody-{uuid.uuid4().hex[:8]}@example.com"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await signup(client, "real-lock@example.com")
+            results = {}
+            for email in ("real-lock@example.com", unknown_email):
+                responses = [
+                    await client.post("/api/v1/auth/login", json={"email": email, "password": "wrong123"})
+                    for _ in range(5)
+                ]
+                results[email] = responses
+
+        for responses in results.values():
+            assert [r.status_code for r in responses] == [401, 401, 401, 401, 423]
+            assert [r.json()["error"].get("detail") for r in responses[:4]] == [
+                {"remainingAttempts": n} for n in (4, 3, 2, 1)
+            ]
+            locked = responses[4].json()["error"]
+            assert locked["code"] == "AUTH_LOCKED" and locked["detail"]["lockedUntil"].endswith("+09:00")
+        real, unknown = results["real-lock@example.com"], results[unknown_email]
+        assert [r.json()["error"].keys() for r in real] == [r.json()["error"].keys() for r in unknown]
+
+    async def test_login_unknown_email_lock_then_unlock(self):
+        """가입하지 않은 이메일도 잠김이 풀리면 1번째 실패부터 다시 셈"""
+        email = f"nobody-{uuid.uuid4().hex[:8]}@example.com"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for _ in range(5):
+                await client.post("/api/v1/auth/login", json={"email": email, "password": "wrong123"})
+            locked = await client.post("/api/v1/auth/login", json={"email": email, "password": "wrong123"})
+            await unknown_email_attempts.clear(email)  # 10분이 지난 것처럼
+            again = await client.post("/api/v1/auth/login", json={"email": email, "password": "wrong123"})
+
+        assert locked.status_code == status.HTTP_423_LOCKED
+        assert again.json()["error"]["detail"] == {"remainingAttempts": 4}
+
+    async def test_login_unknown_email_when_redis_down(self):
+        """Redis가 꺼져도 가입하지 않은 이메일은 500이 아니라 회원 첫 실패와 같은 401 (서버 오류로 가입 여부가 드러나지 않게)"""
+        email = f"nobody-{uuid.uuid4().hex[:8]}@example.com"
+        with patch.object(unknown_email_attempts, "locked_until", side_effect=RedisConnectionError("down")):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post("/api/v1/auth/login", json={"email": email, "password": "wrong123"})
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.json()["error"]["detail"] == {"remainingAttempts": 4}
 
     async def test_login_locked_after_five_failures(self):
         """CM-01-E1 남은 횟수 → 5번째에 CM-01-E2 잠금 (맞는 비밀번호도 10분 동안 거부)"""
