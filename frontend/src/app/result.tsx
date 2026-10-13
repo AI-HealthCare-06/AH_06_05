@@ -309,7 +309,7 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
           <Text style={T.small}>{r.sources}</Text>
           {life.sources.map((s) => (
             <Text key={s.id} style={T.caption}>
-              · {s.org} · {s.title}
+              · {s.title ? `${s.org} · ${s.title}` : s.org}
             </Text>
           ))}
         </View>

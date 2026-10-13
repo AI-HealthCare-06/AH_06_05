@@ -2,6 +2,8 @@
 // 약 이름과 경고는 화면 확인용 예시예요. 실제 판정은 서버가 DUR 데이터로 함
 // EXPO_PUBLIC_MOCK_SCENARIO로 예외 화면을 불러올 수 있음: quality | notdoc | ocrfail | guidefail | pillbag
 
+import { PICKABLE_DISEASES } from '@/features/rag/diseases';
+
 const SCENARIO = process.env.EXPO_PUBLIC_MOCK_SCENARIO ?? '';
 
 type Cand = { ediCode: string | null; itemSeq: string | null; itemName: string; score: number };
@@ -166,7 +168,7 @@ export function analysisStatus() {
 }
 
 let userCodes: string[] = [];
-const DISEASE_NAMES: Record<string, string> = { I10: '고혈압', E11: '2형 당뇨병', E78: '이상지질혈증' };
+const DISEASE_NAMES: Record<string, string> = Object.fromEntries(PICKABLE_DISEASES.map((d) => [d.code, d.name]));
 const has = (names: string[]) => names.every((n) => active().some((i) => i.itemName?.includes(n)));
 
 function buildWarnings() {

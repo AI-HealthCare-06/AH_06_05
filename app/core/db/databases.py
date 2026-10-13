@@ -9,6 +9,7 @@ TORTOISE_APP_MODELS = [
     "app.models.users",
     "app.models.masters",
     "app.models.ocr",
+    "app.models.analysis",
 ]
 
 TORTOISE_ORM = {

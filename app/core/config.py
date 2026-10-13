@@ -43,3 +43,8 @@ class Config(BaseSettings):
     # CLOVA OCR (캠프 제공). 둘 다 비면 local · dev에서는 저장해 둔 가짜 처방전 결과로 대신 돌아감 (prod는 오류)
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET_KEY: str = ""
+
+    # 안전성 점검(DUR) 자료 — 시험 폴더에서 만든 safety.sqlite 파일 경로 (읽기 전용). Postgres로 옮기기 전까지 이 파일을 읽음
+    SAFETY_DB_PATH: str = ""
+    # 복합제 구성 성분까지 보는 확장 (약사 검토 전이라 기본 꺼짐)
+    SAFETY_COMBO_EXT: bool = False

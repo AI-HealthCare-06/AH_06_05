@@ -1,0 +1,359 @@
+"""R-1 ~ R-6 — 분석 시작 · 진행 상태 · 다시 시도 · 결과 · 경고 자세히 · 질환 직접 선택
+안전성 점검 DB는 시험용으로 작게 만든 sqlite를 씀 (표 모양은 실제 safety.sqlite와 같음)."""
+
+import sqlite3
+import tempfile
+from datetime import date, timedelta
+from pathlib import Path
+from unittest.mock import patch
+
+from httpx import ASGITransport, AsyncClient
+from starlette import status
+from tortoise.contrib.test import TestCase
+
+from app.core import config
+from app.main import app
+from app.models.analysis import Analysis, AnalysisStatus, AnalysisStep
+from app.models.masters import Disease, DrugProduct
+from app.models.ocr import DocType, MatchStatus, Prescription, PrescriptionDisease, PrescriptionItem
+from app.models.users import ConsentType, User, UserConsent
+from app.services import analyses as svc
+from app.services import safety
+from app.services.drug_names import base_name
+from app.services.guide import lifestyle
+from app.tests.helpers import signup
+
+SCHEMA = """
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE drug_products (edi_code TEXT PRIMARY KEY, product_name TEXT, ingr_code TEXT, ingr_name TEXT,
+    ingr_count INTEGER, route TEXT, company TEXT, rx_type TEXT);
+CREATE TABLE dur_interaction (code_a TEXT, code_b TEXT, valid_from TEXT, valid_to TEXT, reason TEXT, message TEXT,
+    sex TEXT, spc_age INTEGER, spc_age_cond TEXT, check_range TEXT, excep_days INTEGER, notice_date TEXT, notice_no TEXT);
+CREATE TABLE dur_interaction_exception (code_a TEXT, code_b TEXT, edi_code TEXT, valid_from TEXT, valid_to TEXT);
+CREATE TABLE dur_age_limit (ingr_code TEXT, valid_from TEXT, valid_to TEXT, age INTEGER, unit TEXT, op TEXT,
+    cond_text TEXT, reason TEXT, notice_date TEXT, notice_no TEXT);
+CREATE TABLE dur_age_limit_exception (ingr_code TEXT, edi_code TEXT);
+CREATE TABLE dur_elderly (ingr_code TEXT, valid_from TEXT, valid_to TEXT, age INTEGER, reason TEXT);
+CREATE TABLE dur_dose_limit (ingr_code TEXT, sno INTEGER, valid_from TEXT, valid_to TEXT, ingr_name TEXT,
+    unit_amount REAL, daily_max REAL, daily_max_text TEXT, age INTEGER, age_unit TEXT, age_op TEXT,
+    sex TEXT, group_code TEXT, detail TEXT);
+CREATE TABLE dup_ingredient (edi_code TEXT, dur_ingr_code TEXT, dur_ingr_name TEXT, PRIMARY KEY (edi_code, dur_ingr_code));
+CREATE TABLE dup_efficacy (edi_code TEXT, check_code TEXT, group_name TEXT, PRIMARY KEY (edi_code, check_code));
+"""
+PRODUCTS = [  # (edi, 이름, 성분코드, 성분명, DUR 약 이름)
+    ("641900040", "노바스크정5밀리그람(암로디핀베실산염)_(6.944mg/1정)", "C1", "암로디핀"),
+    ("644300010", "다이아벡스정500밀리그램(메트포르민염산염)_(0.5g/1정)", "M1", "메트포르민"),
+    ("645600020", "리피토정10밀리그램(아토르바스타틴칼슘삼수화물)_(10.85mg/1정)", "T1", "아토르바스타틴"),
+    ("648800030", "아스피린프로텍트정100밀리그람_(0.1g/1정)", "S1", "아스피린"),
+]
+DISEASES = [("I10", "본태성 고혈압"), ("E11", "2형 당뇨병"), ("N18", "만성 신장병")]
+
+
+def make_safety_db(directory: str) -> str:
+    path = Path(directory) / "safety.sqlite"
+    con = sqlite3.connect(path)
+    con.executescript(SCHEMA)
+    for edi, name, ingr, ingr_name in PRODUCTS:
+        con.execute("INSERT INTO drug_products VALUES (?,?,?,?,1,'내복','회사','전문')", (edi, name, ingr, ingr_name))
+    con.execute(  # 아토르바스타틴 + 아스피린은 시험용 병용금기
+        "INSERT INTO dur_interaction VALUES ('T1','S1','20000101','99991231','시험용 금기 사유','',NULL,NULL,NULL,NULL,NULL,'20190101','2019-1')"
+    )
+    con.commit()
+    con.close()
+    return str(path)
+
+
+class AnalysisCase(TestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db_path = make_safety_db(self._tmp.name)
+        self._patch = patch.object(config, "SAFETY_DB_PATH", self.db_path)
+        self._patch.start()
+        safety.reset_checker()
+        for edi, name, _i, _n in PRODUCTS:
+            await DrugProduct.create(edi_code=edi, item_name=name, entp_name="회사", etc_otc="전문", route="내복")
+        for code, name in DISEASES:
+            await Disease.create(code=code, name_kr=name)
+
+    async def asyncTearDown(self):
+        self._patch.stop()
+        safety.reset_checker()
+        self._tmp.cleanup()
+        await super().asyncTearDown()
+
+    @staticmethod
+    def client() -> AsyncClient:
+        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+    @staticmethod
+    async def auth(client: AsyncClient, email: str) -> tuple[dict[str, str], User]:
+        tokens = await signup(client, email)
+        user = await User.get(login_id=email)
+        return {"Authorization": f"Bearer {tokens['accessToken']}"}, user
+
+    @staticmethod
+    async def prescription(
+        user: User,
+        edis: list[str],
+        diseases: tuple[str, ...] = (),
+        hospital: str = "○○내과",
+        status_: MatchStatus = MatchStatus.AUTO,
+    ) -> Prescription:
+        rx = await Prescription.create(
+            user=user,
+            doc_type=DocType.PRESCRIPTION,
+            issued_date=date.today() - timedelta(days=1),
+            hospital_name=hospital,
+        )
+        for i, code in enumerate(diseases):
+            await PrescriptionDisease.create(prescription=rx, disease_id=code, is_main=i == 0)
+        for edi in edis:
+            await PrescriptionItem.create(
+                prescription=rx, drug_id=edi, raw_name=edi, match_status=status_,
+                dose_per_time=1, times_per_day=2, total_days=30, timing="아침 식후",
+            )  # fmt: skip
+        return rx
+
+    async def start(self, client, headers, *rxs: Prescription):
+        return await client.post("/api/v1/analyses", json={"prescriptionIds": [r.id for r in rxs]}, headers=headers)
+
+
+class TestStartAndResult(AnalysisCase):
+    async def test_full_flow_interaction_warning_and_guides(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "r1@example.com")
+            rx1 = await self.prescription(user, ["645600020"], ("I10",), "○○내과")
+            rx2 = await self.prescription(user, ["648800030", "644300010"], (), "△△의원")
+            res = await self.start(client, headers, rx1, rx2)
+            assert res.status_code == status.HTTP_202_ACCEPTED
+            aid = res.json()["analysisId"]
+            st = (await client.get(f"/api/v1/analyses/{aid}/status", headers=headers)).json()
+            assert st["status"] == "done" and [s["state"] for s in st["steps"]] == ["done"] * 3
+            assert st["drugCount"] == 3 and st["excludedCount"] == 0
+
+            r = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+            assert r["status"] == "done" and r["summary"]["prescriptionCount"] == 2
+            assert r["summary"]["hospitals"] == ["○○내과", "△△의원"] and r["summary"]["drugCount"] == 3
+            assert r["summary"]["warningCounts"]["danger"] == 1
+            w = r["warnings"][0]
+            assert w["type"] == "interaction" and w["severity"] == "danger" and w["title"] == "함께 먹으면 안 되는 약"
+            assert {d["itemName"] for d in w["drugs"]} == {base_name(PRODUCTS[2][1]), base_name(PRODUCTS[3][1])}
+            assert {d["hospitalName"] for d in w["drugs"]} == {"○○내과", "△△의원"}
+            assert len(r["checkedItems"]) == 5 and r["disclaimer"]
+
+            med = r["medication"]
+            assert med["status"] == "done" and len(med["items"]) == 3
+            first = med["items"][0]
+            assert first["howToTake"] == "하루 2번 · 아침 식후 · 1회 1 · 30일" or "하루 2번" in first["howToTake"]
+            assert first["caution"] is None and first["itemId"]
+
+            life = r["lifestyle"]
+            assert life["status"] == "done"
+            assert life["diseases"] == [{"code": "I10", "name": "고혈압", "origin": "prescription"}]
+            assert life["sections"] and all(s["diseaseCode"] == "I10" for s in life["sections"])
+            ids = {s["id"] for s in life["sources"]}
+            assert ids and all(i in ids for s in life["sections"] for a in s["actions"] for i in a["sourceIds"])
+            assert life["warningSigns"]
+
+    async def test_warning_detail_r5(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "r5@example.com")
+            rx = await self.prescription(user, ["645600020", "648800030"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            r = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+            wid = r["warnings"][0]["id"]
+            d = (await client.get(f"/api/v1/analyses/{aid}/warnings/{wid}", headers=headers)).json()
+            assert d["judgedBy"] == "database" and d["reasonOriginal"] == "시험용 금기 사유"
+            assert {x["ingredient"] for x in d["drugs"]} == {"아토르바스타틴", "아스피린"}
+            assert d["source"]["name"] == "심평원 DUR 병용금기" and d["doseDetail"] is None and d["actionAdvice"]
+            assert (await client.get(f"/api/v1/analyses/{aid}/warnings/999999", headers=headers)).status_code == 404
+
+    async def test_no_warning_returns_empty_list_and_checked_items(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "r2@example.com")
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            r = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+            assert r["warnings"] == [] and len(r["checkedItems"]) == 5
+            assert r["lifestyle"]["diseases"] == [] and r["lifestyle"]["sections"] == []
+
+    async def test_excluded_item_is_allowed_and_listed(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "r3@example.com")
+            rx = await self.prescription(user, ["641900040"])
+            await PrescriptionItem.create(prescription=rx, raw_name="빼기약", match_status=MatchStatus.EXCLUDED)
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            r = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+            assert r["excludedDrugs"] == [{"rawName": "빼기약", "reason": "excluded"}]
+            assert r["summary"]["drugCount"] == 1
+            st = (await client.get(f"/api/v1/analyses/{aid}/status", headers=headers)).json()
+            assert st["excludedCount"] == 1
+
+    async def test_start_errors(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "r4@example.com")
+            other_headers, other = await self.auth(client, "r4b@example.com")
+            ok = await self.prescription(user, ["641900040"])
+            pending = await self.prescription(user, ["641900040"], status_=MatchStatus.NEEDS_CONFIRM)
+            unmatched = await self.prescription(user, [], status_=MatchStatus.UNMATCHED)
+            await PrescriptionItem.create(prescription=unmatched, raw_name="모름", match_status=MatchStatus.UNMATCHED)
+            mine_only_excluded = await self.prescription(user, [])
+            await PrescriptionItem.create(
+                prescription=mine_only_excluded, raw_name="x", match_status=MatchStatus.EXCLUDED
+            )
+
+            res = await self.start(client, headers, ok, pending)
+            assert res.status_code == 409 and res.json()["error"]["code"] == "ITEMS_NOT_CONFIRMED"
+            res = await self.start(client, headers, unmatched)
+            assert res.status_code == 409 and res.json()["error"]["code"] == "ITEMS_NOT_CONFIRMED"
+            res = await self.start(client, headers, mine_only_excluded)
+            assert res.status_code == 409 and res.json()["error"]["code"] == "ITEMS_NOT_CONFIRMED"
+            res = await self.start(client, other_headers, ok)  # 남의 처방전
+            assert res.status_code == 404
+            res = await client.post("/api/v1/analyses", json={"prescriptionIds": []}, headers=headers)
+            assert res.status_code == 400
+            res = await client.post("/api/v1/analyses", json={"prescriptionIds": [1, 2, 3, 4, 5, 6]}, headers=headers)
+            assert res.status_code == 400
+            assert (await client.post("/api/v1/analyses", json={"prescriptionIds": [ok.id]})).status_code == 401
+
+            await UserConsent.filter(user=user, consent_type=ConsentType.SENSITIVE_HEALTH).update(agreed=False)
+            res = await self.start(client, headers, ok)
+            assert res.status_code == 403 and res.json()["error"]["code"] == "CONSENT_REQUIRED"
+
+    async def test_other_users_analysis_is_404_and_unfinished_is_409(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "r6@example.com")
+            other_headers, _ = await self.auth(client, "r6b@example.com")
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            for path in (f"/analyses/{aid}", f"/analyses/{aid}/status", f"/analyses/{aid}/warnings/1"):
+                assert (await client.get("/api/v1" + path, headers=other_headers)).status_code == 404
+            assert (await client.post(f"/api/v1/analyses/{aid}/retry", headers=other_headers)).status_code == 404
+            assert (
+                await client.put(f"/api/v1/analyses/{aid}/diseases", json={"diseaseCodes": []}, headers=other_headers)
+            ).status_code == 404
+            running = await Analysis.create(
+                user=user, status=AnalysisStatus.RUNNING, current_step=AnalysisStep.SAFETY_CHECK, started_at=svc._now()
+            )
+            res = await client.get(f"/api/v1/analyses/{running.id}", headers=headers)
+            assert res.status_code == 409 and res.json()["error"]["code"] == "ANALYSIS_NOT_READY"
+            st = (await client.get(f"/api/v1/analyses/{running.id}/status", headers=headers)).json()
+            assert [s["state"] for s in st["steps"]] == ["done", "running", "pending"]
+            res = await client.put(
+                f"/api/v1/analyses/{running.id}/diseases", json={"diseaseCodes": []}, headers=headers
+            )
+            assert res.status_code == 409
+
+
+class TestFailureAndRetry(AnalysisCase):
+    async def test_safety_failure_then_retry_resumes(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f1@example.com")
+            rx = await self.prescription(user, ["645600020", "648800030"])
+            with patch.object(config, "SAFETY_DB_PATH", ""):
+                safety.reset_checker()
+                aid = (await self.start(client, headers, rx)).json()["analysisId"]
+                st = (await client.get(f"/api/v1/analyses/{aid}/status", headers=headers)).json()
+            assert st["status"] == "failed" and st["error"]["code"] == "SAFETY_CHECK_FAILED"
+            assert [s["state"] for s in st["steps"]] == ["done", "failed", "pending"]
+            assert st["partialResultAvailable"] is False and st["retryCount"] == 0
+            assert (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).status_code == 409
+
+            safety.reset_checker()
+            res = await client.post(f"/api/v1/analyses/{aid}/retry", headers=headers)
+            assert res.status_code == 202 and res.json() == {"analysisId": aid, "status": "queued"}
+            st = (await client.get(f"/api/v1/analyses/{aid}/status", headers=headers)).json()
+            assert st["status"] == "done"
+            assert (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()["warnings"]
+            res = await client.post(f"/api/v1/analyses/{aid}/retry", headers=headers)
+            assert res.status_code == 409 and res.json()["error"]["code"] == "ANALYSIS_NOT_FAILED"
+
+    async def test_guide_failure_keeps_safety_result_and_retry_limit(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f2@example.com")
+            rx = await self.prescription(user, ["645600020", "648800030"], ("I10",))
+            with patch.object(lifestyle, "build", side_effect=RuntimeError("boom")):
+                aid = (await self.start(client, headers, rx)).json()["analysisId"]
+                st = (await client.get(f"/api/v1/analyses/{aid}/status", headers=headers)).json()
+                assert st["status"] == "failed" and st["error"]["code"] == "GUIDE_GENERATION_FAILED"
+                assert st["partialResultAvailable"] is True
+                assert [s["state"] for s in st["steps"]] == ["done", "done", "failed"]
+                r = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()  # 안전성 결과만 먼저 보기
+                assert r["status"] == "failed" and r["warnings"] and r["lifestyle"]["status"] == "failed"
+                assert r["medication"]["status"] == "failed" or r["medication"]["items"] == []
+                for n in (1, 2, 3):
+                    assert (await client.post(f"/api/v1/analyses/{aid}/retry", headers=headers)).status_code == 202
+                    st = (await client.get(f"/api/v1/analyses/{aid}/status", headers=headers)).json()
+                    assert st["status"] == "failed" and st["retryCount"] == n
+                res = await client.post(f"/api/v1/analyses/{aid}/retry", headers=headers)
+                assert res.status_code == 429 and res.json()["error"]["code"] == "RETRY_LIMIT_EXCEEDED"
+            await Analysis.filter(id=aid).update(retry_count=0)
+            assert (await client.post(f"/api/v1/analyses/{aid}/retry", headers=headers)).status_code == 202
+            r = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+            assert r["status"] == "done" and r["lifestyle"]["status"] == "done" and r["medication"]["status"] == "done"
+
+    async def test_timeout_after_60_seconds(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f3@example.com")
+            stuck = await Analysis.create(
+                user=user, status=AnalysisStatus.RUNNING, current_step=AnalysisStep.SAFETY_CHECK,
+                started_at=svc._now() - timedelta(seconds=120),
+            )  # fmt: skip
+            st = (await client.get(f"/api/v1/analyses/{stuck.id}/status", headers=headers)).json()
+            assert st["status"] == "failed" and st["error"]["code"] == "TIMEOUT"
+            assert [s["state"] for s in st["steps"]] == ["done", "failed", "pending"]
+
+
+class TestDiseases(AnalysisCase):
+    async def test_put_diseases_builds_user_lifestyle_with_conflict_and_links(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "d1@example.com")
+            rx = await self.prescription(user, ["641900040", "644300010"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            res = await client.put(
+                f"/api/v1/analyses/{aid}/diseases", json={"diseaseCodes": ["I10", "E11", "N18"]}, headers=headers
+            )
+            assert res.status_code == 200
+            life = res.json()
+            assert [(d["code"], d["origin"]) for d in life["diseases"]] == [
+                ("I10", "user"),
+                ("E11", "user"),
+                ("N18", "user"),
+            ]
+            assert any(s["conflict"] and s["conflict"]["label"] == "의료진 상담 필요" for s in life["sections"])
+            names = {m["itemName"] for m in life["medicationLinks"]}
+            assert {base_name(PRODUCTS[0][1]), base_name(PRODUCTS[1][1])} <= names
+            assert all(m["itemId"] for m in life["medicationLinks"])
+            # R-4에도 같은 내용이 반영됨
+            r = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+            assert [d["code"] for d in r["lifestyle"]["diseases"]] == ["I10", "E11", "N18"]
+            # 다시 비우면 해당 없음
+            res = await client.put(f"/api/v1/analyses/{aid}/diseases", json={"diseaseCodes": []}, headers=headers)
+            assert res.status_code == 200 and res.json()["diseases"] == [] and res.json()["sections"] == []
+
+    async def test_put_diseases_validation(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "d2@example.com")
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            res = await client.put(f"/api/v1/analyses/{aid}/diseases", json={"diseaseCodes": ["ZZZ9"]}, headers=headers)
+            assert res.status_code == 400
+            res = await client.put(f"/api/v1/analyses/{aid}/diseases", json={}, headers=headers)
+            assert res.status_code == 400
+            # 마스터에는 있지만 팩트 테이블에 없는 질환 → 안내 없이 빈 목록
+            await Disease.create(code="J00", name_kr="급성 비인두염")
+            res = await client.put(f"/api/v1/analyses/{aid}/diseases", json={"diseaseCodes": ["j00"]}, headers=headers)
+            assert res.status_code == 200 and res.json()["sections"] == [] and res.json()["diseases"] == []
+
+
+class TestGuideUnits(TestCase):
+    def test_disease_lookup_by_three_characters(self):
+        assert lifestyle.disease_of("I10")["id"] == "HTN"
+        assert lifestyle.disease_of("i15.9")["id"] == "HTN"
+        assert lifestyle.disease_of("E119")["id"] == "DM2"
+        assert lifestyle.disease_of("Z00") is None
+
+    def test_every_picker_code_has_facts(self):
+        for code in lifestyle.PICKABLE.values():
+            assert lifestyle.is_supported(code), code
