@@ -1,0 +1,280 @@
+"""O-1 ~ O-5 — 업로드 · 작업 상태 · 인식 결과 · 수정 · 약 이름 검색 (CLOVA는 저장해 둔 가짜 처방전 결과로 대신함)"""
+
+import json
+from datetime import UTC, datetime
+from unittest.mock import patch
+
+from httpx import ASGITransport, AsyncClient
+from starlette import status
+from tortoise.contrib.test import TestCase
+
+from app.main import app
+from app.models.masters import Disease, DrugProduct
+from app.models.ocr import MatchStatus, OcrJob, PrescriptionItem, PrescriptionItemCandidate
+from app.models.users import ConsentType, User, UserConsent
+from app.services import prescriptions as svc
+from app.services.ocr import clova
+from app.tests.helpers import signup
+
+JPG = b"\xff\xd8\xff\xe0" + b"0" * 100
+PRODUCTS = [
+    ("641900040", "노바스크정5밀리그람(암로디핀베실산염)_(6.944mg/1정)", "한국화이자제약(주)"),
+    ("644300010", "다이아벡스정500밀리그램(메트포르민염산염)_(0.5g/1정)", "한국비엠에스제약(주)"),
+    ("645600020", "리피토정10밀리그램(아토르바스타틴칼슘삼수화물)_(10.85mg/1정)", "한국화이자제약(주)"),
+    ("648800030", "아스피린프로텍트정100밀리그람_(0.1g/1정)", "바이엘코리아(주)"),
+]
+
+
+async def seed_masters() -> None:
+    for edi, name, company in PRODUCTS:
+        await DrugProduct.create(edi_code=edi, item_name=name, entp_name=company, etc_otc="전문", route="내복")
+    for code, name in (("I10", "본태성 고혈압"), ("E11", "2형 당뇨병"), ("L10", "천포창")):
+        await Disease.create(code=code, name_kr=name)
+    svc.reset_caches()
+
+
+class OcrApiCase(TestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await seed_masters()
+
+    async def asyncTearDown(self):
+        svc.reset_caches()
+        await super().asyncTearDown()
+
+    @staticmethod
+    def client() -> AsyncClient:
+        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+    @staticmethod
+    async def auth(client: AsyncClient, email: str, **overrides) -> dict[str, str]:
+        tokens = await signup(client, email, **overrides)
+        return {"Authorization": f"Bearer {tokens['accessToken']}"}
+
+    @staticmethod
+    async def upload(client: AsyncClient, headers: dict[str, str], n: int = 1):
+        files = [("files", (f"p{i}.jpg", JPG, "image/jpeg")) for i in range(n)]
+        return await client.post("/api/v1/prescriptions", files=files, headers=headers)
+
+
+class TestUploadAndJob(OcrApiCase):
+    async def test_upload_reads_prescription_and_saves_items(self):
+        async with self.client() as client:
+            headers = await self.auth(client, "o1@example.com")
+            res = await self.upload(client, headers)
+            assert res.status_code == status.HTTP_202_ACCEPTED
+            assert res.json()["status"] == "queued"
+            job = (await client.get(f"/api/v1/ocr-jobs/{res.json()['jobId']}", headers=headers)).json()
+            assert job["status"] == "done" and job["failedFiles"] == [] and len(job["prescriptionIds"]) == 1
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+
+        assert rx["docType"] == "prescription" and rx["issuedDate"] == "2026-10-01"
+        assert rx["hospitalName"].startswith("가나다내과의원")
+        # 110은 I10 · L10 중 무엇인지 모르고 글자 확실도도 낮아서 조용히 고치지 않고 비워 둠 → 사용자가 고름 (RG-05-E1)
+        assert rx["diseaseCodes"] == []
+        assert [i["matchStatus"] for i in rx["items"]] == ["auto"] * 4
+        first = rx["items"][0]
+        assert first["ediCode"] == "641900040" and first["itemName"] == "노바스크정5밀리그람(암로디핀베실산염)"
+        assert (first["dosePerTime"], first["timesPerDay"], first["totalDays"]) == (1, 1, 30)
+        assert first["timing"] == "식후 30분 복용" and first["candidates"] == [] and first["checkFields"] == []
+        assert rx["items"][1]["timesPerDay"] == 2
+
+    async def test_two_photos_make_two_prescriptions_in_order(self):
+        async with self.client() as client:
+            headers = await self.auth(client, "o2@example.com")
+            job_id = (await self.upload(client, headers, n=2)).json()["jobId"]
+            job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
+        assert job["status"] == "done" and len(job["prescriptionIds"]) == 2
+        assert job["prescriptionIds"] == sorted(job["prescriptionIds"])
+
+    async def test_validation_errors_are_400_with_file_index(self):
+        async with self.client() as client:
+            headers = await self.auth(client, "o3@example.com")
+            many = await self.upload(client, headers, n=6)
+            assert many.status_code == 400 and many.json()["error"]["code"] == "TOO_MANY_FILES"
+            text = await client.post(
+                "/api/v1/prescriptions",
+                files=[("files", ("a.jpg", JPG, "image/jpeg")), ("files", ("b.txt", b"hello", "text/plain"))],
+                headers=headers,
+            )
+            assert text.status_code == 400
+            err = text.json()["error"]
+            assert err["code"] == "FILE_TYPE_NOT_SUPPORTED" and err["detail"] == {"fileIndex": 2}
+            with patch.object(svc, "MAX_BYTES", 50):
+                big = await self.upload(client, headers)
+            assert big.status_code == 400 and big.json()["error"]["code"] == "FILE_TOO_LARGE"
+            none = await client.post("/api/v1/prescriptions", headers=headers)
+            assert none.status_code == 400 and none.json()["error"]["code"] == "VALIDATION_ERROR"
+        assert await OcrJob.all().count() == 0  # 검사에서 막히면 작업을 만들지 않음
+
+    async def test_auth_and_consent(self):
+        async with self.client() as client:
+            assert (await self.upload(client, {})).status_code == 401
+            headers = await self.auth(client, "o4@example.com")
+            # 민감정보 동의를 철회하면 업로드 불가
+            user = await User.get(login_id="o4@example.com")
+            await UserConsent.filter(user=user, consent_type=ConsentType.SENSITIVE_HEALTH).update(
+                agreed=False, withdrawn_at=datetime.now(UTC)
+            )
+            res = await self.upload(client, headers)
+        assert res.status_code == 403 and res.json()["error"]["code"] == "CONSENT_REQUIRED"
+
+    async def test_other_users_data_is_404(self):
+        async with self.client() as client:
+            mine = await self.auth(client, "o5@example.com")
+            other = await self.auth(client, "o6@example.com")
+            job_id = (await self.upload(client, mine)).json()["jobId"]
+            rx_id = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=mine)).json()["prescriptionIds"][0]
+            assert (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=other)).status_code == 404
+            assert (await client.get(f"/api/v1/prescriptions/{rx_id}", headers=other)).status_code == 404
+            item_id = (await client.get(f"/api/v1/prescriptions/{rx_id}", headers=mine)).json()["items"][0]["id"]
+            res = await client.patch(
+                f"/api/v1/prescriptions/{rx_id}/items/{item_id}", json={"exclude": True}, headers=other
+            )
+        assert res.status_code == 404
+        assert (await PrescriptionItem.get(id=item_id)).match_status == MatchStatus.AUTO
+
+    async def test_unreadable_photo_is_reported_per_file(self):
+        blurry = {"images": [{"inferResult": "SUCCESS", "fields": [{"inferText": "흐림", "inferConfidence": 0.3}]}]}
+
+        async def fake(content, fmt, name):
+            return blurry
+
+        async with self.client() as client:
+            headers = await self.auth(client, "o7@example.com")
+            with patch.object(clova, "recognize", fake):
+                job_id = (await self.upload(client, headers)).json()["jobId"]
+            job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
+        assert job["status"] == "done" and job["prescriptionIds"] == []
+        assert job["failedFiles"] == [{"fileIndex": 1, "code": "IMAGE_QUALITY_LOW"}]
+
+    async def test_clear_text_without_table_is_not_a_document(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        sample["images"][0]["fields"] = [f for f in sample["images"][0]["fields"] if "일수" not in f["inferText"]]
+
+        async def fake(content, fmt, name):
+            return sample
+
+        async with self.client() as client:
+            headers = await self.auth(client, "o8@example.com")
+            with patch.object(clova, "recognize", fake):
+                job_id = (await self.upload(client, headers)).json()["jobId"]
+            job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
+        assert job["failedFiles"] == [{"fileIndex": 1, "code": "NOT_A_DOCUMENT"}]
+
+    async def test_clova_failure_marks_job_failed(self):
+        async def boom(content, fmt, name):
+            raise clova.ClovaError("HTTPStatusError")
+
+        async with self.client() as client:
+            headers = await self.auth(client, "o9@example.com")
+            with patch.object(clova, "recognize", boom):
+                job_id = (await self.upload(client, headers, n=2)).json()["jobId"]
+            job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
+        assert job["status"] == "failed" and job["prescriptionIds"] == []
+        assert [f["code"] for f in job["failedFiles"]] == ["OCR_FAILED", "OCR_FAILED"]
+
+    async def test_one_bad_photo_keeps_the_good_one(self):
+        good = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        calls = iter([good, RuntimeError])
+
+        async def fake(content, fmt, name):
+            v = next(calls)
+            if v is RuntimeError:
+                raise clova.ClovaError("Timeout")
+            return v
+
+        async with self.client() as client:
+            headers = await self.auth(client, "o10@example.com")
+            with patch.object(clova, "recognize", fake):
+                job_id = (await self.upload(client, headers, n=2)).json()["jobId"]
+            job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
+        assert job["status"] == "done" and len(job["prescriptionIds"]) == 1
+        assert job["failedFiles"] == [{"fileIndex": 2, "code": "OCR_FAILED"}]
+
+
+class TestUnexpectedError(OcrApiCase):
+    async def test_unexpected_error_never_leaves_job_running(self):
+        async def weird(content, fmt, name):
+            raise ValueError("예상 못 한 오류")
+
+        async with self.client() as client:
+            headers = await self.auth(client, "o11@example.com")
+            with patch.object(clova, "recognize", weird):
+                job_id = (await self.upload(client, headers)).json()["jobId"]
+            job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
+        assert job["status"] == "failed"
+
+
+class TestItemsAndSearch(OcrApiCase):
+    async def prescription(self, client, headers) -> dict:
+        job_id = (await self.upload(client, headers)).json()["jobId"]
+        rx_id = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()["prescriptionIds"][0]
+        return (await client.get(f"/api/v1/prescriptions/{rx_id}", headers=headers)).json()
+
+    async def test_patch_exclude_pick_and_numbers(self):
+        async with self.client() as client:
+            headers = await self.auth(client, "p1@example.com")
+            rx = await self.prescription(client, headers)
+            base = f"/api/v1/prescriptions/{rx['id']}/items"
+            a, b = rx["items"][0], rx["items"][1]
+            assert (await client.patch(f"{base}/{a['id']}", json={"exclude": True}, headers=headers)).status_code == 204
+            pick = {"ediCode": "645600020", "dosePerTime": 2, "timesPerDay": 3, "totalDays": 7}
+            assert (await client.patch(f"{base}/{b['id']}", json=pick, headers=headers)).status_code == 204
+            after = (await client.get(f"/api/v1/prescriptions/{rx['id']}", headers=headers)).json()["items"]
+        assert after[0]["matchStatus"] == "excluded" and after[0]["ediCode"] is None and after[0]["itemName"] is None
+        assert after[1]["matchStatus"] == "user_confirmed" and after[1]["ediCode"] == "645600020"
+        assert after[1]["itemName"].startswith("리피토정") and after[1]["dosePerTime"] == 2
+        assert (after[1]["timesPerDay"], after[1]["totalDays"]) == (3, 7)
+
+    async def test_patch_validation_and_item_seq(self):
+        await DrugProduct.create(edi_code="672300240", item_seq="199903123", item_name="타이레놀정500밀리그램")
+        svc.reset_caches()
+        async with self.client() as client:
+            headers = await self.auth(client, "p2@example.com")
+            rx = await self.prescription(client, headers)
+            url = f"/api/v1/prescriptions/{rx['id']}/items/{rx['items'][0]['id']}"
+            unknown = await client.patch(url, json={"ediCode": "999999999"}, headers=headers)
+            assert unknown.status_code == 400 and unknown.json()["error"]["field"] == "ediCode"
+            assert (await client.patch(url, json={"timesPerDay": 0}, headers=headers)).status_code == 400
+            assert (await client.patch(url, json={"itemSeq": "199903123"}, headers=headers)).status_code == 204
+            item = (await client.get(f"/api/v1/prescriptions/{rx['id']}", headers=headers)).json()["items"][0]
+        assert item["ediCode"] == "672300240" and item["matchStatus"] == "user_confirmed"
+
+    async def test_needs_confirm_item_lists_candidates_and_blocks_until_picked(self):
+        async with self.client() as client:
+            headers = await self.auth(client, "p3@example.com")
+            rx = await self.prescription(client, headers)
+            item = await PrescriptionItem.get(id=rx["items"][0]["id"])
+            item.match_status = MatchStatus.NEEDS_CONFIRM
+            item.drug_id = None
+            await item.save()
+            await PrescriptionItemCandidate.filter(item=item).delete()  # 자동 확정 때 저장된 후보를 비움
+            await PrescriptionItemCandidate.create(item=item, rank=1, drug_id="641900040", score=0.82)
+            await PrescriptionItemCandidate.create(item=item, rank=2, drug_id="645600020", score=0.79)
+            got = (await client.get(f"/api/v1/prescriptions/{rx['id']}", headers=headers)).json()["items"][0]
+        assert got["matchStatus"] == "needs_confirm" and got["ediCode"] is None and got["itemName"] is None
+        assert [c["ediCode"] for c in got["candidates"]] == ["641900040", "645600020"]
+        assert got["candidates"][0]["itemName"] == "노바스크정5밀리그람(암로디핀베실산염)"
+
+    async def test_search_matched_candidates_not_found(self):
+        async with self.client() as client:
+            headers = await self.auth(client, "p4@example.com")
+            exact = (
+                await client.get(
+                    "/api/v1/drugs/search", params={"q": "리피토정10 mg(아토르바스타틴칼슘삼수화물)"}, headers=headers
+                )
+            ).json()
+            typo = (
+                await client.get("/api/v1/drugs/search", params={"q": "리피토정 10밀리그램"}, headers=headers)
+            ).json()
+            none = (
+                await client.get("/api/v1/drugs/search", params={"q": "전혀없는이름의약품"}, headers=headers)
+            ).json()
+            bad = await client.get("/api/v1/drugs/search", params={"q": ""}, headers=headers)
+            noauth = await client.get("/api/v1/drugs/search", params={"q": "리피토정"})
+        assert exact["status"] == "matched" and len(exact["items"]) == 1
+        assert exact["items"][0]["ediCode"] == "645600020" and exact["items"][0]["entpName"] == "한국화이자제약(주)"
+        assert typo["status"] == "candidates" and typo["items"][0]["ediCode"] == "645600020"
+        assert none == {"status": "not_found", "items": []}
+        assert bad.status_code == 400 and noauth.status_code == 401

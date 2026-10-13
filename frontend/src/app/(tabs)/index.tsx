@@ -1,7 +1,9 @@
+import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TopNav } from '@/features/common/nav';
+import { useFlow } from '@/features/ocr/flow';
 import { copy } from '@/shared/copy';
 import { C, L, S, T } from '@/shared/theme';
 import { Disclaimer } from '@/shared/ui';
@@ -10,6 +12,8 @@ import { CameraIcon } from '@/shared/ui/icons';
 // CM-03-E1 처음 홈 (뼈대) — 처방 이력 · 재방문 홈(CM-03)은 API 붙일 때
 export default function Home() {
   const ins = useSafeAreaInsets();
+  const router = useRouter();
+  const { reset } = useFlow();
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <TopNav current="index" />
@@ -19,7 +23,14 @@ export default function Home() {
         <View style={st.hero}>
           <Text style={st.heroTitle}>{copy.home.heroTitle}</Text>
           <Text style={st.heroBody}>{copy.home.heroBody}</Text>
-          <Pressable accessibilityRole="button" style={({ pressed }) => [st.capture, { opacity: pressed ? 0.85 : 1 }]}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              reset(); // 새 처방전이므로 이전 사진 · 번호를 비움
+              router.push('/capture');
+            }}
+            style={({ pressed }) => [st.capture, { opacity: pressed ? 0.85 : 1 }]}
+          >
             <CameraIcon />
             <Text style={st.captureText}>{copy.home.capture}</Text>
           </Pressable>

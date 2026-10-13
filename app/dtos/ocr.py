@@ -1,0 +1,82 @@
+"""OCR 요청 · 응답 모양 — API 명세서 3장 (O-1 ~ O-5)"""
+
+from datetime import date
+from decimal import Decimal
+from typing import Literal
+
+from pydantic import Field
+
+from app.dtos.base import CamelModel
+
+
+class JobCreatedResponse(CamelModel):
+    job_id: int
+    status: str
+
+
+class FailedFile(CamelModel):
+    file_index: int
+    code: Literal["IMAGE_QUALITY_LOW", "NOT_A_DOCUMENT", "OCR_FAILED"]
+
+
+class JobResponse(CamelModel):
+    job_id: int
+    status: Literal["queued", "running", "done", "failed"]
+    prescription_ids: list[int]
+    failed_files: list[FailedFile]
+
+
+class CandidateResponse(CamelModel):
+    edi_code: str | None
+    item_seq: str | None
+    item_name: str
+    score: float | None
+
+
+class ItemResponse(CamelModel):
+    id: int
+    raw_name: str
+    item_name: str | None  # 약이 정해진 항목의 화면 표시 이름 (명세서 O-2에 추가 제안)
+    match_status: str
+    edi_code: str | None
+    item_seq: str | None
+    candidates: list[CandidateResponse]
+    dose_per_time: float | None
+    times_per_day: int | None
+    total_days: int | None
+    timing: str | None
+    check_fields: list[str]  # 못 읽었거나 범위 밖이라 숫자를 다시 확인해야 하는 칸 (명세서에 추가 제안)
+
+
+class PrescriptionResponse(CamelModel):
+    id: int
+    doc_type: str
+    issued_date: date | None
+    hospital_name: str | None
+    disease_codes: list[str]
+    items: list[ItemResponse]
+
+
+class ItemPatchRequest(CamelModel):
+    """O-3 — 보낸 칸만 바뀜. ediCode / itemSeq로 약 고르기, exclude로 빼기"""
+
+    edi_code: str | None = Field(default=None, max_length=9)
+    item_seq: str | None = Field(default=None, max_length=9)
+    exclude: bool | None = None
+    dose_per_time: Decimal | None = Field(default=None, gt=0, le=100, max_digits=10, decimal_places=3)
+    times_per_day: int | None = Field(default=None, ge=1, le=24)
+    total_days: int | None = Field(default=None, ge=1, le=365)
+
+
+class DrugSearchItem(CamelModel):
+    item_seq: str | None
+    edi_code: str | None
+    item_name: str
+    entp_name: str | None
+    etc_otc: str | None
+    score: float
+
+
+class DrugSearchResponse(CamelModel):
+    status: Literal["matched", "candidates", "not_found"]
+    items: list[DrugSearchItem]

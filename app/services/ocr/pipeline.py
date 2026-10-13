@@ -1,0 +1,126 @@
+"""처방전 OCR 파이프라인: CLOVA 결과 한 장 → 사용자 확인 화면에 쓸 정보 (DB · 네트워크 없음)
+
+(1) prepare 기울임 바로잡기 · 숫자 칸 정리 → (2) table 표 읽기 → (3) meta 교부일 · 출생연도
+→ (4) icd 질병분류기호 보정 → (5) matcher 약 이름 맞추기 → (6) numeric 숫자 범위 검사
+상태가 "retake"이면 사진을 다시 찍게 한다 (reason: tilt | no_header).
+"""
+
+import re
+from collections.abc import Container
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Any
+
+from app.services.ocr import icd, numeric, prepare
+from app.services.ocr.matcher import Decision, NameMatcher
+from app.services.ocr.meta import parse_meta
+from app.services.ocr.table import parse_table
+
+ICD_CONF = 0.95  # 질병분류기호 글자의 확실도가 이보다 낮으면 보정 결과와 상관없이 사용자가 고르게 한다
+
+
+@dataclass
+class DiseaseRead:
+    raw: str
+    status: str  # icd.NORMAL | FIXED | MANY | UNKNOWN
+    value: str | list[str] | None
+    conf: float
+    confirmed: bool  # True면 사용자 확인 없이 그대로 씀 (상병마스터에 있고 글자 확실도도 높음)
+
+
+@dataclass
+class RowRead:
+    read_name: str
+    decision: Decision
+    dose: float | None
+    times: float | None
+    days: float | None
+    flags: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OcrRead:
+    status: str  # ok | retake
+    reason: str | None = None  # retake일 때: tilt | no_header
+    issued: date | None = None
+    birth: int | None = None
+    meta_flags: list[str] = field(default_factory=list)
+    hospital_name: str | None = None
+    timing: str | None = None  # 처방전 아래쪽 "용법" 문구 (모든 약 공통)
+    confidence: float | None = None
+    row_count_mismatch: bool = False
+    diseases: list[DiseaseRead] = field(default_factory=list)
+    rows: list[RowRead] = field(default_factory=list)
+    raw_text: str = ""
+
+
+def _hospital(text: str) -> str | None:
+    m = re.search(r"의료기관\s*명칭\s*(.+?)\s*(?:환자|전화번호|성명)", text)
+    name = m[1].strip() if m else ""
+    return name[:200] or None
+
+
+def _timing(text: str) -> str | None:
+    m = re.search(r"용법\s*[:：]?\s*(.+?)\s*(?:사용기간|※|$)", text)
+    t = m[1].strip() if m else ""
+    return t[:50] or None
+
+
+def read(  # noqa: C901
+    data: dict[str, Any], matcher: NameMatcher, codes: Container[str], today: date | None = None
+) -> OcrRead:
+    try:
+        fields = data["images"][0]["fields"]
+    except (KeyError, IndexError, TypeError):
+        return OcrRead(status="retake", reason="no_header")
+    if not fields:
+        return OcrRead(status="retake", reason="no_header")
+    try:
+        prep, _angle, _removed, st = prepare.prepare(data)
+        if st == "too_tilted":
+            return OcrRead(status="retake", reason="tilt")
+        table = parse_table(prep)
+    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
+        return OcrRead(status="retake", reason="no_header")  # 글자 목록 모양이 이상함 → 읽을 수 없는 사진으로 본다
+    if table is None:
+        return OcrRead(status="retake", reason="no_header")
+
+    pfields = prep["images"][0]["fields"]
+    text = " ".join(f["inferText"] for f in pfields)
+    issued, birth, mflags = parse_meta(text, today)
+    confs = [f["inferConfidence"] for f in pfields if "inferConfidence" in f]
+    out = OcrRead(
+        status="ok",
+        issued=issued,
+        birth=birth,
+        meta_flags=mflags,
+        hospital_name=_hospital(text),
+        timing=_timing(text),
+        confidence=round(sum(confs) / len(confs), 4) if confs else None,
+        # 숫자 칸 중 가장 많이 읽힌 칸의 숫자 수와 약 줄 수가 다르면 줄 나누기가 틀렸을 수 있다
+        row_count_mismatch=table.n_anchor >= 2 and len(table.rows) != table.n_anchor,
+        raw_text=text,
+    )
+
+    if table.disease_raw:
+        i0 = next((i for i, f in enumerate(pfields) if "질병분류기호" in f["inferText"]), None)
+        seg: list[float] = []
+        if i0 is not None:
+            for f in pfields[i0 + 1 : i0 + 6]:
+                if "면허" in f["inferText"]:
+                    break
+                seg.append(f["inferConfidence"])
+        dzconf = min(seg, default=1.0)
+        for raw, stt, value in icd.fix_field(table.disease_raw, codes):
+            out.diseases.append(
+                DiseaseRead(raw, stt, value, round(dzconf, 2), stt == icd.NORMAL and dzconf >= ICD_CONF)
+            )
+
+    for r in table.rows:
+        dose, times, days = r.nums
+        flags = [
+            f"{label} 못 읽음" for label, v in (("1회량", dose), ("하루 횟수", times), ("총 일수", days)) if v is None
+        ]
+        flags += [f"{x} 범위 밖" for x in numeric.check(dose, times, days)]
+        out.rows.append(RowRead(r.name, matcher.decide(r.name), dose, times, days, flags))
+    return out

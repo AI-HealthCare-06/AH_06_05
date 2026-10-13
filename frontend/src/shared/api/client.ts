@@ -9,7 +9,7 @@ import { tokens } from '@/shared/storage/tokens';
 import { mockFetch } from './mock';
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost/api/v1';
-const USE_MOCK = process.env.EXPO_PUBLIC_USE_MOCK === 'true';
+export const USE_MOCK = process.env.EXPO_PUBLIC_USE_MOCK === 'true';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 

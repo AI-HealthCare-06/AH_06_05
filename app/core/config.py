@@ -39,3 +39,7 @@ class Config(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 14 * 24 * 60
     JWT_LEEWAY: int = 5
+
+    # CLOVA OCR (캠프 제공). 둘 다 비면 local · dev에서는 저장해 둔 가짜 처방전 결과로 대신 돌아감 (prod는 오류)
+    CLOVA_OCR_INVOKE_URL: str = ""
+    CLOVA_OCR_SECRET_KEY: str = ""
