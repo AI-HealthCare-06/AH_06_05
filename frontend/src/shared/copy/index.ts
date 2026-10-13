@@ -9,6 +9,7 @@ export const copy = {
     retry: '다시 시도',
     goHome: '홈으로',
     disclaimer: '의학적 진단 · 처방이 아닌 참고용 안내예요',
+    serverError: '잠시 문제가 생겼어요', // CM-08 (API 명세서 공통 에러 코드 500)
   },
   nav: {
     home: '홈',
@@ -41,6 +42,7 @@ export const copy = {
     lockedBody: (max: number, minutes: number) => `비밀번호를 ${max}번 틀려서 ${minutes}분 동안 로그인할 수 없어요.`,
     lockedLeft: (mmss: string) => `남은 시간  ${mmss}`,
     lockedSubmit: (mmss: string) => `로그인  (${mmss} 후 가능)`,
+    expired: '다시 로그인해 주세요', // 로그인이 끝났을 때 (API 명세서 TOKEN_EXPIRED, CM-08 문구)
   },
   // CM-08 연결 오류
   network: {

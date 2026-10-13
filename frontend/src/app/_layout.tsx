@@ -2,15 +2,39 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
 import { ChatLauncherProvider } from '@/features/chatbot/launcher';
+import { AuthProvider, useAuth } from '@/features/common/auth';
+
+// 로그인하지 않았으면 로그인 화면만, 로그인했으면 나머지 화면만 열림
+function RootStack({ signedIn }: { signedIn: boolean }) {
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Protected guard={signedIn}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="chat" options={{ presentation: 'modal' }} />
+      </Stack.Protected>
+      <Stack.Protected guard={!signedIn}>
+        <Stack.Screen name="login" />
+      </Stack.Protected>
+    </Stack>
+  );
+}
+
+// 저장된 값을 읽는 아주 짧은 동안은 아무것도 그리지 않음 (로그인 화면이나 챗봇 버튼이 잠깐 보이지 않게)
+function Root() {
+  const { status } = useAuth();
+  if (status === 'checking') return null;
+  return (
+    <ChatLauncherProvider>
+      <RootStack signedIn={status === 'signedIn'} />
+      <StatusBar style="dark" />
+    </ChatLauncherProvider>
+  );
+}
 
 export default function RootLayout() {
   return (
-    <ChatLauncherProvider>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="chat" options={{ presentation: 'modal' }} />
-      </Stack>
-      <StatusBar style="dark" />
-    </ChatLauncherProvider>
+    <AuthProvider>
+      <Root />
+    </AuthProvider>
   );
 }
