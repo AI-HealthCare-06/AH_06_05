@@ -113,11 +113,15 @@ export async function api<T>(method: Method, path: string, body?: unknown, opts:
     await loseAuth('unauthorized');
     throw first;
   }
-  const refreshError = await refreshAccess().catch((e: unknown) => (e instanceof ApiError ? e : first));
+  const refreshError = await refreshAccess().catch((e: unknown) =>
+    e instanceof ApiError ? e : new ApiError(500, 'INTERNAL_ERROR', copy.common.serverError),
+  );
   if (refreshError) {
-    // 연결이 끊긴 것이면 로그인은 그대로 두고 연결 오류만 알림
-    if (refreshError.code === 'NETWORK') throw refreshError;
-    await loseAuth(refreshError.code === 'UNAUTHORIZED' ? 'unauthorized' : 'expired');
+    // A-4도 401일 때만 저장한 두 값을 지움 (명세서 A-4 4번). 연결 끊김이나 서버 오류(500, 503)는
+    // 서버가 잠깐 불안정한 것일 수 있어서 로그인은 그대로 두고 에러만 알림
+    if (refreshError.status === 401) {
+      await loseAuth(refreshError.code === 'UNAUTHORIZED' ? 'unauthorized' : 'expired');
+    }
     throw refreshError;
   }
   return finish<T>(await send(method, path, body, true), true); // 한 번만 다시 보냄
