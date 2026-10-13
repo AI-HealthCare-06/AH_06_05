@@ -1,18 +1,22 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from redis.exceptions import RedisError
 from starlette import status
 
 from app.core import config
 from app.core.errors import AppError
+from app.core.logger import default_logger
 from app.core.utils.security import hash_password, verify_password
 from app.dtos.auth import LoginRequest, SignUpRequest
 from app.models.users import LOCK_MINUTES, MAX_LOGIN_FAILURES, ConsentType, User
 from app.repositories.user_repository import UserRepository
+from app.services import unknown_email_attempts
 from app.services.jwt import JwtService
 
 INVALID_CREDENTIALS_MESSAGE = "이메일 또는 비밀번호가 맞지 않아요."
 LOCKED_MESSAGE = f"비밀번호를 {MAX_LOGIN_FAILURES}번 틀려서 {LOCK_MINUTES}분 동안 로그인할 수 없어요."
+_DUMMY_HASH = hash_password("timing-equalizer-not-a-real-password")  # 가입하지 않은 이메일일 때 비교용
 
 
 @dataclass(frozen=True)
@@ -65,10 +69,10 @@ class AuthService:
     async def authenticate(self, data: LoginRequest) -> User:
         """A-2. 이메일이 없을 때와 비밀번호가 틀렸을 때 같은 코드 · 문구로 응답"""
         user = await self.user_repo.get_user_by_email(str(data.email))
-        if not user:
-            raise AppError(status.HTTP_401_UNAUTHORIZED, "AUTH_INVALID_CREDENTIALS", INVALID_CREDENTIALS_MESSAGE)
-
         now = datetime.now(config.TIMEZONE)
+        if not user:
+            raise await self._fail_unknown_email(str(data.email), data.password, now)
+
         if user.locked_until and _aware(user.locked_until) > now:
             raise self._locked_error(_aware(user.locked_until))
 
@@ -81,15 +85,37 @@ class AuthService:
             if user.locked_until:  # 지난 잠금은 지우고 1번째 실패부터 다시 셈
                 user.failed_login_count = 0
             await self.user_repo.record_login_failure(user, lock_until=None)
-            raise AppError(
-                status.HTTP_401_UNAUTHORIZED,
-                "AUTH_INVALID_CREDENTIALS",
-                INVALID_CREDENTIALS_MESSAGE,
-                detail={"remainingAttempts": MAX_LOGIN_FAILURES - failures},
-            )
+            raise self._invalid_error(failures)
 
         await self.user_repo.reset_login_failures(user)
         return user
+
+    async def _fail_unknown_email(self, email: str, password: str, now: datetime) -> AppError:
+        """가입하지 않은 이메일도 가입한 회원과 같은 횟수, 같은 잠김, 비슷한 시간으로 실패시킴 (순서도 같게)"""
+        try:
+            until = await unknown_email_attempts.locked_until(email)
+            if until and until > now:
+                return self._locked_error(until)
+            verify_password(
+                password, _DUMMY_HASH
+            )  # 회원과 같이 비밀번호 확인 시간이 들게 (응답 시간으로 드러나지 않게)
+            failures, lock_until = await unknown_email_attempts.record_failure(
+                email, max_failures=MAX_LOGIN_FAILURES, lock_minutes=LOCK_MINUTES, now=now
+            )
+        except RedisError:
+            # Redis가 꺼져도 500이 아니라 회원 첫 실패와 같은 응답 (서버 오류로 가입 여부가 드러나지 않게)
+            default_logger.warning("가입하지 않은 이메일의 로그인 실패를 Redis에 셀 수 없음")
+            return self._invalid_error(1)
+        return self._locked_error(lock_until) if lock_until else self._invalid_error(failures)
+
+    @staticmethod
+    def _invalid_error(failures: int) -> AppError:
+        return AppError(
+            status.HTTP_401_UNAUTHORIZED,
+            "AUTH_INVALID_CREDENTIALS",
+            INVALID_CREDENTIALS_MESSAGE,
+            detail={"remainingAttempts": MAX_LOGIN_FAILURES - failures},
+        )
 
     def issue_tokens(self, user: User) -> IssuedTokens:
         pair = self.jwt_service.issue_jwt_pair(user)
