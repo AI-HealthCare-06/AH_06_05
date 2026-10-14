@@ -36,25 +36,37 @@ async def generate_all(*, only_missing: bool = True) -> dict[str, int]:
     - only_missing=False면 기존 것도 표 기준으로 다시 만든다. 내용이 바뀐 약은 사람이 확인한 것(approved · rejected)이라도
       draft로 되돌려 다시 확인받는다 (옛 내용이 확인된 채로 남지 않게). 내용이 같으면 확인 상태를 그대로 둔다
     돌려주는 값: created(새로 만듦) · updated(draft 내용 갱신) · reset(확인이 풀림) · skipped(그대로)"""
-    existing = {g.edi_code: g async for g in DrugGuide.all().only("edi_code", "content", "review_status")}
+    existing = {
+        g.edi_code: g async for g in DrugGuide.all().only("edi_code", "content", "evidence_ids", "review_status")
+    }
     created = updated = reset = skipped = 0
     batch: list[DrugGuide] = []
     async for d in DrugProduct.all().order_by("edi_code"):
-        code, content = d.edi_code, content_of(d)
+        code, content, evidence = d.edi_code, content_of(d), medication.evidence_of(d)
         old = existing.get(code)
         if old is None:
-            batch.append(DrugGuide(edi_code=code, content=content, prompt_ver=PROMPT_VER, model_name=None))
+            batch.append(
+                DrugGuide(edi_code=code, content=content, evidence_ids=evidence, prompt_ver=PROMPT_VER, model_name=None)
+            )
             if len(batch) >= BATCH_SIZE:
                 await DrugGuide.bulk_create(batch)
                 created += len(batch)
                 batch = []
             continue
-        if only_missing or group_key(old.content) == group_key(content):
+        if only_missing:
             skipped += 1
+            continue
+        if group_key(old.content) == group_key(content):
+            if (old.evidence_ids or []) == evidence:
+                skipped += 1
+            else:  # 보이는 내용은 같고 근거 목록만 바뀜 → 확인 상태는 그대로 두고 근거만 갱신
+                await DrugGuide.filter(edi_code=code).update(evidence_ids=evidence, updated_at=_now())
+                updated += 1
             continue
         reviewed = old.review_status != ReviewStatus.DRAFT
         await DrugGuide.filter(edi_code=code).update(
             content=content,
+            evidence_ids=evidence,
             prompt_ver=PROMPT_VER,
             review_status=ReviewStatus.DRAFT,
             reviewed_by=None,

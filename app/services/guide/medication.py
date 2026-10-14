@@ -64,6 +64,12 @@ def static_part(d: DrugProduct) -> dict[str, Any]:
     }
 
 
+def evidence_of(d: DrugProduct) -> list[dict[str, str]]:
+    """안내문의 근거 목록 — 챗봇이 답에 출처를 붙일 때 그대로 쓴다. 지금은 약효분류 표만, 허가정보를 적재하면 kind="drug_details"(품목기준코드 · 항목)를 더한다"""
+    cls = (d.class_code or "")[:3]
+    return [{"kind": "hira_class", "key": cls, "label": SOURCE}] if cls in CLASS_PURPOSE else []
+
+
 def build(items: list[PrescriptionItem], stored: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """items: drug가 미리 불러와진 점검 대상 약 (확정된 것만)
     stored: drug_guides에서 조회한 '사람이 확인한' 안내문 {edi_code: content}.

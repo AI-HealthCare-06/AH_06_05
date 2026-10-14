@@ -174,6 +174,7 @@ class DrugGuide(models.Model):
 
     edi_code = fields.CharField(max_length=9, primary_key=True)
     content: Any = fields.JSONField(description="category · purpose · caution · source")
+    # 근거 목록 [{kind: hira_class | drug_details, key, label}] — 챗봇이 답에 출처를 붙일 때 씀
     evidence_ids: Any = fields.JSONField(null=True, description="근거 번호 (허가정보 · 고시 등)")
     prompt_ver = fields.CharField(max_length=20, null=True)
     model_name = fields.CharField(max_length=50, null=True, description="AI 없이 만든 안내문은 null")

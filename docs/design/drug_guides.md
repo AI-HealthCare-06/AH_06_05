@@ -18,6 +18,13 @@
 - 먹는 법은 처방마다 달라서 저장하지 않고 분석 때 만든다.
 - 규칙 표(`app/services/guide/medication.py`)를 고친 뒤 `generate_drug_guides.py --all`을 돌리면, **내용이 바뀐 약은 확인이 풀려서 draft로 돌아간다**(옛 내용이 승인된 채 남지 않게). 내용이 같으면 승인 상태가 유지된다.
 
+## 근거 목록 (챗봇 출처)
+
+`drug_guides.evidence_ids`에 `[{kind, key, label}]`로 근거를 저장한다. 챗봇은 답에 출처를 붙일 때 이 값을 그대로 쓴다.
+- `hira_class`: 심평원 약효분류 표 (key=분류 3자리). 표에 없는 분류의 약은 빈 목록(→ 출처 없음)
+- `drug_details`: 허가정보 항목 (key=품목기준코드, field=효능효과·용법용량·사용상의주의사항). 허가정보를 적재하면 추가
+- 표를 고쳐 근거만 바뀐 약은 확인 상태를 유지한 채 근거만 갱신한다. 보이는 내용이 바뀐 약은 draft로 돌아간다.
+
 ## 처음 쓰는 순서
 
 1. `aerich upgrade` (drug_guides 표 만들기)

@@ -419,6 +419,18 @@ class TestStoredGuides(AnalysisCase):
         assert g.review_status == ReviewStatus.DRAFT and g.reviewed_by is None and g.content["purpose"] != "옛 내용"
         assert (await DrugGuide.get(edi_code="644300010")).review_status == ReviewStatus.DRAFT
 
+    async def test_evidence_is_saved_and_refreshed_without_resetting_review(self):
+        await DrugProduct.filter(edi_code="641900040").update(class_code="214")
+        await store.generate_all()
+        g = await DrugGuide.get(edi_code="641900040")
+        assert g.evidence_ids == [{"kind": "hira_class", "key": "214", "label": "심평원 약제급여목록 약효분류"}]
+        assert (await DrugGuide.get(edi_code="644300010")).evidence_ids == []  # 분류가 표에 없는 약은 근거 없음
+        await DrugGuide.filter(edi_code="641900040").update(review_status=ReviewStatus.APPROVED, evidence_ids=None)
+        r = await store.generate_all(only_missing=False)  # 내용은 같고 근거만 비어 있음 → 근거만 채우고 승인은 유지
+        assert r["updated"] >= 1 and r["reset"] == 0
+        g = await DrugGuide.get(edi_code="641900040")
+        assert g.review_status == ReviewStatus.APPROVED and g.evidence_ids
+
     async def test_review_marks_status_and_reviewer(self):
         await store.generate_all()
         assert await store.review("644300010", ReviewStatus.APPROVED, "채연")
