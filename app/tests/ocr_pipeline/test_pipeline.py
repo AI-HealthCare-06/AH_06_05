@@ -176,3 +176,109 @@ def test_issue_date_ignores_dispensing_date():
     assert issued == date(2022, 12, 1)
     issued, _b, _f = parse_meta("교부번호 2018 년 08 월 07 일 조제년월일 2018.08.09", today)
     assert issued == date(2018, 8, 7)
+
+
+# ── 실제 CLOVA 결과 9장(10/13 저장본)으로 다시 시험하며 찾은 문제: 같은 모양을 합성 글자 목록으로 재현 ──────────
+def _dense(h: float = 15, pitch: float = 19) -> list[dict]:
+    """줄 간격이 글자 높이와 비슷하게 촘촘한 사진(너비 700px 안팎) + 표 오른쪽 '용' '법' 머리글"""
+    f = [_fld("명칭", 160, 341, 26, h), _fld("투약량", 224, 351, 41, h), _fld("투여횟수", 291, 351, 53, h),
+         _fld("투약일수", 367, 351, 52, h), _fld("용", 501, 341, 15, h), _fld("법", 546, 341, 12, h)]  # fmt: skip
+    for i, (n, a, b, c) in enumerate((("돔페리돈", 1, 3, 2), ("라니티딘", 3, 2, 5), ("록소프로펜", 2, 4, 7))):
+        y = 372 + i * pitch
+        f += [
+            _fld(n, 103, y, 53, h),
+            _fld(str(a), 239, y, 10, 12),
+            _fld(str(b), 313, y, 8, 12),
+            _fld(str(c), 387, y, 11, 12),
+        ]
+    return [{"images": [{"fields": f}]}][0]["images"][0]["fields"]  # type: ignore[no-any-return]
+
+
+def test_dense_rows_are_not_merged_and_right_side_header_is_not_a_row():
+    from app.services.ocr.table import parse_table
+
+    t = parse_table({"images": [{"fields": _dense()}]})
+    assert t is not None
+    assert [r.name for r in t.rows] == ["돔페리돈", "라니티딘", "록소프로펜"]  # '용' '법'이 약 줄이 되지 않음
+    assert [r.nums for r in t.rows] == [[1.0, 3.0, 2.0], [3.0, 2.0, 5.0], [2.0, 4.0, 7.0]]
+
+
+def test_numbers_read_out_of_list_order_and_biased_columns():
+    from app.services.ocr.table import parse_table
+
+    fs = _dense()
+    days = [f for f in fs if f["inferText"] in {"2", "5", "7"} and f["boundingPoly"]["vertices"][0]["x"] == 387]
+    rest = [f for f in fs if f not in days]
+    fs = days + rest  # 총 일수가 맨 앞 번호로 나옴 (머리글보다 앞)
+    t = parse_table({"images": [{"fields": fs}]})
+    assert t is not None and [r.nums[2] for r in t.rows] == [2.0, 5.0, 7.0]
+    # 1회량 숫자가 횟수 칸 쪽으로 치우쳐도 한 줄에 숫자가 3개면 왼쪽부터 순서대로
+    for f in fs:
+        if f["inferText"] in {"1", "3", "2"} and f["boundingPoly"]["vertices"][0]["x"] == 239:
+            for v in f["boundingPoly"]["vertices"]:
+                v["x"] += 30
+    t2 = parse_table({"images": [{"fields": fs}]})
+    assert t2 is not None and [r.nums[0] for r in t2.rows] == [1.0, 3.0, 2.0]
+
+
+def test_head_variants_split_across_boxes():
+    from app.services.ocr.table import parse_table
+
+    fs = [_fld("명칭", 160, 341, 26, 15), _fld("투여량", 224, 351, 41, 15), _fld("일투어", 291, 341, 40, 15),
+          _fld("횟수", 296, 351, 30, 15), _fld("총투약", 367, 341, 40, 15), _fld("일수", 372, 351, 30, 15),
+          _fld("돔페리돈", 103, 372, 53, 15), _fld("1", 239, 372, 10, 12), _fld("3", 313, 372, 8, 12), _fld("2", 387, 372, 11, 12)]  # fmt: skip
+    t = parse_table({"images": [{"fields": fs}]})  # "일투어+횟수", "총투약+일수"로 쪼개져 읽힘
+    assert t is not None and t.rows[0].nums == [1.0, 3.0, 2.0]
+
+
+def test_end_marker_read_one_character_at_a_time():
+    from app.services.ocr.table import parse_table
+
+    fs = _dense() + [_fld(c, 144 + i * 22, 449, 15, 15) for i, c in enumerate("이하여백")]
+    t = parse_table({"images": [{"fields": fs}]})
+    assert t is not None and [r.name for r in t.rows] == ["돔페리돈", "라니티딘", "록소프로펜"]
+
+
+def test_edi_code_starts_each_drug_even_when_name_wraps():
+    from app.services.ocr.table import parse_table
+
+    fs = [_fld("명칭", 160, 280, 26, 13), _fld("투여량", 278, 282, 41, 12), _fld("투여횟수", 323, 282, 30, 11),
+          _fld("총투약일수", 358, 282, 52, 11)]  # fmt: skip
+    for i, (code, n1, n2, nums) in enumerate(
+        (("645404010", "엘로시드", "제일약품(주)", (1, 2, 7)), ("645404500", "넥실렌", "제일약품(주)", (1, 2, 7)))
+    ):
+        y = 300 + i * 30
+        fs += [_fld(code, 33, y, 50, 11), _fld(n1, 88, y, 60, 13), _fld(n2, 39, y + 14, 60, 13)]
+        fs += [_fld(str(v), x, y + 12, 8, 10) for v, x in zip(nums, (290, 333, 372), strict=True)]
+    t = parse_table({"images": [{"fields": fs}]})
+    assert t is not None and [r.name for r in t.rows] == ["엘로시드제일약품(주)", "넥실렌제일약품(주)"]
+    assert [r.nums for r in t.rows] == [[1.0, 2.0, 7.0]] * 2
+
+
+def test_disease_codes_after_short_label_and_spaced_stop_word():
+    from app.services.ocr.table import parse_table
+
+    # "분류 기호 B 2 3 4 질병 A 1 2 3 처방" (줄마다 코드가 따로)
+    lab = [
+        _fld(w, 100 + i * 40, 150, 30, 15)
+        for i, w in enumerate(["분류", "기호", "B", "2", "3", "4", "질병", "A", "1", "2", "3", "처방"])
+    ]
+    t = parse_table({"images": [{"fields": _dense() + lab}]})
+    assert t is not None and t.disease_raw == "B234 A123"
+    # "질병 분류 기호 처 방 의료인의" 처럼 값이 비어 있으면 '처'를 코드로 읽지 않음
+    empty = [_fld(w, 100 + i * 40, 150, 30, 15) for i, w in enumerate(["질병", "분류", "기호", "처", "방", "의료인의"])]
+    t2 = parse_table({"images": [{"fields": _dense() + empty}]})
+    assert t2 is not None and t2.disease_raw is None
+
+
+def test_disease_codes_found_by_position_when_listed_before_label():
+    from app.services.ocr.table import parse_table
+
+    # 라벨이 세로로 쌓여 있고(왼쪽), 코드 숫자는 오른쪽에 두 줄(숫자만): 글자 목록에서는 코드가 라벨보다 앞 번호
+    code = [_fld(c, 123 + i * 43, 243, 12, 18) for i, c in enumerate("109")] + [
+        _fld(c, 123 + i * 43, 271, 12, 18) for i, c in enumerate("499")
+    ]
+    label = [_fld("질병", 29, 241, 40, 18), _fld("분류", 29, 258, 40, 18), _fld("기호", 29, 272, 40, 18)]
+    stop = [_fld("처", 286, 240, 15, 18), _fld("방", 315, 240, 15, 18), _fld("의료인의", 284, 255, 60, 18)]
+    t = parse_table({"images": [{"fields": code + label + stop + _dense()}]})
+    assert t is not None and t.disease_raw == "109 499"

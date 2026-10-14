@@ -14,10 +14,13 @@ _NUM = re.compile(r"\d+(\.\d+)?")
 _HEAD_WORDS = ((0, r"투[약여]량"), (1, r"투[약여]\s*횟수"), (2, r"투[약여]\s*일수"))
 # 표가 끝났다는 표시: 약 줄 아래의 "조제시 참고사항", "주사제 처방내역", "사용기간", "이하 여백", 구분선 (실제 양식 5장 시험에서 추가)
 _TABLE_END = re.compile(r"조제시|참고사항|주사제|사용기간|이하\s*여백|={3,}")
-_SPLIT_HEAD = (re.compile(r"투[약여]"), re.compile(r"량|횟수|일수"))
+# 머리글이 "투약"+"량", "총투약"+"일수", "일투어"(여→어 오인)+"횟수"처럼 쪼개져 읽히는 경우 → 하나의 말로 합침
+_SPLIT_HEAD = (re.compile(r"(?:총|일)?투[약여어]"), re.compile(r"량|횟수|일수"))
+_SPLIT_CANON = {"량": "투약량", "횟수": "투여횟수", "일수": "투약일수"}
 # 질병분류기호 칸 뒤에서 값을 읽을 때 멈추는 말
 _DZ_LABEL = r"질\s*병\s*분\s*류\s*기\s*호(?![를은는이가]\s*기재)"
-_DZ_STOP = r"(?:처방|면허\s*종류|※|환자의\s*요구)"
+_DZ_LABEL_SHORT = r"분\s*류\s*기\s*호(?![를은는이가]\s*기재)"
+_DZ_STOP = r"(?:처\s*방|의료인|면허\s*종|※|환자의\s*요구)"
 
 
 @dataclass
@@ -48,7 +51,7 @@ def _merge_split_heads(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
             out.append(
                 {
                     **a,
-                    "inferText": a["inferText"] + b["inferText"],
+                    "inferText": _SPLIT_CANON[b["inferText"]],
                     "inferConfidence": min(a.get("inferConfidence", 1.0), b.get("inferConfidence", 1.0)),
                     "boundingPoly": {
                         "vertices": [{"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1}, {"x": x0, "y": y1}]
@@ -60,6 +63,53 @@ def _merge_split_heads(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
             out.append(a)
             i += 1
     return out
+
+
+def _box_height(f: dict[str, Any]) -> float:
+    v = f["boundingPoly"]["vertices"]
+    return float(((v[3]["x"] - v[0]["x"]) ** 2 + (v[3]["y"] - v[0]["y"]) ** 2) ** 0.5)
+
+
+_LABEL_WORDS = {"질병", "분류", "기호", "질병분류", "분류기호", "질병분류기호"}
+_STOP_WORDS = re.compile(r"^(?:처방?|의료인의|처방의료인의)$")
+
+
+def _disease_by_position(fields: list[dict[str, Any]]) -> str | None:
+    """라벨("질병 분류 기호") 오른쪽, "처방 의료인의" 왼쪽의 같은 높이 글자를 모아 코드로 읽는다.
+    글자 목록 순서와 상관없고, 칸이 나뉜 숫자만 있는 코드("1 0 9" / "4 9 9" → "109 499")도 줄별로 붙인다"""
+    label = [f for f in fields if f["inferText"] in _LABEL_WORDS]
+    if len(label) < 2:
+        return None
+    ys = [center(f)[1] for f in label]
+    right = max(max(v["x"] for v in f["boundingPoly"]["vertices"]) for f in label)
+    y0, y1 = min(ys) - 14, max(ys) + 14
+    stop = min(
+        (
+            center(f)[0]
+            for f in fields
+            if _STOP_WORDS.match(f["inferText"]) and y0 <= center(f)[1] <= y1 and center(f)[0] > right
+        ),
+        default=right + 400,
+    )
+    cand = [
+        f
+        for f in fields
+        if f not in label
+        and re.fullmatch(r"[A-Za-z0-9]{1,5}", f["inferText"])
+        and y0 <= center(f)[1] <= y1
+        and right < center(f)[0] < stop
+    ]
+    lines: list[list[dict[str, Any]]] = []
+    for f in sorted(cand, key=lambda f: center(f)[1]):
+        if lines and abs(center(f)[1] - center(lines[-1][-1])[1]) <= 10:
+            lines[-1].append(f)
+        else:
+            lines.append([f])
+    out = []
+    for ln in lines:
+        toks = [f["inferText"] for f in sorted(ln, key=lambda f: center(f)[0])]
+        out.append("".join(toks) if all(len(t) == 1 for t in toks) else " ".join(toks))
+    return " ".join(out) or None
 
 
 def join_code_boxes(raw: str) -> str:
@@ -82,7 +132,17 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
     start = head + 1
     end = next((i for i, t in enumerate(tokens) if t.startswith("용법")), len(tokens))
     # 약 줄 아래에 붙은 문구가 가짜 약 줄이 되지 않게, 표 끝 표시가 먼저 나오면 거기서 자른다
-    end = min(end, next((i for i in range(start, len(tokens)) if _TABLE_END.match(tokens[i])), len(tokens)))
+    end = min(
+        end,
+        next(
+            (
+                i
+                for i in range(start, len(tokens))
+                if _TABLE_END.match(tokens[i]) or "".join(tokens[i : i + 4]) == "이하여백"  # "이 하 여 백"
+            ),
+            len(tokens),
+        ),
+    )
 
     col_x: dict[int, float] = {}
     for key, word in _HEAD_WORDS:
@@ -113,14 +173,29 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
         and abs(center(f)[0] - col_x[2]) <= 120
         and min(col_x, key=lambda k: abs(col_x[k] - center(f)[0])) == 2
     )
-    gaps = sorted(b - a for a, b in zip(days_y, days_y[1:], strict=False) if b - a > 20)
+    # 같은 줄에서 읽힌 중복을 거르는 기준은 글자 높이의 절반(해상도가 낮은 사진은 줄 간격이 20px보다 작을 수 있음)
+    heights = sorted(_box_height(f) for f in fields[start:end] if not _NUM.fullmatch(f["inferText"]))
+    min_gap = max(0.5 * heights[len(heights) // 2], 5.0) if heights else 20.0
+    gaps = sorted(b - a for a, b in zip(days_y, days_y[1:], strict=False) if b - a > min_gap)
     pitch = gaps[len(gaps) // 2] if gaps else None
 
+    # CLOVA는 글자 목록 순서를 보장하지 않는다 (예: 총 투약일수 "90"이 머리글보다 앞 번호로 나옴). 머리글 아래에 있는 숫자는 번호가 달라도 같이 센다
+    head_y = level_y(fields[head])
+    out_of_slice = [
+        f
+        for i, f in enumerate(fields)
+        if not start <= i < end and _NUM.fullmatch(f["inferText"]) and level_y(f) > head_y + 5
+    ]
+
+    # 약 이름은 숫자 칸(1회 투약량)보다 왼쪽에 있다. 오른쪽에서 읽힌 글자("용" "법" 머리글 등)는 약 줄이 아니다
+    name_limit = min(col_x.values()) if col_x else float("inf")
     nums: list[dict[str, Any]] = []
     lines: list[dict[str, Any]] = []
     for f in fields[start:end]:
         if _NUM.fullmatch(f["inferText"]):
             nums.append(f)
+            continue
+        if center(f)[0] >= name_limit:
             continue
         v = f["boundingPoly"]["vertices"]
         h = ((v[3]["x"] - v[0]["x"]) ** 2 + (v[3]["y"] - v[0]["y"]) ** 2) ** 0.5  # 왼쪽 변의 길이(기울어도 글자 높이)
@@ -139,8 +214,9 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
         split.add(i)
         first_x = b["x"]
 
+    nums.extend(out_of_slice)
     cnt = dict.fromkeys(col_x, 0)
-    for f in fields[start:end]:
+    for f in [*fields[start:end], *out_of_slice]:
         if _NUM.fullmatch(f["inferText"]) and col_x:
             k = min(col_x, key=lambda k: abs(col_x[k] - center(f)[0]))
             if abs(col_x[k] - center(f)[0]) <= 120:
@@ -152,22 +228,56 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
         ]
         split.update(i for i in big if lines[i]["y"] - lines[i - 1]["y"] > 0)
 
+    # 급여 약품 코드(9자리 숫자)가 줄마다 왼쪽에 있는 양식은 코드가 약 하나의 시작이다. 이름이 두세 줄로 꺾여도 줄 간격을 추측하지 않고 코드로 나눈다
+    anchors = sorted(
+        level_y(f)
+        for f in nums
+        if re.fullmatch(r"\d{9}", f["inferText"]) and center(f)[0] < name_limit and level_y(f) > head_y
+    )
     rows: list[Row] = []
-    for i, ln in enumerate(lines):
-        if i in split or not rows:
-            rows.append(Row(name=ln["name"], y=ln["y"]))
-        else:
-            rows[-1].name += ln["name"]
-            rows[-1].y = (rows[-1].y + ln["y"]) / 2
+    if len(anchors) >= 2:
+        rows = [Row(name="", y=a) for a in anchors]
+        for ln in lines:
+            owner = max((i for i, a in enumerate(anchors) if ln["y"] >= a - 8), default=None)
+            if owner is not None:
+                rows[owner].name += ln["name"]
+        rows = [r for r in rows if r.name]
+    else:
+        for i, ln in enumerate(lines):
+            if i in split or not rows:
+                rows.append(Row(name=ln["name"], y=ln["y"]))
+            else:
+                rows[-1].name += ln["name"]
+                rows[-1].y = (rows[-1].y + ln["y"]) / 2
 
     if len(col_x) == 3 and rows:
-        for f in sorted(nums, key=lambda f: center(f)[0]):
+        # 줄마다 숫자를 모은다. 한 줄에 정확히 3개가 읽혔으면 왼쪽부터 순서대로 1회량 · 횟수 · 일수로 본다
+        # (숫자가 칸 중심에서 치우쳐 있으면 옆 칸에 더 가까워 보일 수 있어서). 개수가 다르면 가장 가까운 칸으로 정한다
+        per_row: dict[int, list[dict[str, Any]]] = {}
+        for f in nums:
             cx, cy = center(f)[0], level_y(f)
-            row = min(rows, key=lambda r: abs(r.y - cy))
-            col = min(col_x, key=lambda k: abs(col_x[k] - cx))
-            if abs(row.y - cy) <= 40 and abs(col_x[col] - cx) <= 120 and row.nums[col] is None:
-                row.nums[col] = float(f["inferText"])
+            i = min(range(len(rows)), key=lambda i: abs(rows[i].y - cy))
+            if abs(rows[i].y - cy) <= 40 and any(abs(c - cx) <= 120 for c in col_x.values()):
+                per_row.setdefault(i, []).append(f)
+        order = sorted(col_x, key=lambda k: col_x[k])
+        for i, group in per_row.items():
+            group.sort(key=lambda f: center(f)[0])
+            if len(group) == len(order):
+                for k, f in zip(order, group, strict=True):
+                    rows[i].nums[k] = float(f["inferText"])
+                continue
+            for f in group:
+                col = min(col_x, key=lambda k: abs(col_x[k] - center(f)[0]))
+                if abs(col_x[col] - center(f)[0]) <= 120 and rows[i].nums[col] is None:
+                    rows[i].nums[col] = float(f["inferText"])
 
     # 라벨이 "질병 분류 기호"로 쪼개져도 찾고, 아래 안내문("질병분류기호를 기재하지 …")은 건너뜀
-    dz = re.search(_DZ_LABEL + r"\s*(.+?)\s*" + _DZ_STOP, text) or re.search(_DZ_LABEL + r"\s*(\S+)", text)
-    return Table(rows=rows, n_anchor=n_anchor, disease_raw=join_code_boxes(dz[1]) if dz else None)
+    # 양식에 따라 "질병 분류 기호 A123"이거나 "분류 기호 B 2 3 4 질병 A 1 2 3"(줄마다 코드가 따로)이다. 뒤쪽 양식은 사이의 "질병"을 지운다
+    dz = (
+        re.search(_DZ_LABEL + r"\s*(.*?)\s*" + _DZ_STOP, text)
+        or re.search(_DZ_LABEL_SHORT + r"\s*(.*?)\s*" + _DZ_STOP, text)
+        or re.search(_DZ_LABEL + r"\s*(\S+)", text)
+    )
+    raw = re.sub(r"\s*질병\s*", " ", dz[1]).strip() if dz else None
+    raw = raw or _disease_by_position(fields)
+    return Table(rows=rows, n_anchor=n_anchor, disease_raw=join_code_boxes(raw) if raw else None)
