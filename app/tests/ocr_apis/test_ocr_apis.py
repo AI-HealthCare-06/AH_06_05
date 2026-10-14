@@ -255,6 +255,73 @@ class TestUploadAndJob(OcrApiCase):
         assert job["duplicatedFiles"] == [{"fileIndex": 2, "prescriptionId": old_id}]
         assert len(job["prescriptionIds"]) == 2 and job["prescriptionIds"][1] == old_id  # 사진 1(새 기록), 사진 2(기존)
 
+    async def test_saved_key_matches_read_time_key_for_every_kind_of_row(self):
+        """content_key를 채우는 규칙(저장된 기록 기준)이 읽은 직후의 규칙과 같아야 이전 기록도 찾아진다"""
+        garbled = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        for f in garbled["images"][0]["fields"]:
+            if f["inferText"].startswith("노바스크정5밀리그램"):
+                f["inferText"] = "누바스큐쟁5밀리그램(암로디핀베실산염)"  # 못 찾는 줄(읽은 이름으로 비교)이 섞인 처방전
+        async with self.client() as client:
+            headers = await self.auth(client, "pc12@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [garbled])
+        rx = await Prescription.get(id=job["prescriptionIds"][0])
+        assert rx.content_key is not None and await svc.saved_content_key(rx) == rx.content_key
+        # 사용자가 못 찾은 줄에 약을 골라 준 뒤(user_confirmed, 약 번호가 생김)에도 같은 열쇠여야 한다 (읽은 이름으로 계산)
+        sure = await PrescriptionItem.filter(prescription=rx, match_status=MatchStatus.AUTO).first()
+        unmatched = await PrescriptionItem.filter(prescription=rx, match_status=MatchStatus.UNMATCHED).first()
+        assert sure and unmatched
+        await PrescriptionItem.filter(id=unmatched.id).update(
+            match_status=MatchStatus.USER_CONFIRMED,
+            drug_id=sure.drug_id,  # type: ignore[attr-defined]
+        )
+        assert await svc.saved_content_key(rx) == rx.content_key
+
+    async def test_backfill_gives_old_records_a_key_so_reupload_is_found(self):
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "backfill_content_key", Path(__file__).resolve().parents[3] / "scripts" / "backfill_content_key.py"
+        )
+        assert spec and spec.loader
+        script = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script)
+
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc13@example.com")
+            _, first = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            rx_id = first["prescriptionIds"][0]
+            await Prescription.filter(id=rx_id).update(content_key=None)  # 열쇠 도입 전에 저장한 기록처럼
+            _, before = await self.read_with(client, headers, [jpeg_of_size(1200, 1600, b"1")], [sample])
+            assert before["duplicatedFiles"] == []  # 열쇠가 없으면 못 찾아서 새로 저장됨
+            extra = [i for i in before["prescriptionIds"] if i != rx_id]
+            await Prescription.filter(id__in=extra).delete()  # 새로 저장된 사본을 지우고 옛 기록만 남김
+            await script.run(apply=False)
+            assert (await Prescription.get(id=rx_id)).content_key is None  # 기본(--apply 없이)은 저장하지 않음
+            await script.run(apply=True)
+            assert (await Prescription.get(id=rx_id)).content_key is not None
+            _, again = await self.read_with(client, headers, [jpeg_of_size(1200, 1600, b"2")], [sample])
+        assert again["duplicatedFiles"] == [{"fileIndex": 1, "prescriptionId": rx_id}]
+
+    async def test_spacing_difference_in_unread_name_is_still_same_prescription(self):
+        def garbled(name: str) -> dict:
+            d = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+            for f in d["images"][0]["fields"]:
+                if f["inferText"].startswith("노바스크정5밀리그램"):
+                    f["inferText"] = name
+            return d
+
+        async with self.client() as client:
+            headers = await self.auth(client, "pc14@example.com")
+            _, first = await self.read_with(
+                client, headers, [jpeg_of_size(1200, 1600)], [garbled("누바스큐쟁5밀리그램")]
+            )
+            _, second = await self.read_with(
+                client, headers, [jpeg_of_size(1200, 1600, b"s")], [garbled("누바스큐쟁 5밀리 그램")]
+            )
+        assert second["duplicatedFiles"] == [{"fileIndex": 1, "prescriptionId": first["prescriptionIds"][0]}]
+
     async def test_raw_text_is_stored_masked(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
         async with self.client() as client:

@@ -86,3 +86,37 @@ def test_masking_is_idempotent_and_empty_safe():
     once = mask(sample_text() + " 주민등록번호 900101-1234567 면허번호 제12345호")
     assert mask(once) == once
     assert mask("") == ""
+
+
+@pytest.mark.parametrize(
+    "text, hidden",
+    [
+        ("환자 성 명 홍길동", "홍길동"),  # OCR이 라벨 글자 사이에 공백을 넣음
+        ("이 름 : 박철수", "박철수"),
+        ("의 료 인 성 명 김의사", "김의사"),
+        ("주민 등록 번호 900101 1234567", "900101"),  # 하이픈이 빠지고 공백이 들어감
+        ("주민등록번호: 900101–1******", "900101"),
+        ("외국인등록번호 900101 5234567", "900101"),
+        ("전화 번호 010 1234 5678", "5678"),
+        ("핸드폰 010-1234-5678", "1234"),
+        ("연락처 (02) 123-4567", "4567"),
+        ("전화번호 123-4567", "4567"),  # 지역번호가 없는 번호는 라벨로만 알 수 있음
+        ("휴대폰 1234 5678", "5678"),
+        ("생년월일 1990.01.01", "1990"),
+        ("생년월일 1990년 1월 5일", "1990"),
+        ("생년월일 19900101", "1990"),
+    ],
+)
+def test_broken_labels_and_shapes_are_still_hidden(text, hidden):
+    out = mask(text)
+    assert hidden not in out and "[" in out
+
+
+def test_birth_year_is_kept_and_spacing_after_birthdate_stays():
+    assert mask("생년월일 1990.01.01 생년 1955년생") == "생년월일 [생년월일] 생년 1955년생"
+    assert mask("연락처 (02) 123-4567 끝") == "연락처 [전화번호] 끝"  # 괄호만 남지 않음
+
+
+def test_labels_next_to_drug_numbers_do_not_eat_the_drug_line():
+    text = "주민등록번호 900101-1234567 노바스크정5밀리그램 1 1 30"
+    assert mask(text) == f"주민등록번호 {RRN} 노바스크정5밀리그램 1 1 30"

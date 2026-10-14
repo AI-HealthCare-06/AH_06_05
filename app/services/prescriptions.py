@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -214,24 +215,60 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
     return rx.id
 
 
-def same_content(res: OcrRead) -> tuple[Any, ...] | None:
-    """같은 처방전을 두 번 찍었는지 보는 열쇠 — 병원 · 교부일 · 약 목록(이름 또는 약 번호와 복용 숫자)이 모두 같을 때만 같다고 본다.
-    이미지끼리 비교하면 숫자 한 글자만 다른 처방전도 같게 나와서(실험), 읽은 내용으로 비교한다. 정보가 모자라면 None(비교하지 않음)"""
-    if not (res.issued and res.hospital_name and res.rows):
-        return None
-    rows = tuple(
-        (r.decision.candidates[0].edi_code if r.decision.status == FOUND else r.read_name, r.dose, r.times, r.days)
-        for r in res.rows
+def _line_key(ident: str | None, dose: Any, times: Any, days: Any) -> tuple[Any, ...]:
+    """약 1줄의 열쇠. 숫자는 float · int로 맞춰 읽은 직후(소수 · 정수)와 DB(Decimal)에서 같은 값이 되게 한다.
+    확정 못 한 약 이름은 띄어쓰기를 지우고 저장 길이(300자)로 자른다 (같은 처방전을 읽을 때 띄어쓰기만 달라지는 경우가 있음)"""
+    return (
+        ident,
+        None if dose is None else float(dose),
+        None if times is None else int(times),
+        None if days is None else int(days),
     )
-    return (res.issued, res.hospital_name, rows)
+
+
+def _name_key(name: str) -> str:
+    return re.sub(r"\s+", "", name)[:300]
+
+
+def make_key(issued: Any, hospital: str | None, lines: list[tuple[Any, ...]]) -> str | None:
+    """같은 처방전을 두 번 올렸는지 보는 열쇠 — 병원 · 교부일 · 약 목록(약 번호 또는 읽은 이름 + 복용 숫자)이 모두 같을 때만 같다고 본다.
+    이미지끼리 비교하면 숫자 한 글자만 다른 처방전도 같게 나와서(실험), 읽은 내용으로 비교한다. 정보가 모자라면 None(비교하지 않음)"""
+    if not (issued and hospital and lines):
+        return None
+    raw = json.dumps([str(issued), hospital, lines], ensure_ascii=False)
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def content_key(res: OcrRead) -> str | None:
-    """same_content를 DB에 저장하고 찾을 수 있는 해시로 바꾼 것 (정보가 모자라면 None)"""
-    raw = same_content(res)
-    if raw is None:
-        return None
-    return hashlib.sha256(json.dumps(raw, default=str, ensure_ascii=False).encode()).hexdigest()
+    """읽은 직후의 열쇠"""
+    lines = [
+        _line_key(
+            r.decision.candidates[0].edi_code if r.decision.status == FOUND else _name_key(r.read_name),
+            r.dose,
+            r.times,
+            r.days,
+        )
+        for r in res.rows
+    ]
+    return make_key(res.issued, res.hospital_name, lines)
+
+
+async def saved_content_key(rx: Prescription) -> str | None:
+    """이미 저장된 처방전의 열쇠 (content_key를 도입하기 전에 저장한 기록용). 자동으로 확정된 줄은 약 번호,
+    나머지는 읽은 이름 — 읽은 직후와 같은 규칙. 사용자가 약을 바꿨다면 달라질 수 있다 (그때는 못 찾을 뿐 잘못 합치지는 않음)"""
+    items = await PrescriptionItem.filter(prescription_id=rx.id).order_by("id")
+    lines = [
+        _line_key(
+            it.drug_id  # type: ignore[attr-defined]
+            if it.match_status == MatchStatus.AUTO and it.drug_id  # type: ignore[attr-defined]
+            else _name_key(it.raw_name),
+            it.dose_per_time,
+            it.times_per_day,
+            it.total_days,
+        )
+        for it in items
+    ]
+    return make_key(rx.issued_date, rx.hospital_name, lines)
 
 
 async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
