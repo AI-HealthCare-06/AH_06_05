@@ -34,6 +34,7 @@ MIN_SIMILARITY = 0.70  # 고친 이름이 원래 읽힌 글자와 이만큼 비�
 MIN_FOUND_SCORE = 0.90  # 고친 이름을 급여목록에서 찾았을 때 점수 기준 (제대로 맞은 이름은 0.90 이상)
 MAX_NAME_LEN = 80
 FLAG = "AI가 이름을 고쳐 추천"
+SUGGESTED_LLM = "llm"  # RowRead.suggested_by 값
 
 SYSTEM = """너는 한국 처방전을 OCR로 읽은 약 이름의 오타를 바로잡는 도구다.
 입력은 OCR이 읽은 약 이름 목록이다. 글자가 깨졌거나 비슷한 글자로 잘못 읽혔을 수 있다.
@@ -153,5 +154,5 @@ async def apply(res: OcrRead, matcher: NameMatcher, client: ChatClient | None = 
         fixed = answers.get(k)
         dec = suggest(rows[i], fixed, matcher) if fixed else None
         if dec is not None:
-            rows[i] = replace(rows[i], decision=dec, flags=[*rows[i].flags, FLAG])
+            rows[i] = replace(rows[i], decision=dec, flags=[*rows[i].flags, FLAG], suggested_by=SUGGESTED_LLM)
     return replace(res, rows=rows)

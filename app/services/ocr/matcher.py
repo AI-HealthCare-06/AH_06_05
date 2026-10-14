@@ -93,6 +93,14 @@ class NameMatcher:
     def __len__(self) -> int:
         return len(self._idx)
 
+    def prepare(self) -> list[tuple[str, str, frozenset[str]]]:
+        """비슷한 이름 추천용 조각 색인 (처음 한 번 0.5초쯤). 서버를 켤 때 미리 만들어 두면 첫 요청이 느려지지 않는다.
+        여러 스레드가 동시에 불러도 같은 결과가 나오며 결과는 한 번 만들면 바뀌지 않는다"""
+        idx = self._tidx
+        if idx is None:
+            idx = self._tidx = [(edi, nm, trigrams(unify(base_name(nm)))) for edi, nm, _ in self._idx]
+        return idx
+
     def similar(self, read_name: str, top_n: int = 3) -> Decision | None:
         """규칙이 못 찾은 이름에 대한 "비슷한 이름" 추천. 글자 하나가 바뀌거나 빠진 이름을 글자 3개 조각 유사도(pg_trgm 방식)로 찾는다.
         결과는 항상 사용자가 고르는 AMBIGUOUS (자동 확정 아님). 기준에 못 미치면 None"""
@@ -100,10 +108,8 @@ class NameMatcher:
         qb = base_name(self.without_maker(read_name))
         if limit <= 0 or len(qb) < MIN_LEN or not self._idx:
             return None
-        if self._tidx is None:  # 처음 쓸 때 한 번만 만든다
-            self._tidx = [(edi, nm, trigrams(unify(base_name(nm)))) for edi, nm, _ in self._idx]
         q = trigrams(unify(qb))
-        top = heapq.nlargest(top_n, ((similarity(q, t), edi, nm) for edi, nm, t in self._tidx))
+        top = heapq.nlargest(top_n, ((similarity(q, t), edi, nm) for edi, nm, t in self.prepare()))
         if top[0][0] < limit:
             return None
         return Decision(AMBIGUOUS, round(top[0][0], 3), [Candidate(edi, nm, round(sc, 3)) for sc, edi, nm in top])

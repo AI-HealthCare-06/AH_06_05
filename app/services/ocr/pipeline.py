@@ -16,6 +16,7 @@ from app.services.ocr.matcher import NOT_FOUND, Decision, NameMatcher
 from app.services.ocr.meta import parse_meta
 from app.services.ocr.table import parse_table
 
+SUGGESTED_SIMILAR = "similar"  # RowRead.suggested_by 값 (LLM 추천은 "llm")
 SIMILAR_FLAG = (
     "비슷한 이름을 추천"  # 글자가 달라서 규칙이 못 찾았지만 자모 조각이 비슷한 약을 후보로 올림 (사용자가 고름)
 )
@@ -39,6 +40,9 @@ class RowRead:
     times: float | None
     days: float | None
     flags: list[str] = field(default_factory=list)
+    suggested_by: str | None = (
+        None  # 후보가 추천에서 왔을 때: similar(비슷한 이름) | llm — 화면이 "추천"임을 알리는 데 씀
+    )
 
 
 @dataclass
@@ -126,8 +130,11 @@ def read(  # noqa: C901
         ]
         flags += [f"{x} 범위 밖" for x in numeric.check(dose, times, days)]
         decision = matcher.decide(r.name)
+        suggested_by = None
         if decision.status == NOT_FOUND and (similar := matcher.similar(r.name)) is not None:
-            decision = similar  # 사용자가 고르는 후보로만 올린다 (자동 확정 아님)
+            # 사용자가 고르는 후보로만 올린다 (자동 확정 아님). 저장할 때 match_score는 비운다 (suggested_by 참고)
+            decision = similar
             flags.append(SIMILAR_FLAG)
-        out.rows.append(RowRead(r.name, decision, dose, times, days, flags))
+            suggested_by = SUGGESTED_SIMILAR
+        out.rows.append(RowRead(r.name, decision, dose, times, days, flags, suggested_by))
     return out

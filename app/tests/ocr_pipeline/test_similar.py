@@ -104,5 +104,6 @@ def test_pipeline_marks_the_row_as_needing_confirmation_and_flags_it():
     res = read(data, m(), CODES)
     first = res.rows[0]
     assert first.decision.status == AMBIGUOUS and first.decision.candidates[0].edi_code == "641900040"
-    assert SIMILAR_FLAG in first.flags
+    assert SIMILAR_FLAG in first.flags and first.suggested_by == "similar"
+    assert all(r.suggested_by is None for r in res.rows[1:])
     assert all(SIMILAR_FLAG not in r.flags for r in res.rows[1:])  # 나머지 줄은 그대로

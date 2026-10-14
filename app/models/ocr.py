@@ -125,6 +125,11 @@ class PrescriptionItem(models.Model):
     times_per_day = fields.SmallIntField(null=True)
     total_days = fields.SmallIntField(null=True)
     timing = fields.CharField(max_length=50, null=True, description="아침 식후 등")
+    suggested_by = fields.CharField(
+        max_length=20,
+        null=True,
+        description='후보가 추천에서 왔을 때: similar(비슷한 이름) | llm. 화면이 "추천"임을 알림',
+    )
 
     class Meta:
         table = "prescription_items"

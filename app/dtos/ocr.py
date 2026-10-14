@@ -46,6 +46,7 @@ class ItemResponse(CamelModel):
     raw_name: str
     item_name: str | None  # 약이 정해진 항목의 화면 표시 이름 (명세서 O-2에 추가 제안)
     match_status: str
+    suggested_by: Literal["similar", "llm"] | None  # needs_confirm일 때 후보가 추천에서 왔는지 (명세서에 추가 제안)
     edi_code: str | None
     item_seq: str | None
     candidates: list[CandidateResponse]

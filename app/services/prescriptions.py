@@ -58,7 +58,9 @@ async def get_matcher() -> NameMatcher:
         async with _lock:
             if _matcher is None:
                 rows = await DrugProduct.all().values_list("edi_code", "item_name", "entp_name")
-                _matcher = NameMatcher([(str(e), str(n)) for e, n, _ in rows], makers={str(m) for *_, m in rows if m})
+                matcher = NameMatcher([(str(e), str(n)) for e, n, _ in rows], makers={str(m) for *_, m in rows if m})
+                await asyncio.to_thread(matcher.prepare)  # 비슷한 이름 추천용 색인을 미리 (첫 처방전이 느려지지 않게)
+                _matcher = matcher
     return _matcher
 
 
@@ -193,6 +195,7 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
                 "times_per_day": int(r.times) if r.times is not None else None,
                 "total_days": int(r.days) if r.days is not None else None,
                 "timing": res.timing,
+                "suggested_by": r.suggested_by,
             }
             if dec.status == FOUND:
                 best = dec.candidates[0]
@@ -201,7 +204,10 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
                 )
             elif dec.status == AMBIGUOUS:
                 item = await PrescriptionItem.create(
-                    **item_kwargs, match_score=_clamp(dec.score), match_status=MatchStatus.NEEDS_CONFIRM
+                    **item_kwargs,
+                    # 추천(비슷한 이름 · AI)에서 온 후보는 점수를 비워 둔다 — 확실한 값처럼 보이지 않게 (후보별 점수는 후보 표에 있음)
+                    match_score=None if r.suggested_by else _clamp(dec.score),
+                    match_status=MatchStatus.NEEDS_CONFIRM,
                 )
             else:
                 item = await PrescriptionItem.create(
@@ -286,7 +292,8 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
         for b in screened.ready:
             try:
                 data = await clova.recognize(b.content, b.fmt, b.name)
-                res = read(data, matcher, codes)
+                # 이름 맞추기가 CPU를 쓰므로 서버가 멈추지 않게 별도 스레드에서
+                res = await asyncio.to_thread(read, data, matcher, codes)
             except clova.ClovaError as e:
                 logger.warning("CLOVA OCR 실패 job=%s file=%s (%s)", job_id, b.file_index, e)
                 failures.append(f"F{b.file_index}")
@@ -393,6 +400,8 @@ async def get_prescription(user: User, prescription_id: int) -> dict[str, Any]:
                 "rawName": it.raw_name,
                 "itemName": item_display_name(it.drug) if confirmed else None,
                 "matchStatus": it.match_status.value,
+                # "similar"(비슷한 이름) | "llm"(AI) | null — matchStatus가 needs_confirm일 때 "추천" 안내를 보여 주는 데 쓴다
+                "suggestedBy": it.suggested_by if it.match_status == MatchStatus.NEEDS_CONFIRM else None,
                 "ediCode": it.drug.edi_code if it.drug else None,
                 "itemSeq": it.drug.item_seq if it.drug else None,
                 "candidates": [

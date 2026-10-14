@@ -268,6 +268,36 @@ class TestUploadAndJob(OcrApiCase):
         first = rx["items"][0]
         assert first["matchStatus"] == "needs_confirm" and first["ediCode"] is None and first["itemName"] is None
         assert len(first["candidates"]) >= 2 and first["candidates"][0]["itemName"].startswith("노바스크정5밀리그")
+        assert first["suggestedBy"] == "similar"  # 화면이 "비슷한 이름을 추천했어요"를 보여 줄 수 있게
+        assert all(it["suggestedBy"] is None for it in rx["items"][1:])
+        assert (await PrescriptionItem.get(raw_name__startswith="노바스정")).match_score is None  # 추천은 점수를 비움
+        # 사용자가 후보를 고르면 더 이상 "추천" 안내를 띄우지 않는다
+        async with self.client() as client:
+            pick = first["candidates"][0]["ediCode"]
+            url = f"/api/v1/prescriptions/{rx['id']}/items/{first['id']}"
+            assert (await client.patch(url, json={"ediCode": pick}, headers=headers)).status_code == 204
+            after = (await client.get(f"/api/v1/prescriptions/{rx['id']}", headers=headers)).json()["items"][0]
+        assert after["matchStatus"] == "user_confirmed" and after["suggestedBy"] is None
+
+    async def test_matching_runs_off_the_event_loop_and_index_is_prebuilt(self):
+        """이름 맞추기는 CPU를 쓰므로 서버(이벤트 루프)를 멈추지 않게 별도 스레드에서 돌리고, 추천용 색인은 미리 만들어 둔다"""
+        import threading
+
+        main_thread = threading.get_ident()
+        seen: list[int] = []
+        real_read = svc.read
+
+        def spy(*args, **kwargs):
+            seen.append(threading.get_ident())
+            return real_read(*args, **kwargs)
+
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc16@example.com")
+            with patch.object(svc, "read", spy):
+                await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+        assert seen and all(t != main_thread for t in seen)
+        assert (await svc.get_matcher())._tidx is not None
 
     async def test_saved_key_matches_read_time_key_for_every_kind_of_row(self):
         """content_key를 채우는 규칙(저장된 기록 기준)이 읽은 직후의 규칙과 같아야 이전 기록도 찾아진다"""
@@ -397,6 +427,8 @@ class TestUploadAndJob(OcrApiCase):
         first = rx["items"][0]
         assert Fake.calls == 1
         assert first["matchStatus"] == "needs_confirm" and first["ediCode"] is None  # 자동 확정이 아님
+        assert first["suggestedBy"] == "llm"
+        assert (await PrescriptionItem.get(id=first["id"])).match_score is None
         assert first["candidates"][0]["ediCode"] == "641900040"  # 추천이 1번
         assert [i["matchStatus"] for i in rx["items"][1:]] == ["auto"] * 3  # 나머지 줄은 그대로
 
