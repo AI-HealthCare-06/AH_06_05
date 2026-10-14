@@ -63,3 +63,81 @@ def test_boundary_is_exclusive_at_min_side():
     ok = precheck.screen([Blob(1, jpeg(precheck.MIN_SIDE, 900), "jpg", "a")])
     small = precheck.screen([Blob(1, jpeg(precheck.MIN_SIDE - 1, 900), "jpg", "a")])
     assert ok.too_small == [] and small.too_small == [1]
+
+
+# ---- 흐린 사진 (실제로 그린 그림으로 시험) ----
+
+
+def _page(w: int = 900, h: int = 1200, lines: int = 40, blur: float = 0.0, fmt: str = "JPEG") -> bytes:
+    """글자 줄이 있는 흰 종이. 줄 수가 적으면 대부분 흰 종이, blur>0이면 흐리게"""
+    import io
+    import random
+
+    from PIL import Image, ImageDraw, ImageFilter
+
+    rnd = random.Random(7)
+    im = Image.new("RGB", (w, h), "white")
+    d = ImageDraw.Draw(im)
+    for k in range(lines):
+        y = 40 + k * (h - 80) // max(lines, 1)
+        x = 40
+        while x < w - 60:
+            ww = rnd.randint(8, 40)
+            d.rectangle([x, y, x + ww, y + 10], fill="black")
+            x += ww + rnd.randint(6, 16)
+    if blur:
+        im = im.filter(ImageFilter.GaussianBlur(blur))
+    buf = io.BytesIO()
+    im.save(buf, fmt, quality=90)
+    return buf.getvalue()
+
+
+def test_sharp_page_is_far_above_limit_and_blurred_is_below():
+    sharp = precheck.sharpness(_page(), "jpg")
+    blurred = precheck.sharpness(_page(blur=4), "jpg")
+    assert sharp is not None and blurred is not None
+    assert sharp > 5 * precheck.config.OCR_MIN_SHARPNESS
+    assert blurred < precheck.config.OCR_MIN_SHARPNESS
+
+
+def test_sparse_sharp_page_is_not_called_blurry():
+    # 글자가 몇 줄뿐이라 거의 흰 종이여도, 글자가 있는 칸은 선명하므로 통과 (전체 평균으로 재면 잘못 걸러짐)
+    assert precheck.sharpness(_page(lines=1), "jpg") >= precheck.config.OCR_MIN_SHARPNESS
+
+
+def test_blank_page_has_zero_sharpness_and_png_works():
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 1000), "white").save(buf, "PNG")
+    assert precheck.sharpness(buf.getvalue(), "png") == 0.0
+    assert precheck.sharpness(_page(fmt="PNG"), "png") > precheck.config.OCR_MIN_SHARPNESS
+
+
+def test_unmeasurable_images_return_none_so_ocr_decides():
+    assert precheck.sharpness(jpeg(1200, 1600), "jpg") is None  # 머리말만 있는 가짜 → 열 수 없음
+    assert precheck.sharpness(b"%PDF-1.4", "pdf") is None
+    assert precheck.sharpness(jpeg(20000, 20000), "jpg") is None  # 이미지 폭탄 크기는 열지 않음
+
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("L", (7000, 7000), 255).save(buf, "PNG")  # 실제로 열 수 있지만 4천만 픽셀 초과(파일은 작음)
+    assert len(buf.getvalue()) < 1_000_000 and precheck.sharpness(buf.getvalue(), "png") is None
+
+
+def test_screen_rejects_blurry_but_keeps_sharp_and_unmeasurable(monkeypatch):
+    blobs = [
+        Blob(1, _page(), "jpg", "p1"),
+        Blob(2, _page(blur=4), "jpg", "p2"),  # 흐림
+        Blob(3, jpeg(1200, 1600), "jpg", "p3"),  # 열 수 없음 → 통과
+    ]
+    out = precheck.screen(blobs)
+    assert [b.file_index for b in out.ready] == [1, 3] and out.blurry == [2]
+    monkeypatch.setattr(precheck.config, "OCR_MIN_SHARPNESS", 0.0)  # 0이면 검사 끔
+    off = precheck.screen(blobs)
+    assert [b.file_index for b in off.ready] == [1, 2, 3] and off.blurry == []

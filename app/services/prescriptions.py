@@ -229,8 +229,9 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
         matcher, codes = await get_matcher(), await get_codes()
         failures: list[str] = []
         saved = 0
-        screened = precheck.screen(blobs)  # OCR(유료 호출)을 부르기 전에 너무 작은 사진 · 똑같은 사진을 거름
-        failures += [f"Q{i}" for i in screened.too_small]
+        # OCR(유료 호출)을 부르기 전에 너무 작은 · 흐린 사진, 똑같은 사진을 거름 (이미지를 여는 계산이라 별도 스레드에서)
+        screened = await asyncio.to_thread(precheck.screen, blobs)
+        failures += [f"Q{i}" for i in sorted([*screened.too_small, *screened.blurry])]
         for i, first in screened.duplicates.items():
             logger.info("같은 사진이라 건너뜀 job=%s file=%s (=%s번)", job_id, i, first)
         seen_content: set[tuple[Any, ...]] = set()

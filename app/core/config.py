@@ -44,6 +44,10 @@ class Config(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET_KEY: str = ""
 
+    # OCR 호출 전 흐린 사진 거르기: 글자가 가장 많은 칸 3개의 선명도가 이보다 낮으면 다시 찍게 함 (0이면 끔)
+    # 근거: 10/13 시험 사진에서 못 읽힌 흐린 사진 11, 흐려도 읽힌 사진 232, 정상 사진 940 이상 (docs/design/ocr_precheck.md)
+    OCR_MIN_SHARPNESS: float = 100.0
+
     # OCR 약 이름 후보정(LLM). 규칙이 못 찾은 약 이름 글자만 보내고, 고친 이름은 급여목록에서 다시 찾아 확인된 것만 "추천"으로 씀
     # (자동 확정 없음 — 사용자가 고름). 기본 꺼짐. 켜려면 OCR_LLM_FIX=true 와 OPENAI_API_KEY 가 모두 필요
     OCR_LLM_FIX: bool = False

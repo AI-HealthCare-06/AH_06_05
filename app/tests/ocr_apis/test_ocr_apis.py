@@ -186,6 +186,16 @@ class TestUploadAndJob(OcrApiCase):
         assert n == 0 and job["prescriptionIds"] == []
         assert job["failedFiles"] == [{"fileIndex": 1, "code": "IMAGE_QUALITY_LOW"}] and job["status"] == "done"
 
+    async def test_blurry_photo_is_not_sent_to_ocr_and_sharp_one_is(self):
+        from app.tests.ocr_pipeline.test_precheck import _page
+
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc5@example.com")
+            n, job = await self.read_with(client, headers, [_page(), _page(blur=4)], [sample])
+        assert n == 1 and len(job["prescriptionIds"]) == 1
+        assert job["failedFiles"] == [{"fileIndex": 2, "code": "IMAGE_QUALITY_LOW"}] and job["status"] == "done"
+
     async def test_normal_size_and_unknown_header_still_go_to_ocr(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
         async with self.client() as client:
