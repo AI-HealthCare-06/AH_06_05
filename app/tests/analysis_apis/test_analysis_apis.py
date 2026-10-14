@@ -13,14 +13,14 @@ from tortoise.contrib.test import TestCase
 
 from app.core import config
 from app.main import app
-from app.models.analysis import Analysis, AnalysisStatus, AnalysisStep
+from app.models.analysis import Analysis, AnalysisStatus, AnalysisStep, DrugGuide, ReviewStatus
 from app.models.masters import Disease, DrugProduct
 from app.models.ocr import DocType, MatchStatus, Prescription, PrescriptionDisease, PrescriptionItem
 from app.models.users import ConsentType, User, UserConsent
 from app.services import analyses as svc
 from app.services import safety
 from app.services.drug_names import base_name
-from app.services.guide import lifestyle
+from app.services.guide import lifestyle, store
 from app.tests.helpers import signup
 
 SCHEMA = """
@@ -345,6 +345,86 @@ class TestDiseases(AnalysisCase):
             await Disease.create(code="J00", name_kr="급성 비인두염")
             res = await client.put(f"/api/v1/analyses/{aid}/diseases", json={"diseaseCodes": ["j00"]}, headers=headers)
             assert res.status_code == 200 and res.json()["sections"] == [] and res.json()["diseases"] == []
+
+
+class TestStoredGuides(AnalysisCase):
+    """안내문 사전 저장 — 분석 때는 drug_guides를 조회해서 붙인다"""
+
+    async def medication_items(self, client, headers, user):
+        rx = await self.prescription(user, ["641900040"], ("I10",))
+        aid = (await self.start(client, headers, rx)).json()["analysisId"]
+        r = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+        return r["medication"]["items"]
+
+    async def test_stored_content_is_used_and_howtotake_stays_per_prescription(self):
+        await DrugGuide.create(
+            edi_code="641900040",
+            content={"category": "혈압약", "purpose": "저장된 쓰임", "caution": "저장된 주의", "source": "시험 출처"},
+            review_status=ReviewStatus.APPROVED,
+        )
+        async with self.client() as client:
+            headers, user = await self.auth(client, "g1@example.com")
+            it = (await self.medication_items(client, headers, user))[0]
+            assert it["purpose"] == "저장된 쓰임" and it["caution"] == "저장된 주의" and it["source"] == "시험 출처"
+            assert it["howToTake"].startswith("하루 2번")
+
+    async def test_rejected_gives_pharmacist_text_not_table(self):
+        await DrugGuide.create(
+            edi_code="641900040", content={"purpose": "쓰면 안 됨"}, review_status=ReviewStatus.REJECTED
+        )
+        async with self.client() as client:
+            headers, user = await self.auth(client, "g2@example.com")
+            it = (await self.medication_items(client, headers, user))[0]
+            assert it["purpose"] == "처방받은 목적을 약사에게 확인해 주세요" and it["category"] is None
+            assert it["caution"] is None
+
+    async def test_draft_and_missing_are_not_shown_until_a_person_approves(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "g3@example.com")
+            assert (await store.generate_all())["created"] == len(PRODUCTS)
+            it = (await self.medication_items(client, headers, user))[0]  # draft
+            assert it["purpose"] == "처방받은 목적을 약사에게 확인해 주세요" and it["category"] is None
+            assert it["source"] is None and it["howToTake"]
+            await DrugGuide.filter(edi_code="641900040").update(review_status=ReviewStatus.APPROVED)
+            await Analysis.all().delete()
+            it = (await self.medication_items(client, headers, user))[0]
+            assert it["source"] == "심평원 약제급여목록 약효분류"
+
+    async def test_review_group_approves_same_content_together(self):
+        await store.generate_all()  # 시험 약은 약효분류가 없어 내용이 모두 같음 → 묶음 1개
+        gs = await store.groups()
+        assert len(gs) == 1 and gs[0]["count"] == len(PRODUCTS) and gs[0]["status"] == {"draft": len(PRODUCTS)}
+        assert len(gs[0]["examples"]) == len(PRODUCTS) and len(set(gs[0]["examples"])) == len(PRODUCTS)
+        assert await store.review_group("없는키", ReviewStatus.APPROVED, "채연") == 0
+        assert await store.review_group(gs[0]["key"], ReviewStatus.APPROVED, "채연") == len(PRODUCTS)
+        g = await DrugGuide.get(edi_code="644300010")
+        assert g.review_status == ReviewStatus.APPROVED and g.reviewed_by == "채연" and g.reviewed_at
+        assert set(await store.lookup(["644300010", "000000000"])) == {"644300010"}
+
+    async def test_generate_all_creates_missing_and_regenerate_resets_only_changed(self):
+        n = len(PRODUCTS)
+        assert await store.generate_all() == {"created": n, "updated": 0, "reset": 0, "skipped": 0}
+        assert await store.generate_all() == {"created": 0, "updated": 0, "reset": 0, "skipped": n}
+        await DrugGuide.filter(edi_code="641900040").update(review_status=ReviewStatus.APPROVED, reviewed_by="채연")
+        await DrugGuide.filter(edi_code="644300010").update(review_status=ReviewStatus.REJECTED)
+        # 표가 그대로면 다시 만들어도 확인 상태가 유지됨
+        assert await store.generate_all(only_missing=False) == {"created": 0, "updated": 0, "reset": 0, "skipped": n}
+        assert (await DrugGuide.get(edi_code="641900040")).review_status == ReviewStatus.APPROVED
+        # 표가 바뀌면 (draft는 갱신, 확인된 것은 draft로 되돌림)
+        await DrugGuide.filter(edi_code__in=["641900040", "644300010"]).update(content={"purpose": "옛 내용"})
+        await DrugGuide.filter(edi_code="645600020").update(content={"purpose": "옛 내용"})
+        r = await store.generate_all(only_missing=False)
+        assert r == {"created": 0, "updated": 1, "reset": 2, "skipped": n - 3}
+        g = await DrugGuide.get(edi_code="641900040")
+        assert g.review_status == ReviewStatus.DRAFT and g.reviewed_by is None and g.content["purpose"] != "옛 내용"
+        assert (await DrugGuide.get(edi_code="644300010")).review_status == ReviewStatus.DRAFT
+
+    async def test_review_marks_status_and_reviewer(self):
+        await store.generate_all()
+        assert await store.review("644300010", ReviewStatus.APPROVED, "채연")
+        g = await DrugGuide.get(edi_code="644300010")
+        assert g.review_status == ReviewStatus.APPROVED and g.reviewed_by == "채연" and g.reviewed_at
+        assert not await store.review("000000000", ReviewStatus.APPROVED, "채연")
 
 
 class TestGuideUnits(TestCase):

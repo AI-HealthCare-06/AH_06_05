@@ -42,6 +42,14 @@ class GuideStatus(StrEnum):
     FAILED = "failed"
 
 
+class ReviewStatus(StrEnum):
+    """미리 만든 안내문의 사람 확인 상태 (멘토링 4회차: 사람 확인 필수). 값은 회의 제안 — 수인님 확인 뒤 확정"""
+
+    DRAFT = "draft"  # 자동으로 만들어 둔 상태, 아직 사람이 안 봄
+    APPROVED = "approved"  # 사람이 확인함
+    REJECTED = "rejected"  # 사람이 쓰지 말라고 함 (분석 때 쓰지 않음)
+
+
 class Analysis(models.Model):
     id = fields.BigIntField(primary_key=True)
     user: fields.ForeignKeyRelation["User"] = fields.ForeignKeyField(
@@ -156,3 +164,24 @@ class Guide(models.Model):
     class Meta:
         table = "guides"
         unique_together = (("analysis", "section"),)
+
+
+class DrugGuide(models.Model):
+    """약 1개(edi_code)의 복약 안내 중 처방과 상관없는 부분 — 배치로 미리 만들어 두고 분석 때는 조회만 한다 (ERD 추가 제안)
+
+    먹는 법(하루 몇 번 · 며칠)은 처방마다 달라서 여기 두지 않고 분석 때 처방 숫자로 만든다.
+    """
+
+    edi_code = fields.CharField(max_length=9, primary_key=True)
+    content: Any = fields.JSONField(description="category · purpose · caution · source")
+    evidence_ids: Any = fields.JSONField(null=True, description="근거 번호 (허가정보 · 고시 등)")
+    prompt_ver = fields.CharField(max_length=20, null=True)
+    model_name = fields.CharField(max_length=50, null=True, description="AI 없이 만든 안내문은 null")
+    review_status = fields.CharEnumField(enum_type=ReviewStatus, max_length=20, default=ReviewStatus.DRAFT)
+    reviewed_by = fields.CharField(max_length=50, null=True)
+    reviewed_at = fields.DatetimeField(null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "drug_guides"

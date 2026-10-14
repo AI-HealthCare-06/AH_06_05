@@ -34,7 +34,7 @@ from app.models.ocr import MatchStatus, Prescription, PrescriptionDisease, Presc
 from app.models.users import User
 from app.services import safety
 from app.services.drug_names import base_name
-from app.services.guide import lifestyle, medication
+from app.services.guide import lifestyle, medication, store
 from app.services.prescriptions import has_health_consent
 
 logger = logging.getLogger(__name__)
@@ -212,7 +212,7 @@ async def _guide_step(analysis: Analysis, items: list[PrescriptionItem]) -> None
         str(c)
         for c in await AnalysisDisease.filter(analysis=analysis).order_by("id").values_list("disease_id", flat=True)
     ]
-    med = medication.build(usable)
+    med = medication.build(usable, await store.lookup([i.drug.edi_code for i in usable]))
     life = lifestyle.build(codes, usable)
     async with in_transaction():
         await Guide.filter(analysis=analysis).delete()
