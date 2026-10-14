@@ -19,11 +19,19 @@ class FailedFile(CamelModel):
     code: Literal["IMAGE_QUALITY_LOW", "NOT_A_DOCUMENT", "OCR_FAILED"]
 
 
+class DuplicatedFile(CamelModel):
+    """이미 올린 처방전이라 새로 저장하지 않은 사진 — 화면은 "이미 올린 처방전이에요"로 안내하고 prescription_id를 그대로 쓴다"""
+
+    file_index: int
+    prescription_id: int
+
+
 class JobResponse(CamelModel):
     job_id: int
     status: Literal["queued", "running", "done", "failed"]
     prescription_ids: list[int]
     failed_files: list[FailedFile]
+    duplicated_files: list[DuplicatedFile]  # 명세서에 추가 제안 (수인님 결정 10/14)
 
 
 class CandidateResponse(CamelModel):

@@ -10,7 +10,7 @@ from tortoise.contrib.test import TestCase
 
 from app.main import app
 from app.models.masters import Disease, DrugProduct
-from app.models.ocr import MatchStatus, OcrJob, PrescriptionItem, PrescriptionItemCandidate
+from app.models.ocr import MatchStatus, OcrJob, Prescription, PrescriptionItem, PrescriptionItemCandidate
 from app.models.users import ConsentType, User, UserConsent
 from app.services import prescriptions as svc
 from app.services.ocr import clova, llm_fix
@@ -213,6 +213,56 @@ class TestUploadAndJob(OcrApiCase):
             headers = await self.auth(client, "pc3@example.com")
             n, job = await self.read_with(client, headers, [photo, photo], [sample, sample])
         assert n == 1 and len(job["prescriptionIds"]) == 1 and job["failedFiles"] == [] and job["status"] == "done"
+        assert job["duplicatedFiles"] == [{"fileIndex": 2, "prescriptionId": job["prescriptionIds"][0]}]
+
+    async def test_reupload_on_another_day_reuses_existing_record(self):
+        """수인님 결정(10/14): 이미 올린 처방전이면 새로 저장하지 않고 기존 기록을 쓰게 안내"""
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc7@example.com")
+            _, first = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            _, second = await self.read_with(client, headers, [jpeg_of_size(1200, 1600, b"later")], [sample])
+            other = await self.auth(client, "pc8@example.com")  # 다른 사용자의 기록은 같은 처방전이어도 건드리지 않음
+            _, third = await self.read_with(client, other, [jpeg_of_size(1200, 1600, b"o")], [sample])
+        rx_id = first["prescriptionIds"][0]
+        assert first["duplicatedFiles"] == []
+        assert second["prescriptionIds"] == [rx_id]  # 새 기록 없이 기존 처방전 ID
+        assert second["duplicatedFiles"] == [{"fileIndex": 1, "prescriptionId": rx_id}]
+        assert second["failedFiles"] == [] and second["status"] == "done"
+        assert await Prescription.filter(user__login_id="pc7@example.com").count() == 1
+        assert third["prescriptionIds"] != [rx_id] and third["duplicatedFiles"] == []
+        assert await Prescription.filter(user__login_id="pc8@example.com").count() == 1
+
+    async def test_changed_prescription_is_not_treated_as_duplicate(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        changed = with_days(sample, "30", "28")  # 일수만 다른 다른 처방전
+        async with self.client() as client:
+            headers = await self.auth(client, "pc9@example.com")
+            _, first = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            _, second = await self.read_with(client, headers, [jpeg_of_size(1200, 1600, b"d")], [changed])
+        assert second["duplicatedFiles"] == [] and second["prescriptionIds"] != first["prescriptionIds"]
+
+    async def test_mixed_upload_keeps_photo_order_with_existing_and_new(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        new = with_days(sample, "30", "28")
+        async with self.client() as client:
+            headers = await self.auth(client, "pc10@example.com")
+            _, first = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            _, job = await self.read_with(
+                client, headers, [jpeg_of_size(1200, 1600, b"n"), jpeg_of_size(1200, 1600, b"m")], [new, sample]
+            )
+        old_id = first["prescriptionIds"][0]
+        assert job["duplicatedFiles"] == [{"fileIndex": 2, "prescriptionId": old_id}]
+        assert len(job["prescriptionIds"]) == 2 and job["prescriptionIds"][1] == old_id  # 사진 1(새 기록), 사진 2(기존)
+
+    async def test_raw_text_is_stored_masked(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc11@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+        raw = (await Prescription.get(id=job["prescriptionIds"][0])).ocr_raw_text
+        assert raw and "홍길동" not in raw and "02-000-0000" not in raw and "[이름]" in raw and "[전화번호]" in raw
+        assert "가나다내과의원" in raw and "노바스크정" in raw  # 병원 · 약 정보는 남김
 
     async def test_same_prescription_shot_twice_is_saved_once(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
@@ -222,6 +272,7 @@ class TestUploadAndJob(OcrApiCase):
                 client, headers, [jpeg_of_size(1200, 1600, b"a"), jpeg_of_size(1200, 1600, b"b")], [sample, sample]
             )
         assert n == 2 and len(job["prescriptionIds"]) == 1 and job["failedFiles"] == []
+        assert job["duplicatedFiles"] == [{"fileIndex": 2, "prescriptionId": job["prescriptionIds"][0]}]
 
     async def test_prescriptions_differing_by_one_number_are_both_kept(self):
         # 이미지가 거의 같아도 일수가 30일 → 28일로 다르면 다른 처방전이다 (재처방 등). 잘못 합치면 처방전이 사라짐
@@ -256,6 +307,9 @@ class TestUploadAndJob(OcrApiCase):
             n, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [garbled])  # 꺼짐(기본)
             rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
             assert rx["items"][0]["matchStatus"] == "unmatched" and Fake.calls == 0  # 켜지 않으면 LLM을 부르지 않음
+            headers = await self.auth(
+                client, "pc6b@example.com"
+            )  # 같은 사용자가 같은 처방전을 또 올리면 기존 기록을 쓰므로 다른 사용자로
             with patch.object(llm_fix, "make_client", lambda: Fake()):
                 n, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600, b"x")], [garbled])
             rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()

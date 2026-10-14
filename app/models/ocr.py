@@ -4,7 +4,7 @@
 """
 
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tortoise import fields, models
 
@@ -48,6 +48,9 @@ class OcrJob(models.Model):
     status = fields.CharEnumField(enum_type=OcrJobStatus, max_length=20, default=OcrJobStatus.QUEUED)
     file_count = fields.SmallIntField(description="한 번에 올린 사진 수 (최대 5)")
     error_code = fields.CharField(max_length=50, null=True, description="전체 실패 시 OCR_FAILED 등")
+    duplicates: Any = fields.JSONField(
+        null=True, description='이미 있는 처방전이라 새로 저장하지 않은 사진 [{"fileIndex": 2, "prescriptionId": 7}]'
+    )
     created_at = fields.DatetimeField(auto_now_add=True)
     finished_at = fields.DatetimeField(null=True)
 
@@ -67,7 +70,12 @@ class Prescription(models.Model):
     doc_type = fields.CharEnumField(enum_type=DocType, max_length=20)
     issued_date = fields.DateField(null=True, description="처방 교부일")
     hospital_name = fields.CharField(max_length=200, null=True)
-    ocr_raw_text = fields.TextField(null=True, description="OCR 원문 — 암호화 저장 예정 (원본 이미지는 저장 안 함)")
+    ocr_raw_text = fields.TextField(
+        null=True, description="OCR 원문 — 이름 · 주민번호 · 전화번호 등을 가린 뒤 저장 (원본 이미지는 저장 안 함)"
+    )
+    content_key = fields.CharField(
+        max_length=64, null=True, db_index=True, description="같은 처방전 판별용 해시 (병원 · 교부일 · 약 목록)"
+    )
     ocr_confidence = fields.DecimalField(max_digits=5, decimal_places=4, null=True)
     quality_flag = fields.CharEnumField(enum_type=QualityFlag, max_length=20, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)

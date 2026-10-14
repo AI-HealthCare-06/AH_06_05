@@ -6,6 +6,8 @@ OCR 작업은 FastAPI 백그라운드 작업으로 돌린다 (사진 원본은 �
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,6 +34,7 @@ from app.models.ocr import (
 from app.models.users import ConsentType, User, UserConsent
 from app.services.drug_names import base_name
 from app.services.ocr import clova, llm_fix, numeric, precheck
+from app.services.ocr.mask import mask
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
 from app.services.ocr.pipeline import OcrRead, read
 
@@ -158,7 +161,7 @@ def _clamp(score: float) -> Decimal:
     return Decimal(str(round(min(max(score, 0.0), 1.0), 4)))
 
 
-async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead) -> int:
+async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, key: str | None = None) -> int:
     """읽은 결과를 prescriptions · 질병 · 약 · 후보로 저장하고 처방전 ID를 돌려줌"""
     async with in_transaction():
         rx = await Prescription.create(
@@ -168,7 +171,8 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead) ->
             doc_type=DocType.PRESCRIPTION,
             issued_date=res.issued,
             hospital_name=res.hospital_name,
-            ocr_raw_text=res.raw_text,
+            ocr_raw_text=mask(res.raw_text),  # 이름 · 주민번호 · 전화번호 등을 가린 뒤 저장 (수인님 결정 10/14)
+            content_key=key,
             ocr_confidence=Decimal(str(res.confidence)) if res.confidence is not None else None,
             quality_flag=QualityFlag.OK,
         )
@@ -222,6 +226,14 @@ def same_content(res: OcrRead) -> tuple[Any, ...] | None:
     return (res.issued, res.hospital_name, rows)
 
 
+def content_key(res: OcrRead) -> str | None:
+    """same_content를 DB에 저장하고 찾을 수 있는 해시로 바꾼 것 (정보가 모자라면 None)"""
+    raw = same_content(res)
+    if raw is None:
+        return None
+    return hashlib.sha256(json.dumps(raw, default=str, ensure_ascii=False).encode()).hexdigest()
+
+
 async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
     """백그라운드 작업. 어떤 오류가 나도 작업이 queued · running에 멈춰 있지 않게 마무리한다"""
     try:
@@ -232,9 +244,8 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
         # OCR(유료 호출)을 부르기 전에 너무 작은 · 흐린 사진, 똑같은 사진을 거름 (이미지를 여는 계산이라 별도 스레드에서)
         screened = await asyncio.to_thread(precheck.screen, blobs)
         failures += [f"Q{i}" for i in sorted([*screened.too_small, *screened.blurry])]
-        for i, first in screened.duplicates.items():
-            logger.info("같은 사진이라 건너뜀 job=%s file=%s (=%s번)", job_id, i, first)
-        seen_content: set[tuple[Any, ...]] = set()
+        saved_ids: dict[int, int] = {}  # 사진 번호 → 처방전 ID (새로 저장했거나 이미 있던 것)
+        duplicated: list[dict[str, int]] = []
         for b in screened.ready:
             try:
                 data = await clova.recognize(b.content, b.fmt, b.name)
@@ -248,18 +259,31 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
                 continue
             # 규칙이 못 찾은 약 이름만 LLM이 고쳐 "추천" (꺼짐이 기본 · 실패해도 규칙 결과 그대로)
             res = await llm_fix.apply(res, matcher)
-            key = same_content(res)
-            if key is not None and key in seen_content:  # 병원 · 교부일 · 약 목록이 모두 같은 처방전은 한 번만 저장
-                logger.info("같은 처방전이라 건너뜀 job=%s file=%s", job_id, b.file_index)
+            key = content_key(res)
+            # 병원 · 교부일 · 약 목록이 모두 같은 처방전이 이미 있으면(이 작업의 앞 사진이든 지난번 업로드든) 새로 저장하지 않고
+            # 기존 기록을 쓰게 한다 (수인님 결정 10/14: "이미 올린 처방전이에요"로 안내 + 기존 기록 사용)
+            existing = (
+                await Prescription.filter(user_id=user_id, content_key=key).order_by("id").first() if key else None
+            )
+            if existing is not None:
+                logger.info(
+                    "이미 있는 처방전이라 저장하지 않음 job=%s file=%s rx=%s", job_id, b.file_index, existing.id
+                )
+                saved_ids[b.file_index] = existing.id
+                duplicated.append({"fileIndex": b.file_index, "prescriptionId": existing.id})
                 continue
-            if key is not None:
-                seen_content.add(key)
-            await save_read(user_id, job_id, b.file_index, res)
+            saved_ids[b.file_index] = await save_read(user_id, job_id, b.file_index, res, key)
             saved += 1
+        for i, first in screened.duplicates.items():  # 바이트가 똑같은 사진은 먼저 읽은 사진의 처방전을 가리킴
+            logger.info("같은 사진이라 건너뜀 job=%s file=%s (=%s번)", job_id, i, first)
+            if first in saved_ids:
+                duplicated.append({"fileIndex": i, "prescriptionId": saved_ids[first]})
+        duplicated.sort(key=lambda d: d["fileIndex"])
         all_failed_service = saved == 0 and failures and all(f.startswith("F") for f in failures)
         await OcrJob.filter(id=job_id).update(
             status=OcrJobStatus.FAILED if all_failed_service else OcrJobStatus.DONE,
             error_code=",".join(failures)[:50] or None,
+            duplicates=duplicated or None,
             finished_at=datetime.now(config.TIMEZONE),
         )
     except Exception:
@@ -278,12 +302,21 @@ async def get_job(user: User, job_id: int) -> dict[str, Any]:
     job = await OcrJob.get_or_none(id=job_id, user=user)
     if job is None:
         raise AppError(status.HTTP_404_NOT_FOUND, "NOT_FOUND")
-    ids = await Prescription.filter(ocr_job_id=job.id).order_by("file_index", "id").values_list("id", flat=True)
+    # 이 작업에서 새로 저장한 처방전 + 이미 있어서 새로 저장하지 않은 사진이 가리키는 기존 처방전을 사진 순서대로
+    pairs = await Prescription.filter(ocr_job_id=job.id).values_list("file_index", "id")
+    dups = [(d["fileIndex"], d["prescriptionId"]) for d in (job.duplicates or [])]
+    ids = list(dict.fromkeys(i for _, i in sorted([*pairs, *dups], key=lambda p: (p[0] or 0, p[1]))))
     failed = []
     for token in (job.error_code or "").split(","):
         if token[:1] in FAIL_CODES and token[1:].isdigit():
             failed.append({"fileIndex": int(token[1:]), "code": FAIL_CODES[token[0]]})
-    return {"jobId": job.id, "status": job.status.value, "prescriptionIds": list(ids), "failedFiles": failed}
+    return {
+        "jobId": job.id,
+        "status": job.status.value,
+        "prescriptionIds": ids,
+        "failedFiles": failed,
+        "duplicatedFiles": [{"fileIndex": f, "prescriptionId": i} for f, i in dups],
+    }
 
 
 def item_display_name(drug: DrugProduct | None) -> str | None:
