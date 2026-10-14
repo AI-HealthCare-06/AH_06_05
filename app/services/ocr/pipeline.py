@@ -20,6 +20,9 @@ SUGGESTED_SIMILAR = "similar"  # RowRead.suggested_by 값 (LLM 추천은 "llm")
 SIMILAR_FLAG = (
     "비슷한 이름을 추천"  # 글자가 달라서 규칙이 못 찾았지만 자모 조각이 비슷한 약을 후보로 올림 (사용자가 고름)
 )
+SIBLING_FLAG = (
+    "이름이 비슷한 다른 약이 있어요"  # 글자 하나 차이의 다른 성분 약이 있어 사용자가 고름 (matcher.decide의 siblings)
+)
 ICD_CONF = 0.95  # 질병분류기호 글자의 확실도가 이보다 낮으면 보정 결과와 상관없이 사용자가 고르게 한다
 
 
@@ -130,6 +133,8 @@ def read(  # noqa: C901
         ]
         flags += [f"{x} 범위 밖" for x in numeric.check(dose, times, days)]
         decision = matcher.decide(r.name)
+        if decision.sibling:
+            flags.append(SIBLING_FLAG)
         suggested_by = None
         if decision.status == NOT_FOUND and (similar := matcher.similar(r.name)) is not None:
             # 사용자가 고르는 후보로만 올린다 (자동 확정 아님). 저장할 때 match_score는 비운다 (suggested_by 참고)

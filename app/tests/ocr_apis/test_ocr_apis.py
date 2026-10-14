@@ -279,6 +279,37 @@ class TestUploadAndJob(OcrApiCase):
             after = (await client.get(f"/api/v1/prescriptions/{rx['id']}", headers=headers)).json()["items"][0]
         assert after["matchStatus"] == "user_confirmed" and after["suggestedBy"] is None
 
+    async def test_name_with_a_different_ingredient_sibling_is_left_for_the_user_to_choose(self):
+        """읽힌 이름이 목록에 있어도 글자 하나 차이의 다른 성분 약(노바스크엠정)이 있으면 자동 확정하지 않고 고르게 한다"""
+        await DrugProduct.filter(edi_code="641900040").update(ingr_code="A1")
+        await DrugProduct.create(
+            edi_code="641900099",
+            item_name="노바스크엠정5밀리그람(암로디핀베실산염/로사르탄칼륨)_(1정)",
+            entp_name="한국화이자제약(주)",
+            ingr_code="A2",
+            etc_otc="전문",
+            route="내복",
+        )
+        svc.reset_caches()
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc17@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        first = rx["items"][0]
+        assert first["matchStatus"] == "needs_confirm" and first["ediCode"] is None
+        assert [c["ediCode"] for c in first["candidates"]][:2] == ["641900040", "641900099"]  # 읽은 이름의 약이 1번
+        assert first["suggestedBy"] is None  # 오타 보정 추천이 아니라 형제 약 확인
+        assert all(it["matchStatus"] == "auto" for it in rx["items"][1:])  # 다른 줄은 그대로 자동 확정
+        # 사용자가 이름을 직접 쳐서 찾는 검색은 그대로 — 정확히 같은 이름이면 그 약 하나로 확정한다 (형제 약 확인은 사진 읽기에만 적용)
+        async with self.client() as client:
+            found = (
+                await client.get(
+                    "/api/v1/drugs/search", params={"q": "노바스크정5밀리그람(암로디핀베실산염)"}, headers=headers
+                )
+            ).json()
+        assert found["status"] == "matched" and [i["ediCode"] for i in found["items"]] == ["641900040"]
+
     async def test_matching_runs_off_the_event_loop_and_index_is_prebuilt(self):
         """이름 맞추기는 CPU를 쓰므로 서버(이벤트 루프)를 멈추지 않게 별도 스레드에서 돌리고, 추천용 색인은 미리 만들어 둔다"""
         import threading

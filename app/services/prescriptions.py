@@ -57,8 +57,12 @@ async def get_matcher() -> NameMatcher:
     if _matcher is None:
         async with _lock:
             if _matcher is None:
-                rows = await DrugProduct.all().values_list("edi_code", "item_name", "entp_name")
-                matcher = NameMatcher([(str(e), str(n)) for e, n, _ in rows], makers={str(m) for *_, m in rows if m})
+                rows = await DrugProduct.all().values_list("edi_code", "item_name", "entp_name", "ingr_code")
+                matcher = NameMatcher(
+                    [(str(e), str(n)) for e, n, *_ in rows],
+                    makers={str(m) for _, _, m, _ in rows if m},
+                    ingredients={str(e): (str(g) if g else None) for e, _, _, g in rows},
+                )
                 await asyncio.to_thread(matcher.prepare)  # 비슷한 이름 추천용 색인을 미리 (첫 처방전이 느려지지 않게)
                 _matcher = matcher
     return _matcher
@@ -468,7 +472,7 @@ async def patch_item(user: User, prescription_id: int, item_id: int, body: Any) 
 async def search_drugs(q: str, size: int) -> dict[str, Any]:
     """O-4 — 이름 맞추기는 OCR과 같은 함수(NameMatcher). 정확히 같을 때만 matched"""
     matcher = await get_matcher()
-    dec = matcher.decide(q, top_n=max(size, 3))  # 비슷한 약이 여럿인지 보려면 최소 3개는 봐야 함
+    dec = matcher.decide(q, top_n=max(size, 3), siblings=False)  # 비슷한 약이 여럿인지 보려면 최소 3개는 봐야 함
     if dec.status not in (FOUND, AMBIGUOUS):
         return {"status": "not_found", "items": []}
     drugs = {d.edi_code: d for d in await DrugProduct.filter(edi_code__in=[c.edi_code for c in dec.candidates])}

@@ -51,6 +51,10 @@ class Config(BaseSettings):
     # OCR 약 이름 "비슷한 이름 추천" 기준 (자모 3글자 조각 유사도, 0이면 끔). 낮추면 더 많이 추천하지만 엉뚱한 약도 늘어남
     OCR_SIMILAR_MIN: float = 0.70
 
+    # 읽힌 이름이 목록에 있어도 글자 하나 차이의 다른 성분 약(글리마릴정 ↔ 글리마릴엠정)이 있으면 자동 확정하지 않고 사용자가 고르게 함
+    # (이름만으로는 오타와 다른 약을 구별할 수 없어서). 끄면 예전처럼 자동 확정 (docs/design/ocr_sibling.md)
+    OCR_SIBLING_CONFIRM: bool = True
+
     # OCR 약 이름 후보정(LLM). 규칙이 못 찾은 약 이름 글자만 보내고, 고친 이름은 급여목록에서 다시 찾아 확인된 것만 "추천"으로 씀
     # (자동 확정 없음 — 사용자가 고름). 기본 꺼짐. 켜려면 OCR_LLM_FIX=true 와 OPENAI_API_KEY 가 모두 필요
     OCR_LLM_FIX: bool = False

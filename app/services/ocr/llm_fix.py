@@ -124,7 +124,7 @@ def suggest(row: RowRead, fixed: str, matcher: NameMatcher) -> Decision | None:
         return None  # 바뀐 것이 없음
     if similar(row.read_name, fixed, matcher.without_maker) < MIN_SIMILARITY:
         return None  # 원래 글자와 너무 다름 → 다른 약일 수 있음
-    found = matcher.decide(fixed)
+    found = matcher.decide(fixed, siblings=False)  # 어차피 사용자가 고르는 추천이라 형제 약 확인은 건너뜀
     if found.status != FOUND or found.score < MIN_FOUND_SCORE:
         return None
     top = found.candidates[0]

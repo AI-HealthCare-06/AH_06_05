@@ -174,3 +174,17 @@ async def test_unreadable_result_is_returned_as_is(matcher):
 def test_similarity_ignores_mg_notation_but_not_real_changes():
     assert llm_fix.similar("엘로시드캡슬7.5mg(엘록시캄)", "멜로시드캡슐7.5밀리그램(멜록시캄)") > llm_fix.MIN_SIMILARITY
     assert llm_fix.similar("타이레놀정500mg", "게보린정") < llm_fix.MIN_SIMILARITY
+
+
+@sync
+async def test_suggestion_survives_when_the_fixed_name_has_a_sibling_drug():
+    """고친 이름의 약에 형제 약(글자 하나 차이의 다른 성분)이 있어도 추천은 버려지지 않는다 (어차피 사용자가 고르는 단계)"""
+    products = [*PRODUCTS, ("100000007", "멜로시드엠캡슐7.5밀리그램(멜록시캄/메트포르민)_(1캡슐)")]
+    ingredients = {"100000001": "M1", "100000007": "M2"}
+    m = NameMatcher(products, ingredients=ingredients)
+    assert m.decide("멜로시드캡슐7.5밀리그램(멜록시캄)").sibling  # 이 이름은 보통 경로에선 형제 확인에 걸림
+    res = result(m, "엘로시드캡슬7.5mg(엘록시캄)")
+    out = await llm_fix.apply(res, m, Fake({0: "멜로시드캡슐7.5밀리그램(멜록시캄)"}))
+    d = out.rows[0].decision
+    assert d.status == AMBIGUOUS and d.candidates[0].edi_code == "100000001"
+    assert out.rows[0].suggested_by == "llm"
