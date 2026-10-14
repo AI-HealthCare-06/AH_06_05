@@ -1,7 +1,7 @@
 """처방전 OCR 파이프라인: CLOVA 결과 한 장 → 사용자 확인 화면에 쓸 정보 (DB · 네트워크 없음)
 
 (1) prepare 기울임 바로잡기 · 숫자 칸 정리 → (2) table 표 읽기 → (3) meta 교부일 · 출생연도
-→ (4) icd 질병분류기호 보정 → (5) matcher 약 이름 맞추기 → (6) numeric 숫자 범위 검사
+→ (4) icd 질병분류기호 보정 → (5) matcher 약 이름 맞추기 (못 찾으면 자모 조각으로 비슷한 이름 추천) → (6) numeric 숫자 범위 검사
 상태가 "retake"이면 사진을 다시 찍게 한다 (reason: tilt | no_header).
 """
 
@@ -12,10 +12,13 @@ from datetime import date
 from typing import Any
 
 from app.services.ocr import icd, numeric, prepare
-from app.services.ocr.matcher import Decision, NameMatcher
+from app.services.ocr.matcher import NOT_FOUND, Decision, NameMatcher
 from app.services.ocr.meta import parse_meta
 from app.services.ocr.table import parse_table
 
+SIMILAR_FLAG = (
+    "비슷한 이름을 추천"  # 글자가 달라서 규칙이 못 찾았지만 자모 조각이 비슷한 약을 후보로 올림 (사용자가 고름)
+)
 ICD_CONF = 0.95  # 질병분류기호 글자의 확실도가 이보다 낮으면 보정 결과와 상관없이 사용자가 고르게 한다
 
 
@@ -122,5 +125,9 @@ def read(  # noqa: C901
             f"{label} 못 읽음" for label, v in (("1회량", dose), ("하루 횟수", times), ("총 일수", days)) if v is None
         ]
         flags += [f"{x} 범위 밖" for x in numeric.check(dose, times, days)]
-        out.rows.append(RowRead(r.name, matcher.decide(r.name), dose, times, days, flags))
+        decision = matcher.decide(r.name)
+        if decision.status == NOT_FOUND and (similar := matcher.similar(r.name)) is not None:
+            decision = similar  # 사용자가 고르는 후보로만 올린다 (자동 확정 아님)
+            flags.append(SIMILAR_FLAG)
+        out.rows.append(RowRead(r.name, decision, dose, times, days, flags))
     return out

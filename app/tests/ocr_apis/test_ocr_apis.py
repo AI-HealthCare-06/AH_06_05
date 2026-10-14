@@ -255,6 +255,20 @@ class TestUploadAndJob(OcrApiCase):
         assert job["duplicatedFiles"] == [{"fileIndex": 2, "prescriptionId": old_id}]
         assert len(job["prescriptionIds"]) == 2 and job["prescriptionIds"][1] == old_id  # 사진 1(새 기록), 사진 2(기존)
 
+    async def test_missing_letter_in_name_becomes_candidates_for_user_to_choose(self):
+        """규칙이 못 찾은 이름(글자가 빠짐)을 비슷한 이름 추천으로 후보에 올린다 — 자동 확정은 아님"""
+        data = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        for f in data["images"][0]["fields"]:
+            if f["inferText"].startswith("노바스크정5밀리그램"):
+                f["inferText"] = "노바스정5밀리그램(암로디핀베실산염)"
+        async with self.client() as client:
+            headers = await self.auth(client, "pc15@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [data])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        first = rx["items"][0]
+        assert first["matchStatus"] == "needs_confirm" and first["ediCode"] is None and first["itemName"] is None
+        assert len(first["candidates"]) >= 2 and first["candidates"][0]["itemName"].startswith("노바스크정5밀리그")
+
     async def test_saved_key_matches_read_time_key_for_every_kind_of_row(self):
         """content_key를 채우는 규칙(저장된 기록 기준)이 읽은 직후의 규칙과 같아야 이전 기록도 찾아진다"""
         garbled = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))

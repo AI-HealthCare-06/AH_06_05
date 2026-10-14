@@ -48,6 +48,9 @@ class Config(BaseSettings):
     # 근거: 10/13 시험 사진에서 못 읽힌 흐린 사진 11, 흐려도 읽힌 사진 232, 정상 사진 940 이상 (docs/design/ocr_precheck.md)
     OCR_MIN_SHARPNESS: float = 100.0
 
+    # OCR 약 이름 "비슷한 이름 추천" 기준 (자모 3글자 조각 유사도, 0이면 끔). 낮추면 더 많이 추천하지만 엉뚱한 약도 늘어남
+    OCR_SIMILAR_MIN: float = 0.70
+
     # OCR 약 이름 후보정(LLM). 규칙이 못 찾은 약 이름 글자만 보내고, 고친 이름은 급여목록에서 다시 찾아 확인된 것만 "추천"으로 씀
     # (자동 확정 없음 — 사용자가 고름). 기본 꺼짐. 켜려면 OCR_LLM_FIX=true 와 OPENAI_API_KEY 가 모두 필요
     OCR_LLM_FIX: bool = False

@@ -8,10 +8,12 @@
 
 import heapq
 import re
+import sys
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from app.core import config
 from app.services.drug_names import base_name, maker_pattern, strip_maker, unify
 
 NOT_FOUND_BELOW = 0.60  # 이 점수 아래면 찾지 못한 것으로 본다
@@ -19,11 +21,31 @@ MIN_LEN = 4  # 약 이름이 이보다 짧게 읽히면(예: "병원") 찾지 �
 BRAND_MIN = 0.70  # 이름 앞부분(숫자 앞)의 글자 조각이 후보와 이 비율 이상 겹쳐야 한다 (10/13 시험으로 0.50 → 0.70)
 AMBIGUOUS_GAP = 0.03  # 1등과 2등 점수 차가 이보다 작고 서로 다른 약이면 사용자에게 고르게 한다
 
+# 2차 "비슷한 이름 추천" (pg_trgm 방식 자모 3개 조각 유사도): 규칙이 못 찾은 이름만, 사용자가 고르는 후보로만 내놓는다 (자동 확정 안 함)
+# 기준은 오타 시뮬레이션 + 음성 대조로 정함 (docs/design/ocr_fuzzy_match.md)
+# 기본 기준(0.70)은 config.OCR_SIMILAR_MIN — 실제 오독 2건(0.71)을 잡고 오타 시뮬레이션에서 78%를 후보에 올리는 선, 0이면 이 추천을 끈다
+
 FOUND, AMBIGUOUS, NOT_FOUND = "found", "ambiguous", "not_found"
 
 
 def grams(s: str, n: int = 2) -> frozenset[str]:
     return frozenset(s[i : i + n] for i in range(len(s) - n + 1)) if len(s) >= n else frozenset({s})
+
+
+def trigrams(s: str) -> frozenset[str]:
+    """PostgreSQL pg_trgm과 같은 방식의 3글자 조각 — 단, 한글은 자음·모음(자모)으로 풀어서 자른다.
+    낱말(글자·숫자 덩어리)마다 앞에 공백 2개 · 뒤에 1개를 붙여 3글자씩 자른다.
+    자모로 풀면 글자 하나가 비슷한 글자로 잘못 읽혀도(엘→멜) 조각 대부분이 남는다. 음절 그대로 자르면 실제 CLOVA 오독 2건이 0.38 · 0.55로 낮게 나와 놓친다"""
+    out: set[str] = set()
+    for w in re.findall(r"\w+", unicodedata.normalize("NFD", s.lower())):
+        p = f"  {w} "
+        out.update(sys.intern(p[i : i + 3]) for i in range(len(p) - 2))
+    return frozenset(out)
+
+
+def similarity(a: frozenset[str], b: frozenset[str]) -> float:
+    """pg_trgm similarity()와 같은 값: 두 조각 모음의 겹침 ÷ 합침 (길이가 다른 이름끼리는 낮게 나옴)"""
+    return len(a & b) / len(a | b) if a | b else 0.0
 
 
 def overlap(a: frozenset[str], b: frozenset[str]) -> float:
@@ -61,6 +83,7 @@ class NameMatcher:
     def __init__(self, products: list[tuple[str, str]], makers: Iterable[str] = ()) -> None:
         """products: [(edi_code, 제품명)], makers: 급여목록의 제조사 이름들 (처방전에서 이름에 붙어 읽힌 제조사를 떼는 데 씀)"""
         self._idx = [(edi, nm, grams(unify(base_name(nm)))) for edi, nm in products]
+        self._tidx: list[tuple[str, str, frozenset[str]]] | None = None
         self._maker = maker_pattern(makers)
 
     def without_maker(self, name: str) -> str:
@@ -69,6 +92,21 @@ class NameMatcher:
 
     def __len__(self) -> int:
         return len(self._idx)
+
+    def similar(self, read_name: str, top_n: int = 3) -> Decision | None:
+        """규칙이 못 찾은 이름에 대한 "비슷한 이름" 추천. 글자 하나가 바뀌거나 빠진 이름을 글자 3개 조각 유사도(pg_trgm 방식)로 찾는다.
+        결과는 항상 사용자가 고르는 AMBIGUOUS (자동 확정 아님). 기준에 못 미치면 None"""
+        limit = config.OCR_SIMILAR_MIN
+        qb = base_name(self.without_maker(read_name))
+        if limit <= 0 or len(qb) < MIN_LEN or not self._idx:
+            return None
+        if self._tidx is None:  # 처음 쓸 때 한 번만 만든다
+            self._tidx = [(edi, nm, trigrams(unify(base_name(nm)))) for edi, nm, _ in self._idx]
+        q = trigrams(unify(qb))
+        top = heapq.nlargest(top_n, ((similarity(q, t), edi, nm) for edi, nm, t in self._tidx))
+        if top[0][0] < limit:
+            return None
+        return Decision(AMBIGUOUS, round(top[0][0], 3), [Candidate(edi, nm, round(sc, 3)) for sc, edi, nm in top])
 
     def decide(self, read_name: str, top_n: int = 3) -> Decision:
         qb = base_name(self.without_maker(read_name))  # 제조사 꼬리를 먼저 뗌
