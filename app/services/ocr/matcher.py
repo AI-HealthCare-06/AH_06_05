@@ -9,9 +9,10 @@
 import heapq
 import re
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 
-from app.services.drug_names import base_name, unify
+from app.services.drug_names import base_name, maker_pattern, strip_maker, unify
 
 NOT_FOUND_BELOW = 0.60  # 이 점수 아래면 찾지 못한 것으로 본다
 MIN_LEN = 4  # 약 이름이 이보다 짧게 읽히면(예: "병원") 찾지 않는다
@@ -57,15 +58,20 @@ class Decision:
 
 
 class NameMatcher:
-    def __init__(self, products: list[tuple[str, str]]) -> None:
-        """products: [(edi_code, 제품명)]"""
+    def __init__(self, products: list[tuple[str, str]], makers: Iterable[str] = ()) -> None:
+        """products: [(edi_code, 제품명)], makers: 급여목록의 제조사 이름들 (처방전에서 이름에 붙어 읽힌 제조사를 떼는 데 씀)"""
         self._idx = [(edi, nm, grams(unify(base_name(nm)))) for edi, nm in products]
+        self._maker = maker_pattern(makers)
+
+    def without_maker(self, name: str) -> str:
+        """OCR이 읽은 약 이름에서 제조사 꼬리를 뗌"""
+        return strip_maker(unicodedata.normalize("NFKC", name), self._maker)
 
     def __len__(self) -> int:
         return len(self._idx)
 
     def decide(self, read_name: str, top_n: int = 3) -> Decision:
-        qb = base_name(unicodedata.normalize("NFKC", read_name))
+        qb = base_name(self.without_maker(read_name))  # 제조사 꼬리를 먼저 뗌
         if len(qb) < MIN_LEN or not self._idx:
             return Decision(NOT_FOUND, 0.0, [])
         qg = grams(unify(qb))

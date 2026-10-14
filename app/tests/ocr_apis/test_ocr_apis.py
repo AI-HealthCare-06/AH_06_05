@@ -13,7 +13,7 @@ from app.models.masters import Disease, DrugProduct
 from app.models.ocr import MatchStatus, OcrJob, PrescriptionItem, PrescriptionItemCandidate
 from app.models.users import ConsentType, User, UserConsent
 from app.services import prescriptions as svc
-from app.services.ocr import clova
+from app.services.ocr import clova, llm_fix
 from app.tests.helpers import signup
 
 JPG = b"\xff\xd8\xff\xe0" + b"0" * 100
@@ -225,6 +225,65 @@ class TestUploadAndJob(OcrApiCase):
                 [sample, with_days(sample, "30", "28")],
             )
         assert n == 2 and len(job["prescriptionIds"]) == 2
+
+    async def test_llm_suggestion_for_garbled_name_goes_to_user_confirmation(self):
+        garbled = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        for f in garbled["images"][0]["fields"]:
+            if f["inferText"].startswith("노바스크정5밀리그램"):
+                f["inferText"] = "누바스큐쟁5밀리그램(암로디핀베실산염)"  # 글자가 깨져 규칙이 못 찾음
+
+        class Fake:
+            calls = 0
+
+            async def complete(self, system, user):
+                Fake.calls += 1
+                return json.dumps(
+                    {"items": [{"i": 0, "fixed": "노바스크정5밀리그램(암로디핀베실산염)"}]}, ensure_ascii=False
+                )
+
+        async with self.client() as client:
+            headers = await self.auth(client, "pc6@example.com")
+            n, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [garbled])  # 꺼짐(기본)
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+            assert rx["items"][0]["matchStatus"] == "unmatched" and Fake.calls == 0  # 켜지 않으면 LLM을 부르지 않음
+            with patch.object(llm_fix, "make_client", lambda: Fake()):
+                n, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600, b"x")], [garbled])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        first = rx["items"][0]
+        assert Fake.calls == 1
+        assert first["matchStatus"] == "needs_confirm" and first["ediCode"] is None  # 자동 확정이 아님
+        assert first["candidates"][0]["ediCode"] == "641900040"  # 추천이 1번
+        assert [i["matchStatus"] for i in rx["items"][1:]] == ["auto"] * 3  # 나머지 줄은 그대로
+
+    async def test_maker_glued_to_the_name_is_removed_using_the_makers_in_the_master(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        for f in sample["images"][0]["fields"]:
+            if f["inferText"].startswith("노바스크정5밀리그램"):
+                f["inferText"] = (
+                    "노바스크정5밀리그램한국화이자제약(주)"  # 이름에 제조사가 붙어 읽힘 (실제 CLOVA 결과 n4에서 본 모양)
+                )
+        async with self.client() as client:
+            headers = await self.auth(client, "pc8@example.com")
+            n, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        assert rx["items"][0]["matchStatus"] == "auto" and rx["items"][0]["ediCode"] == "641900040"
+
+    async def test_llm_failure_does_not_fail_the_job(self):
+        garbled = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        for f in garbled["images"][0]["fields"]:
+            if f["inferText"].startswith("노바스크정5밀리그램"):
+                f["inferText"] = "누바스큐쟁5밀리그램(암로디핀베실산염)"
+
+        class Boom:
+            async def complete(self, system, user):
+                raise TimeoutError
+
+        async with self.client() as client:
+            headers = await self.auth(client, "pc7@example.com")
+            with patch.object(llm_fix, "make_client", lambda: Boom()):
+                n, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [garbled])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        assert job["status"] == "done" and rx["items"][0]["matchStatus"] == "unmatched"
 
     async def test_unreadable_photo_is_reported_per_file(self):
         blurry = {"images": [{"inferResult": "SUCCESS", "fields": [{"inferText": "흐림", "inferConfidence": 0.3}]}]}

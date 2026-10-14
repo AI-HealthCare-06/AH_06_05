@@ -31,7 +31,7 @@ from app.models.ocr import (
 )
 from app.models.users import ConsentType, User, UserConsent
 from app.services.drug_names import base_name
-from app.services.ocr import clova, numeric, precheck
+from app.services.ocr import clova, llm_fix, numeric, precheck
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
 from app.services.ocr.pipeline import OcrRead, read
 
@@ -53,8 +53,8 @@ async def get_matcher() -> NameMatcher:
     if _matcher is None:
         async with _lock:
             if _matcher is None:
-                rows = await DrugProduct.all().values_list("edi_code", "item_name")
-                _matcher = NameMatcher([(str(e), str(n)) for e, n in rows])
+                rows = await DrugProduct.all().values_list("edi_code", "item_name", "entp_name")
+                _matcher = NameMatcher([(str(e), str(n)) for e, n, _ in rows], makers={str(m) for *_, m in rows if m})
     return _matcher
 
 
@@ -245,6 +245,8 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
             if res.status != "ok":
                 failures.append(f"{_failure_code(data, res)}{b.file_index}")
                 continue
+            # 규칙이 못 찾은 약 이름만 LLM이 고쳐 "추천" (꺼짐이 기본 · 실패해도 규칙 결과 그대로)
+            res = await llm_fix.apply(res, matcher)
             key = same_content(res)
             if key is not None and key in seen_content:  # 병원 · 교부일 · 약 목록이 모두 같은 처방전은 한 번만 저장
                 logger.info("같은 처방전이라 건너뜀 job=%s file=%s", job_id, b.file_index)
