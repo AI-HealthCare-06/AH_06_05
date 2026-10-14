@@ -31,7 +31,7 @@ from app.models.ocr import (
 )
 from app.models.users import ConsentType, User, UserConsent
 from app.services.drug_names import base_name
-from app.services.ocr import clova, numeric
+from app.services.ocr import clova, numeric, precheck
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
 from app.services.ocr.pipeline import OcrRead, read
 
@@ -210,6 +210,18 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead) ->
     return rx.id
 
 
+def same_content(res: OcrRead) -> tuple[Any, ...] | None:
+    """같은 처방전을 두 번 찍었는지 보는 열쇠 — 병원 · 교부일 · 약 목록(이름 또는 약 번호와 복용 숫자)이 모두 같을 때만 같다고 본다.
+    이미지끼리 비교하면 숫자 한 글자만 다른 처방전도 같게 나와서(실험), 읽은 내용으로 비교한다. 정보가 모자라면 None(비교하지 않음)"""
+    if not (res.issued and res.hospital_name and res.rows):
+        return None
+    rows = tuple(
+        (r.decision.candidates[0].edi_code if r.decision.status == FOUND else r.read_name, r.dose, r.times, r.days)
+        for r in res.rows
+    )
+    return (res.issued, res.hospital_name, rows)
+
+
 async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
     """백그라운드 작업. 어떤 오류가 나도 작업이 queued · running에 멈춰 있지 않게 마무리한다"""
     try:
@@ -217,7 +229,12 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
         matcher, codes = await get_matcher(), await get_codes()
         failures: list[str] = []
         saved = 0
-        for b in blobs:
+        screened = precheck.screen(blobs)  # OCR(유료 호출)을 부르기 전에 너무 작은 사진 · 똑같은 사진을 거름
+        failures += [f"Q{i}" for i in screened.too_small]
+        for i, first in screened.duplicates.items():
+            logger.info("같은 사진이라 건너뜀 job=%s file=%s (=%s번)", job_id, i, first)
+        seen_content: set[tuple[Any, ...]] = set()
+        for b in screened.ready:
             try:
                 data = await clova.recognize(b.content, b.fmt, b.name)
                 res = read(data, matcher, codes)
@@ -228,6 +245,12 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
             if res.status != "ok":
                 failures.append(f"{_failure_code(data, res)}{b.file_index}")
                 continue
+            key = same_content(res)
+            if key is not None and key in seen_content:  # 병원 · 교부일 · 약 목록이 모두 같은 처방전은 한 번만 저장
+                logger.info("같은 처방전이라 건너뜀 job=%s file=%s", job_id, b.file_index)
+                continue
+            if key is not None:
+                seen_content.add(key)
             await save_read(user_id, job_id, b.file_index, res)
             saved += 1
         all_failed_service = saved == 0 and failures and all(f.startswith("F") for f in failures)

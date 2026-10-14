@@ -25,6 +25,28 @@ PRODUCTS = [
 ]
 
 
+def jpeg_of_size(w: int, h: int, tail: bytes = b"") -> bytes:
+    """머리말에 크기만 들어 있는 JPEG (OCR은 가짜로 바꿔 쓰므로 그림 내용은 필요 없음)"""
+    app0 = b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    sof = (
+        b"\xff\xc0\x00\x11\x08"
+        + h.to_bytes(2, "big")
+        + w.to_bytes(2, "big")
+        + b"\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01"
+    )
+    return b"\xff\xd8" + app0 + sof + b"\xff\xda\x00\x0c" + b"0" * 40 + tail
+
+
+def with_days(sample: dict, old: str, new: str) -> dict:
+    """처방전 결과에서 첫 번째로 나오는 숫자 칸 하나만 바꿈 (숫자 한 글자만 다른 처방전)"""
+    out = json.loads(json.dumps(sample))
+    for f in out["images"][0]["fields"]:
+        if f["inferText"] == old:
+            f["inferText"] = new
+            return out
+    raise AssertionError(f"{old} 칸을 못 찾음")
+
+
 async def seed_masters() -> None:
     for edi, name, company in PRODUCTS:
         await DrugProduct.create(edi_code=edi, item_name=name, entp_name=company, etc_otc="전문", route="내복")
@@ -53,7 +75,7 @@ class OcrApiCase(TestCase):
 
     @staticmethod
     async def upload(client: AsyncClient, headers: dict[str, str], n: int = 1):
-        files = [("files", (f"p{i}.jpg", JPG, "image/jpeg")) for i in range(n)]
+        files = [("files", (f"p{i}.jpg", JPG + bytes([i]), "image/jpeg")) for i in range(n)]
         return await client.post("/api/v1/prescriptions", files=files, headers=headers)
 
 
@@ -80,9 +102,16 @@ class TestUploadAndJob(OcrApiCase):
         assert rx["items"][1]["timesPerDay"] == 2
 
     async def test_two_photos_make_two_prescriptions_in_order(self):
+        second = with_days(json.loads(clova.SAMPLE.read_text(encoding="utf-8")), "30", "28")  # 일수만 다른 처방전
+        calls = iter([json.loads(clova.SAMPLE.read_text(encoding="utf-8")), second])
+
+        async def fake(content, fmt, name):
+            return next(calls)
+
         async with self.client() as client:
             headers = await self.auth(client, "o2@example.com")
-            job_id = (await self.upload(client, headers, n=2)).json()["jobId"]
+            with patch.object(clova, "recognize", fake):
+                job_id = (await self.upload(client, headers, n=2)).json()["jobId"]
             job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
         assert job["status"] == "done" and len(job["prescriptionIds"]) == 2
         assert job["prescriptionIds"] == sorted(job["prescriptionIds"])
@@ -133,6 +162,69 @@ class TestUploadAndJob(OcrApiCase):
             )
         assert res.status_code == 404
         assert (await PrescriptionItem.get(id=item_id)).match_status == MatchStatus.AUTO
+
+    async def read_with(self, client, headers, photos, results):
+        """photos: [bytes] → 올리고, 가짜 OCR이 불린 횟수와 작업 결과를 돌려줌"""
+        calls = []
+        it = iter(results)
+
+        async def fake(content, fmt, name):
+            calls.append(content)
+            return next(it)
+
+        files = [("files", (f"p{i}.jpg", b, "image/jpeg")) for i, b in enumerate(photos)]
+        with patch.object(clova, "recognize", fake):
+            res = await client.post("/api/v1/prescriptions", files=files, headers=headers)
+        job = (await client.get(f"/api/v1/ocr-jobs/{res.json()['jobId']}", headers=headers)).json()
+        return len(calls), job
+
+    async def test_tiny_photo_is_not_sent_to_ocr(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc1@example.com")
+            n, job = await self.read_with(client, headers, [jpeg_of_size(291, 400)], [sample])
+        assert n == 0 and job["prescriptionIds"] == []
+        assert job["failedFiles"] == [{"fileIndex": 1, "code": "IMAGE_QUALITY_LOW"}] and job["status"] == "done"
+
+    async def test_normal_size_and_unknown_header_still_go_to_ocr(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc2@example.com")
+            n, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            assert n == 1 and len(job["prescriptionIds"]) == 1
+            # 머리말을 읽을 수 없는 사진은 걸러 내지 않고 OCR에 맡김 (정상 사진을 잘못 막는 것이 더 나쁨)
+            n, job = await self.read_with(client, headers, [JPG], [sample])
+            assert n == 1 and len(job["prescriptionIds"]) == 1
+
+    async def test_exactly_same_file_is_read_once(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        photo = jpeg_of_size(1200, 1600)
+        async with self.client() as client:
+            headers = await self.auth(client, "pc3@example.com")
+            n, job = await self.read_with(client, headers, [photo, photo], [sample, sample])
+        assert n == 1 and len(job["prescriptionIds"]) == 1 and job["failedFiles"] == [] and job["status"] == "done"
+
+    async def test_same_prescription_shot_twice_is_saved_once(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc4@example.com")
+            n, job = await self.read_with(
+                client, headers, [jpeg_of_size(1200, 1600, b"a"), jpeg_of_size(1200, 1600, b"b")], [sample, sample]
+            )
+        assert n == 2 and len(job["prescriptionIds"]) == 1 and job["failedFiles"] == []
+
+    async def test_prescriptions_differing_by_one_number_are_both_kept(self):
+        # 이미지가 거의 같아도 일수가 30일 → 28일로 다르면 다른 처방전이다 (재처방 등). 잘못 합치면 처방전이 사라짐
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc5@example.com")
+            n, job = await self.read_with(
+                client,
+                headers,
+                [jpeg_of_size(1200, 1600, b"a"), jpeg_of_size(1200, 1600, b"b")],
+                [sample, with_days(sample, "30", "28")],
+            )
+        assert n == 2 and len(job["prescriptionIds"]) == 2
 
     async def test_unreadable_photo_is_reported_per_file(self):
         blurry = {"images": [{"inferResult": "SUCCESS", "fields": [{"inferText": "흐림", "inferConfidence": 0.3}]}]}
