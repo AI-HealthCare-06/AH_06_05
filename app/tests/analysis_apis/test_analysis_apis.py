@@ -431,6 +431,15 @@ class TestStoredGuides(AnalysisCase):
         g = await DrugGuide.get(edi_code="641900040")
         assert g.review_status == ReviewStatus.APPROVED and g.evidence_ids
 
+    async def test_mixed_purpose_classes_fall_back_to_pharmacist_text(self):
+        # 한 분류에 쓰임이 다른 약이 섞인 분류는 쓰임을 단정하지 않는다 (243은 갑상선 호르몬을 줄이는 약도 포함)
+        for cls in ("219", "339", "117", "243", "245"):
+            await DrugProduct.filter(edi_code="641900040").update(class_code=cls)
+            await store.generate_all(only_missing=False)
+            g = await DrugGuide.get(edi_code="641900040")
+            assert g.content["category"] is None and g.content["purpose"] == "처방받은 목적을 약사에게 확인해 주세요"
+            assert g.evidence_ids == []
+
     async def test_review_marks_status_and_reviewer(self):
         await store.generate_all()
         assert await store.review("644300010", ReviewStatus.APPROVED, "채연")
