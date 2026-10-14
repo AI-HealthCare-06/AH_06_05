@@ -105,7 +105,8 @@ export default function Recognize() {
       <View style={{ gap: 12, marginTop: 14 }}>
         {items.map(({ rx, it }, k) => {
           const [label, tone] = STATUS[it.matchStatus];
-          const chosen = pick[it.id] ?? it.candidates[0]?.ediCode ?? null;
+          // 후보를 미리 골라 두지 않는다: 사용자가 직접 눌러야 "이 약으로 확인"이 켜진다 (읽은 이름이 다른 약일 수 있는 항목을 그냥 지나치지 않게)
+          const chosen = pick[it.id] ?? null;
           const title = it.matchStatus === 'needs_confirm' ? it.rawName : it.itemName ?? (it.matchStatus === 'unmatched' ? `${k + 1}번째 약품` : it.rawName);
           return (
             <Card
