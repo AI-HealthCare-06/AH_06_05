@@ -21,6 +21,35 @@ def center(f: dict[str, Any]) -> tuple[float, float]:
     return (v[0]["x"] + v[2]["x"]) / 2, (v[0]["y"] + v[2]["y"]) / 2
 
 
+_HEAD = re.compile(r"투[약여]\s*일수")
+_HEAD_MATE = re.compile(r"투[약여어]?량|횟수|^량$")
+
+
+def find_head(fields: list[dict[str, Any]]) -> int | None:
+    """표 머리글 "투약일수"의 글자 번호. 같은 줄에 "투약량" 또는 "횟수"가 함께 있어야 머리글로 본다.
+    약봉투 · 영수증 한쪽에도 "투약일수"가 따로 적혀 있어서, 그것을 표 머리글로 잘못 보면 환자 이름 · 주소 같은 글자가
+    약 줄이 되어 저장된다 (10/15 약봉투 샘플 p2에서 확인)"""
+    for i, f in enumerate(fields):
+        if not _HEAD.search(f["inferText"]):
+            continue
+        v = f["boundingPoly"]["vertices"]
+        h = max(abs(v[2]["y"] - v[0]["y"]), 1.0)
+        cy = center(f)[1]
+        if any(
+            j != i and abs(center(g)[1] - cy) <= h and _HEAD_MATE.search(g["inferText"]) for j, g in enumerate(fields)
+        ):
+            return i
+    return None
+
+
+def head_word(fields: list[dict[str, Any]], head: int, pattern: str) -> dict[str, Any] | None:
+    """머리글(head번)까지의 글자 중 pattern에 맞는 것 가운데 머리글과 높이가 가장 가까운 것.
+    영수증 쪽에 떨어져 있는 같은 낱말이 먼저 잡히지 않게 한다"""
+    cy = center(fields[head])[1]
+    found = [f for f in fields[: head + 1] if re.search(pattern, f["inferText"])]
+    return min(found, key=lambda f: abs(center(f)[1] - cy), default=None)
+
+
 def tilt_degrees(fields: list[dict[str, Any]]) -> float:
     angs = []
     for f in fields:
@@ -49,13 +78,13 @@ def prepare(data: dict[str, Any]) -> tuple[dict[str, Any], float, int, str]:
                 x, y = v["x"] - cx, v["y"] - cy
                 v["x"], v["y"] = cx + x * ca - y * sa, cy + x * sa + y * ca
     tokens = [f["inferText"] for f in fields]
-    head = next((i for i, t in enumerate(tokens) if re.search(r"투[약여]\s*일수", t)), None)
+    head = find_head(fields)
     removed = 0
     if head is not None:
         end = next((i for i, t in enumerate(tokens) if t.startswith("용법")), len(tokens))
         col_x = []
         for word in (r"투[약여]량", r"투[약여]\s*횟수", r"투[약여]\s*일수"):
-            f = next((f for f in fields[: head + 1] if re.search(word, f["inferText"])), None)
+            f = head_word(fields, head, word)
             if f:
                 col_x.append(center(f)[0])
         keep = []

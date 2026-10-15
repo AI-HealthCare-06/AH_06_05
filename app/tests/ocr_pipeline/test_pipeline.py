@@ -282,3 +282,39 @@ def test_disease_codes_found_by_position_when_listed_before_label():
     stop = [_fld("처", 286, 240, 15, 18), _fld("방", 315, 240, 15, 18), _fld("의료인의", 284, 255, 60, 18)]
     t = parse_table({"images": [{"fields": code + label + stop + _dense()}]})
     assert t is not None and t.disease_raw == "109 499"
+
+
+# ── 약봉투(10/15 샘플 p2): 영수증 쪽에 떨어져 있는 "투약일수"를 표 머리글로 보면 이름 · 주소가 약 줄이 되어 저장된다 ──────
+def _pouch_strip() -> list[dict]:
+    return [
+        _fld("환자", 16, 34, 20, 9), _fld("성명", 36, 34, 20, 9), _fld("홍길동", 58, 32, 24, 9),
+        _fld("투약일수", 104, 24, 25, 8), _fld("3", 133, 22, 6, 7),
+        _fld("서울시", 59, 162, 16, 9), _fld("영등포구", 75, 162, 22, 9),
+    ]  # fmt: skip
+
+
+def test_lone_days_word_in_receipt_strip_is_not_a_table_head():
+    from app.services.ocr.table import parse_table
+
+    data = {"images": [{"fields": _pouch_strip()}]}
+    assert parse_table(data) is None
+    res = read(data, matcher(), CODES)
+    assert (res.status, res.reason) == ("retake", "no_header")
+    assert res.rows == []  # 환자 이름 · 주소가 약 줄로 새지 않는다
+
+
+def test_real_head_wins_over_lone_days_word_and_prepare_keeps_tokens():
+    from app.services.ocr import prepare
+    from app.services.ocr.table import parse_table
+
+    real = _table(False, [])["images"][0]["fields"]
+    data = {"images": [{"fields": _pouch_strip() + real}]}
+    prep = prepare.prepare(data)[0]
+    assert prepare.find_head(prep["images"][0]["fields"]) is not None
+    t = parse_table(prep)
+    assert t is not None and [(r.name, r.nums) for r in t.rows] == [
+        ("돔페리돈", [1.0, 3.0, 2.0]),
+        ("라니티딘", [3.0, 2.0, 5.0]),
+    ]  # 열 위치도 진짜 머리글 줄에서 잡는다 (영수증 쪽 "투약일수" 위치로 잡으면 약 이름이 칸 밖으로 밀려 줄이 사라진다)
+    assert prepare.find_head(_pouch_strip()) is None
+    assert prepare.prepare({"images": [{"fields": _pouch_strip()}]})[2] == 0  # 가짜 머리글로는 숫자 칸을 지우지 않는다

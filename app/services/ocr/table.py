@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.ocr.prepare import center
+from app.services.ocr.prepare import center, find_head, head_word
 
 _NUM = re.compile(r"\d+(\.\d+)?")
 _HEAD_WORDS = ((0, r"투[약여]량"), (1, r"투[약여]\s*횟수"), (2, r"투[약여]\s*일수"))
@@ -126,7 +126,7 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
     fields = _merge_split_heads(data["images"][0]["fields"])
     tokens = [f["inferText"] for f in fields]
     text = " ".join(tokens)
-    head = next((i for i, t in enumerate(tokens) if re.search(r"투[약여]\s*일수", t)), None)
+    head = find_head(fields)
     if head is None:
         return None
     start = head + 1
@@ -146,7 +146,7 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
 
     col_x: dict[int, float] = {}
     for key, word in _HEAD_WORDS:
-        hf = next((f for f in fields[:start] if re.search(word, f["inferText"])), None)
+        hf = head_word(fields, head, word)
         if hf:
             col_x[key] = center(hf)[0]
 
