@@ -2,7 +2,7 @@
 
 CLOVA를 부르지 않고(요금 없음), DB에 아무것도 저장하지 않는다. 읽기(처방전 / 약봉투), 약 이름 · 숫자, 약 마스터와 맞춘 결과를 보여 준다.
 약 마스터(drug_products)는 DB에서 읽으므로 DB가 켜져 있어야 한다 (집에서는 DB_HOST=localhost).
-화면에는 읽은 약 이름 · 숫자 · 날짜만 찍고 인식 원문은 찍지 않는다.
+화면에는 읽은 약 이름 · 숫자 · 날짜와 약 카드의 복약 안내(가려서)만 찍고 인식 원문은 찍지 않는다.
 """
 
 import asyncio
@@ -16,6 +16,7 @@ from tortoise import Tortoise  # noqa: E402
 
 from app.core.db.databases import TORTOISE_APP_MODELS, TORTOISE_ORM  # noqa: E402
 from app.services import prescriptions as svc  # noqa: E402
+from app.services.ocr.mask import mask  # noqa: E402
 from app.services.ocr.pipeline import read  # noqa: E402
 
 
@@ -30,6 +31,8 @@ async def run(paths: list[str]) -> None:
         for r in res.rows:
             top = r.decision.candidates[0].item_name if r.decision.candidates else "-"
             print(f"   {r.read_name} | {r.dose}/{r.times}/{r.days} | {r.decision.status} | {top} | {r.flags}")
+            for g in r.guide:  # 약국이 약 카드에 인쇄한 안내 (저장될 때처럼 가려서 보여 줌)
+                print(f"      · {mask(g)}")
 
 
 async def main(paths: list[str]) -> None:

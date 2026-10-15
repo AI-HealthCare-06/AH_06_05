@@ -26,6 +26,8 @@ SIBLING_FLAG = (
     "이름이 비슷한 다른 약이 있어요"  # 글자 하나 차이의 다른 성분 약이 있어 사용자가 고름 (matcher.decide의 siblings)
 )
 CUT_FLAG = "약 이름이 잘려 있어요"  # 약봉투 카드가 긴 이름을 "···"로 줄인 경우: 함량 등 뒷부분이 없어 자동으로 정하지 않고 사용자가 고름
+UNSURE_FLAG = "약 이름 줄이 확실하지 않아요"  # 약봉투에서 이름 줄을 위치가 아닌 글자 크기로 골랐을 때: 사진이 흔들려 이름과 성분이 헷갈렸을 수 있어 사용자가 확인
+HEADERLESS_FLAG = "표 머리글이 없어 칸 순서를 추정했어요 (1회량 · 하루 횟수 · 총 일수)"  # 약봉투 목록에 머리글이 없을 때: 숫자가 어느 칸인지 사용자가 확인
 ICD_CONF = 0.95  # 질병분류기호 글자의 확실도가 이보다 낮으면 보정 결과와 상관없이 사용자가 고르게 한다
 
 
@@ -49,6 +51,9 @@ class RowRead:
     suggested_by: str | None = (
         None  # 후보가 추천에서 왔을 때: similar(비슷한 이름) | llm — 화면이 "추천"임을 알리는 데 씀
     )
+    guide: list[str] = field(
+        default_factory=list
+    )  # 약봉투: 약국이 약 아래에 인쇄한 복약 안내 (마스킹 전 · 저장할 때 mask)
 
 
 @dataclass
@@ -141,16 +146,23 @@ def read(  # noqa: C901
                 DiseaseRead(raw, stt, value, round(dzconf, 2), stt == icd.NORMAL and dzconf >= ICD_CONF)
             )
 
+    if table.headerless:
+        out.meta_flags.append(HEADERLESS_FLAG)
+
     for r in table.rows:
         dose, times, days = r.nums
         flags = [
             f"{label} 못 읽음" for label, v in (("1회량", dose), ("하루 횟수", times), ("총 일수", days)) if v is None
         ]
         flags += [f"{x} 범위 밖" for x in numeric.check(dose, times, days)]
+        if table.headerless:
+            flags.append(HEADERLESS_FLAG)
         decision = matcher.decide(r.name)
-        if r.cut:
-            flags.append(CUT_FLAG)
-            # 잘린 이름이 우연히 한 약과만 맞아도 다른 함량일 수 있다 → 후보로 올려 사용자가 고름
+        for unsure, flag in ((r.cut, CUT_FLAG), (r.unsure, UNSURE_FLAG)):
+            if not unsure:
+                continue
+            flags.append(flag)
+            # 잘린 이름은 우연히 한 약과만 맞아도 다른 함량일 수 있고, 이름 줄이 불확실하면 성분 줄을 읽었을 수 있다 → 후보로 올려 사용자가 고름
             if decision.status == FOUND:
                 decision = Decision(AMBIGUOUS, decision.score, decision.candidates, sibling=decision.sibling)
         if decision.sibling:
@@ -161,5 +173,5 @@ def read(  # noqa: C901
             decision = similar
             flags.append(SIMILAR_FLAG)
             suggested_by = SUGGESTED_SIMILAR
-        out.rows.append(RowRead(r.name, decision, dose, times, days, flags, suggested_by))
+        out.rows.append(RowRead(r.name, decision, dose, times, days, flags, suggested_by, list(r.guide)))
     return out

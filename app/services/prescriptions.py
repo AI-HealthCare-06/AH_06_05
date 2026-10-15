@@ -35,6 +35,7 @@ from app.models.ocr import (
 from app.models.users import ConsentType, User, UserConsent
 from app.services.drug_names import base_name
 from app.services.ocr import clova, llm_fix, numeric, precheck
+from app.services.ocr.mask import mask
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
 from app.services.ocr.pipeline import OcrRead, read
 
@@ -198,6 +199,8 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
                 "total_days": int(r.days) if r.days is not None else None,
                 "timing": res.timing,
                 "suggested_by": r.suggested_by,
+                # 약국이 약 카드에 인쇄한 안내 (영수증 띠는 읽지 않는다). 가려서 저장하고, 없으면 null
+                "guidance": [m for g in r.guide if (m := mask(g))] or None,
             }
             if dec.status == FOUND:
                 best = dec.candidates[0]
@@ -404,6 +407,8 @@ async def get_prescription(user: User, prescription_id: int) -> dict[str, Any]:
                 "matchStatus": it.match_status.value,
                 # "similar"(비슷한 이름) | "llm"(AI) | null — matchStatus가 needs_confirm일 때 "추천" 안내를 보여 주는 데 쓴다
                 "suggestedBy": it.suggested_by if it.match_status == MatchStatus.NEEDS_CONFIRM else None,
+                # 약봉투에 약국이 인쇄한 복약 안내(사진에서 읽은 글자). 없으면 빈 배열 (명세서에 추가 제안)
+                "guidance": it.guidance or [],
                 "ediCode": it.drug.edi_code if it.drug else None,
                 "itemSeq": it.drug.item_seq if it.drug else None,
                 "candidates": [

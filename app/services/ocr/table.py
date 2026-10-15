@@ -28,6 +28,12 @@ class Row:
     name: str
     y: float
     nums: list[float | None] = field(default_factory=lambda: [None, None, None])  # [1회량, 하루 횟수, 총 일수]
+    unsure: bool = (
+        False  # 약봉투: 이름 줄을 글자 크기로 골라야 했다 (구간 맨 위 줄이 이름 같지 않음). 사용자가 확인한다
+    )
+    guide: list[str] = field(
+        default_factory=list
+    )  # 약봉투: 약국이 약 아래에 인쇄한 복약 안내 표시 · 문장 (pouch_guide)
     cut: bool = False  # 이름 끝이 "···"로 잘려 있음 (약봉투). 뒷부분(함량 등)이 없어서 사용자가 확인한다
 
 
@@ -36,6 +42,9 @@ class Table:
     rows: list[Row]
     n_anchor: int  # 숫자 칸 중 가장 많이 읽힌 칸의 숫자 수 (약 줄 수의 아래 한계)
     disease_raw: str | None  # 질병분류기호 원문
+    headerless: bool = (
+        False  # 약봉투에서 머리글 없이 "이름 + 숫자 3개" 목록을 읽음: 칸 순서(1회량 · 횟수 · 일수)는 추정이다
+    )
 
 
 def _merge_split_heads(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:

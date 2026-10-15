@@ -125,6 +125,10 @@ class PrescriptionItem(models.Model):
     times_per_day = fields.SmallIntField(null=True)
     total_days = fields.SmallIntField(null=True)
     timing = fields.CharField(max_length=50, null=True, description="아침 식후 등")
+    guidance: Any = fields.JSONField(
+        null=True,
+        description="약봉투 약 카드에 약국이 인쇄한 복약 안내 표시 · 문장 목록 (글자 확실도 · 마스킹을 거친 것만, 영수증 띠는 제외). 처방전은 null",
+    )
     suggested_by = fields.CharField(
         max_length=20,
         null=True,

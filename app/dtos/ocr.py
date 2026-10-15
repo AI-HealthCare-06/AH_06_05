@@ -55,6 +55,9 @@ class ItemResponse(CamelModel):
     total_days: int | None
     timing: str | None
     check_fields: list[str]  # 못 읽었거나 범위 밖이라 숫자를 다시 확인해야 하는 칸 (명세서에 추가 제안)
+    guidance: list[
+        str
+    ]  # 약봉투에 약국이 인쇄한 복약 안내 표시 · 문장 (사진에서 읽은 글자 그대로, 명세서에 추가 제안). 없으면 빈 배열
 
 
 class PrescriptionResponse(CamelModel):

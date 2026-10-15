@@ -432,6 +432,39 @@ class TestUploadAndJob(OcrApiCase):
         stored = " ".join(i.raw_name for i in await PrescriptionItem.filter(prescription_id=rx["id"]))
         assert not any(w in stored for w in ("홍길동", "영등포구", "01012345678"))
 
+    async def test_pill_bag_guidance_is_saved_masked_and_returned_per_drug(self):
+        # 10/15: 약봉투 카드에 약국이 인쇄한 복약 안내를 약 줄마다 저장한다. 가려서 저장하고, 영수증 띠는 저장하지 않는다
+        from app.tests.ocr_pipeline.test_pouch import card as plain_card
+        from app.tests.ocr_pipeline.test_pouch import data, head, strip
+        from app.tests.ocr_pipeline.test_pouch_guide import w
+
+        guided = plain_card(200, "노바스크정5밀리그람", ("1", "1", "30"))
+        guided += [
+            w("쪼개지", 463, 205, 47), w("마세요", 511, 205, 45),
+            w("문의", 458, 230, 30), w("02-123-4567로", 490, 230, 110), w("연락하세요.", 602, 230, 70),
+        ]  # fmt: skip
+        plain = plain_card(300, "다이아벡스정500밀리그램", ("1", "2", "28"))
+        bag = data(head() + strip() + guided + plain)
+        async with self.client() as client:
+            headers = await self.auth(client, "pb2@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [bag])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        assert [i["guidance"] for i in rx["items"]] == [["쪼개지 마세요", "문의 [전화번호]로 연락하세요."], []]
+        stored = [i.guidance for i in await PrescriptionItem.filter(prescription_id=rx["id"]).order_by("id")]
+        assert stored == [
+            ["쪼개지 마세요", "문의 [전화번호]로 연락하세요."],
+            None,
+        ]  # 안내가 없는 약은 null, 응답은 빈 배열
+        assert "홍길동" not in str(stored) and "영등포구" not in str(stored)
+
+    async def test_prescription_items_have_empty_guidance(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pb3@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        assert rx["docType"] == "prescription" and all(i["guidance"] == [] for i in rx["items"])
+
     async def test_same_prescription_shot_twice_is_saved_once(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
         async with self.client() as client:
