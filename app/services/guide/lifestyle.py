@@ -20,7 +20,6 @@ FACTS = Path(__file__).resolve().parent / "data" / "lifestyle_facts.json"
 CONFLICT_LABEL = "의료진 상담 필요"
 # 질환 선택 화면(RG-05-E1)에서 고를 수 있는 질환 = 팩트 테이블 질환 10개 (대표 코드)
 PICKABLE = {"HTN": "I10", "DM2": "E11", "DLP": "E78", "CKD": "N18", "IHD": "I25", "STROKE": "I63", "AF": "I48", "COPD": "J44", "OP": "M81", "OA": "M17"}  # fmt: skip
-POLYPHARMACY_MIN = 5
 # 약 종류 설명에서 성분명이 아닌 말 (이 말이 들어간 약 이름과 엉뚱하게 이어지지 않게)
 GENERIC_WORDS = {"소염진통제", "조영제", "사용", "검사", "건강보조식품", "흡입기", "경구", "스테로이드", "주사", "제외", "질환으로", "장기", "복용", "보전", "이뇨제", "억제제", "차단제", "보충제", "항응고제", "항혈소판제", "비스포스포네이트"}  # fmt: skip
 
@@ -28,24 +27,24 @@ GENERIC_WORDS = {"소염진통제", "조영제", "사용", "검사", "건강보�
 CONFLICTS: list[dict[str, Any]] = [
     {
         "anchor": "HTN",
-        "when": lambda ids, codes, n: {"HTN", "CKD"} <= ids,
+        "when": lambda ids, codes: {"HTN", "CKD"} <= ids,
         "message": "고혈압과 만성신장병이 함께 있으면 칼륨 섭취 권고가 서로 달라요. 칼륨이 많은 음식이나 보충제는 임의로 늘리거나 줄이지 말고 의료진과 상담하세요.",
     },
     {
         "anchor": "DM2",
-        "when": lambda ids, codes, n: {"DM2", "CKD"} <= ids,
+        "when": lambda ids, codes: {"DM2", "CKD"} <= ids,
         "message": "당뇨병과 만성신장병이 함께 있으면 단백질 섭취 기준이 신장 상태에 따라 달라요. 일반적인 안내 대신 의료진과 상담하세요.",
     },
     {
         "anchor": "OA",
-        "when": lambda ids, codes, n: (
-            "OA" in ids and ("CKD" in ids or any(c.startswith(("I50", "K25")) for c in codes))
-        ),
+        "when": lambda ids, codes: "OA" in ids and ("CKD" in ids or any(c.startswith(("I50", "K25")) for c in codes)),
         "message": "골관절염과 함께 신장 · 심장 · 위 질환이 있으면 소염진통제(NSAIDs)를 특히 조심해야 해요. 통증약을 사기 전에 약사나 의료진과 상의하고, 아세트아미노펜을 먼저 쓸 수 있는지 확인하세요.",
     },
     {
+        # 약이 5개 이상일 때의 안내는 여기서 하지 않는다: 안전성 점검 결과(R-4)에 "여러 약 함께 복용"(참고)이 이미 있고,
+        # 거기서는 먹는 약 · 지금 함께 먹는 약만 세는데 이 안내는 질환과 상관없는 첫 항목에 붙어 세는 기준도 달랐다
         "anchor": "AF",
-        "when": lambda ids, codes, n: {"AF", "OP"} <= ids or n >= POLYPHARMACY_MIN,
+        "when": lambda ids, codes: {"AF", "OP"} <= ids,
         "message": "여러 약이나 건강기능식품을 함께 드시면 복용 간격과 상호작용을 확인해야 해요. 새 건강기능식품을 추가하기 전에 꼭 상담하세요.",
     },
 ]
@@ -138,9 +137,8 @@ def build(codes: list[str], items: list[PrescriptionItem], all_codes: list[str] 
     disease_ids = {d["id"] for _, d in found}
     did = {code: d["id"] for code, d in found}
     raw = [c.upper() for c in (all_codes or codes)]
-    n_drugs = len({i.drug.edi_code for i in items})
     for rule in CONFLICTS:
-        if not rule["when"](disease_ids, raw, n_drugs):
+        if not rule["when"](disease_ids, raw):
             continue
         free = [s for s in sections if not s["conflict"]]
         target = next((s for s in free if did.get(s["diseaseCode"]) == rule["anchor"]), None) or next(iter(free), None)

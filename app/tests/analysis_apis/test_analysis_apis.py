@@ -455,6 +455,21 @@ class TestGuideUnits(TestCase):
         assert lifestyle.disease_of("E119")["id"] == "DM2"
         assert lifestyle.disease_of("Z00") is None
 
+    def test_many_drugs_alone_do_not_add_a_conflict_note(self):
+        """약이 5개 이상이라는 이유만으로 질환 겹침 안내가 붙지 않는다 (R-4의 다제약물 참고와 겹치고 세는 기준도 달랐다)"""
+        from types import SimpleNamespace
+
+        items = [
+            SimpleNamespace(id=n, drug=SimpleNamespace(edi_code=str(n), item_name=f"시험약{n}정")) for n in range(1, 7)
+        ]
+
+        def notes(codes: list[str]) -> list[str]:
+            return [s["conflict"]["message"] for s in lifestyle.build(codes, items)["sections"] if s["conflict"]]  # type: ignore[arg-type]
+
+        assert notes(["I10", "E11", "E78"]) == []  # 질환 겹침 규칙에 해당 없음 + 약 6개
+        both = notes(["I48", "M81"])  # 심방세동 + 골다공증은 그대로 안내
+        assert len(both) == 1 and "복용 간격" in both[0]
+
     def test_every_picker_code_has_facts(self):
         for code in lifestyle.PICKABLE.values():
             assert lifestyle.is_supported(code), code
