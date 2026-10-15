@@ -13,8 +13,9 @@ from typing import Any
 
 from app.services.ocr import icd, numeric, prepare
 from app.services.ocr.mask_layout import join_masked
-from app.services.ocr.matcher import NOT_FOUND, Decision, NameMatcher
+from app.services.ocr.matcher import AMBIGUOUS, FOUND, NOT_FOUND, Decision, NameMatcher
 from app.services.ocr.meta import parse_meta
+from app.services.ocr.pouch import dispensed_date, parse_pouch
 from app.services.ocr.table import parse_table
 
 SUGGESTED_SIMILAR = "similar"  # RowRead.suggested_by 값 (LLM 추천은 "llm")
@@ -24,6 +25,7 @@ SIMILAR_FLAG = (
 SIBLING_FLAG = (
     "이름이 비슷한 다른 약이 있어요"  # 글자 하나 차이의 다른 성분 약이 있어 사용자가 고름 (matcher.decide의 siblings)
 )
+CUT_FLAG = "약 이름이 잘려 있어요"  # 약봉투 카드가 긴 이름을 "···"로 줄인 경우: 함량 등 뒷부분이 없어 자동으로 정하지 않고 사용자가 고름
 ICD_CONF = 0.95  # 질병분류기호 글자의 확실도가 이보다 낮으면 보정 결과와 상관없이 사용자가 고르게 한다
 
 
@@ -53,6 +55,7 @@ class RowRead:
 class OcrRead:
     status: str  # ok | retake
     reason: str | None = None  # retake일 때: tilt | no_header
+    doc_type: str = "prescription"  # prescription | pill_bag (처방전 표를 못 읽고 약봉투 표를 읽었을 때)
     issued: date | None = None
     birth: int | None = None
     meta_flags: list[str] = field(default_factory=list)
@@ -91,22 +94,31 @@ def read(  # noqa: C901
         if st == "too_tilted":
             return OcrRead(status="retake", reason="tilt")
         table = parse_table(prep)
+        pouch = table is None
+        if pouch:  # 처방전 머리글이 없으면 약봉투 표(투약량 · 횟수 · 일수)로 다시 본다. 약봉투는 기울기 보정을 하지 않은 원본 위치로 읽는다
+            table = parse_pouch(data)
     except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
         return OcrRead(status="retake", reason="no_header")  # 글자 목록 모양이 이상함 → 읽을 수 없는 사진으로 본다
     if table is None:
         return OcrRead(status="retake", reason="no_header")
 
-    pfields = prep["images"][0]["fields"]
+    pfields = fields if pouch else prep["images"][0]["fields"]
     text = " ".join(f["inferText"] for f in pfields)
-    issued, birth, mflags = parse_meta(text, today)
+    if pouch:
+        # 약봉투에는 교부일 · 병원 · 출생연도가 없다. 영수증 띠의 날짜 · 약국 이름을 교부일 · 병원으로 읽지 않도록 조제일만 읽는다
+        issued, mflags = dispensed_date(fields, today)
+        birth = None
+    else:
+        issued, birth, mflags = parse_meta(text, today)
     confs = [f["inferConfidence"] for f in pfields if "inferConfidence" in f]
     out = OcrRead(
         status="ok",
+        doc_type="pill_bag" if pouch else "prescription",
         issued=issued,
         birth=birth,
         meta_flags=mflags,
-        hospital_name=_hospital(text),
-        timing=_timing(text),
+        hospital_name=None if pouch else _hospital(text),
+        timing=None if pouch else _timing(text),
         confidence=round(sum(confs) / len(confs), 4) if confs else None,
         # 숫자 칸 중 가장 많이 읽힌 칸의 숫자 수와 약 줄 수가 다르면 줄 나누기가 틀렸을 수 있다
         row_count_mismatch=table.n_anchor >= 2 and len(table.rows) != table.n_anchor,
@@ -134,6 +146,11 @@ def read(  # noqa: C901
         ]
         flags += [f"{x} 범위 밖" for x in numeric.check(dose, times, days)]
         decision = matcher.decide(r.name)
+        if r.cut:
+            flags.append(CUT_FLAG)
+            # 잘린 이름이 우연히 한 약과만 맞아도 다른 함량일 수 있다 → 후보로 올려 사용자가 고름
+            if decision.status == FOUND:
+                decision = Decision(AMBIGUOUS, decision.score, decision.candidates, sibling=decision.sibling)
         if decision.sibling:
             flags.append(SIBLING_FLAG)
         suggested_by = None

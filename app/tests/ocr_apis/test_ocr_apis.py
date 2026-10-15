@@ -408,6 +408,30 @@ class TestUploadAndJob(OcrApiCase):
         assert rx.hospital_name and "가나다내과의원" in rx.hospital_name
         assert await PrescriptionItem.filter(prescription_id=rx.id).count() == 4
 
+    async def test_pill_bag_is_read_and_saved_as_pill_bag_without_receipt_strip(self):
+        # 10/15: 처방전 머리글이 없고 약봉투 머리글(투약량 · 횟수 · 일수)이 있으면 약봉투로 읽는다. 오른쪽 영수증 띠의 이름 · 주소 · 전화는 저장하지 않는다
+        from app.tests.ocr_pipeline.test_pouch import card, card_table, data, head, strip
+
+        bag = data(
+            head()
+            + strip()
+            + card_table(
+                card(200, "노바스크정5밀리그람", ("1", "1", "30")),
+                card(300, "다이아벡스정500밀리그램", ("1", "2", "28")),
+            )
+        )
+        async with self.client() as client:
+            headers = await self.auth(client, "pb1@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [bag])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        assert rx["docType"] == "pill_bag" and rx["hospitalName"] is None and rx["issuedDate"] is None
+        assert [(i["ediCode"], i["dosePerTime"], i["timesPerDay"], i["totalDays"]) for i in rx["items"]] == [
+            ("641900040", 1, 1, 30),
+            ("644300010", 1, 2, 28),
+        ]
+        stored = " ".join(i.raw_name for i in await PrescriptionItem.filter(prescription_id=rx["id"]))
+        assert not any(w in stored for w in ("홍길동", "영등포구", "01012345678"))
+
     async def test_same_prescription_shot_twice_is_saved_once(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
         async with self.client() as client:

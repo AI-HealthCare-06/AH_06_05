@@ -174,7 +174,7 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
             user_id=user_id,
             ocr_job_id=job_id,
             file_index=file_index,
-            doc_type=DocType.PRESCRIPTION,
+            doc_type=DocType.PILL_BAG if res.doc_type == "pill_bag" else DocType.PRESCRIPTION,
             issued_date=res.issued,
             hospital_name=res.hospital_name,
             content_key=key,

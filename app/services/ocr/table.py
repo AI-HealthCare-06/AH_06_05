@@ -28,6 +28,7 @@ class Row:
     name: str
     y: float
     nums: list[float | None] = field(default_factory=lambda: [None, None, None])  # [1회량, 하루 횟수, 총 일수]
+    cut: bool = False  # 이름 끝이 "···"로 잘려 있음 (약봉투). 뒷부분(함량 등)이 없어서 사용자가 확인한다
 
 
 @dataclass
