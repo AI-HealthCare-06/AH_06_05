@@ -163,7 +163,8 @@ def test_prescription_still_reads_as_prescription():
 
 def test_dispensed_date_rules():
     def f(*pairs: tuple[str, str]) -> list[dict]:
-        return [fld(t, 10 + 100 * i, 10, 90, 17) for i, p in enumerate(pairs) for t in p]
+        words = [t for p in pairs for t in p]
+        return [fld(t, 10 + 100 * i, 10, 90, 17) for i, t in enumerate(words)]
 
     assert dispensed_date(f(("조제일", "2026-10-12")), TODAY) == (date(2026, 10, 12), [])
     assert dispensed_date(f(("조제일자:", "2026.10.12"), ("조제일", "2026/10/12")), TODAY)[0] == date(2026, 10, 12)
@@ -203,7 +204,7 @@ def test_card_name_height_cut_survives_narrow_gap_and_tall_side_text():
 
 def test_one_line_style_keeps_attached_strength_token_and_ignores_tall_top_line():
     fields = [fld("투약량", 206, 489, 44, 15), fld("횟수", 244, 489, 22, 15), fld("일수", 266, 489, 25, 15)] + [
-        fld("(최근내방일:", 23, 501, 98, 21), fld("2024-05-02)", 116, 502, 100, 20),
+        fld("최근내방일:", 23, 501, 98, 21), fld("2024-05-02", 116, 502, 100, 20),
         fld("*레마이드정", 23, 569, 73, 19), fld("100mg", 99, 569, 41, 19),
     ]  # fmt: skip
     for x, v in zip((213, 244, 264), ("1", "3", "3"), strict=True):
@@ -256,11 +257,103 @@ def test_tilted_pill_bag_photo_is_read_like_a_straight_one():
         assert [(r.read_name, r.dose, r.times, r.days) for r in res.rows] == want, deg
 
 
-def test_lost_name_line_makes_row_count_mismatch_visible():
-    """이름이 작게 읽혀 약 줄이 사라져도 그 약의 숫자는 남아 있으므로 "줄 수가 맞지 않아요"로 사용자에게 알린다"""
+def test_card_with_unreadable_text_still_counts_its_numbers_so_mismatch_is_visible():
+    """이름 · 성분 글자를 모두 못 읽은 카드는 약 줄이 되지 못하지만 숫자는 남으므로 "줄 수가 맞지 않아요"로 사용자에게 알린다"""
     matcher = NameMatcher([("1", "알마겔정")])
-    first = card(200, "알마겔정")
-    first[0] = fld("알마겔정", 200, 200, 220, 17)  # 이름 글자가 성분 줄만큼 작게 읽힌 경우
-    d = data(head() + card_table(first, card(300, "소론도정", ("1", "1", "3")), card(400, "리피토정10mg")))
+    blank = [fld(v, x, 340, 10, 15) for x, v in zip((806, 850, 885), ("1", "1", "3"), strict=True)]
+    d = data(head() + card_table(card(200, "알마겔정"), blank, card(400, "리피토정10mg")))
     res = read(d, matcher, {}, today=TODAY)
-    assert len(res.rows) == 2 and res.row_count_mismatch
+    assert [r.read_name for r in res.rows] == ["알마겔정", "리피토정10mg"] and res.row_count_mismatch
+
+
+def test_p3_shape_extra_position_column_pill_image_text_and_big_ad_below():
+    """실제 p3(팜플약국): 머리글에 "위치"가 한 칸 더 있고, 약 사진 안의 글자(SW · 10)가 이름 왼쪽에 있고, 이름(19~22)과 성분(16~18)의 글자 높이 차이가 1px로 작고,
+    표 아래에 큰 광고 글자(높이 36~47)가 있다"""
+    fields = [
+        fld("위치", 851, 171, 32, 19), fld("투약량", 905, 171, 49, 19), fld("횟수", 971, 171, 34, 19), fld("일수", 1025, 171, 33, 19),
+    ]  # fmt: skip
+    drugs = [("에스로반정", "에스오메프라줄", ("1", "1", "10")), ("뮤코펙트정", "암브록솔염산염", ("2", "3", "5")),
+             ("로라탐정", "로라타딘", ("1", "1", "10"))]  # fmt: skip
+    for i, (name, ingredient, (dose, times, days)) in enumerate(drugs):
+        y = 225 + 97 * i
+        fields += [
+            fld("SW", 82, y + 13, 43, 23),  # 약 사진 안의 글자
+            fld(name, 184, y, 85, 19 + (i % 2) * 3), fld("20mg", 270, y, 55, 22),
+            fld(ingredient, 184, y + 28, 90, 18), fld("[위장장애", 434, y - 7, 55, 18),
+            fld("1", 861, y - 1, 10, 14), fld(dose, 922, y - 1, 12, 14), fld(times, 985, y - 1, 10, 14), fld(days, 1030, y - 1, 22, 14),
+        ]  # fmt: skip
+    fields += [fld("지금,", 92, 796, 80, 36), fld("건강관리", 94, 842, 180, 47), fld("시작하세요!", 279, 842, 200, 47)]
+    assert rows_of(data(fields)) == [
+        ("에스로반정20mg", [1.0, 1.0, 10.0]),
+        ("뮤코펙트정20mg", [2.0, 3.0, 5.0]),
+        ("로라탐정20mg", [1.0, 1.0, 10.0]),
+    ]  # "위치" 칸 숫자(1)는 읽지 않고, 광고 문구는 약이 되지 않는다
+
+
+def test_small_guidance_text_on_the_name_row_is_not_glued_to_the_name():
+    """실제 p1: 이름("슈가메트서방정5/100···", 높이 24) 바로 오른쪽 같은 줄에 안내 문장(높이 17~18)이 시작한다. 이름 뒤 "100mg"(같은 크기)와 달리 붙이지 않는다"""
+    d = data(head() + [fld("슈가메트서방정5/100···", 136, 286, 200, 24), fld("쪼개지", 363, 295, 45, 18), fld("마세요", 411, 295, 45, 18)]
+             + [fld(v, x, 290, 10, 15) for x, v in zip((806, 850, 885), ("1", "6", "3"), strict=True)])  # fmt: skip
+    assert rows_of(d) == [("슈가메트서방정5/100", [1.0, 6.0, 3.0])]
+
+
+def test_pill_image_text_on_the_name_row_and_parenthesized_note_are_not_names():
+    """약 사진 안의 글자("10", "TY")가 이름과 같은 줄에 걸려도 이름이 사라지지 않는다. "(최근내방일 …)"처럼 괄호로 시작하는 줄은 글자가 커도 이름이 아니다"""
+    cards = []
+    for i, name in enumerate(["로라탐정", "타이레놀정"]):
+        y = 200 + 100 * i
+        cards += [fld("10", 80, y + 2, 22, 21), fld(name, 184, y, 85, 21), fld("성분줄", 184, y + 28, 70, 17)]
+        cards += [fld(v, x, y + 5, 10, 14) for x, v in zip((806, 850, 885), ("1", "2", "3"), strict=True)]
+    note = [fld("(최근내방일:2024-05-02)", 184, 276, 200, 26)]  # 두 카드 사이, 이름보다 큰 글자
+    note += [
+        fld("TY", 80, 244, 22, 21),
+        fld("전문가와상의하세요", 400, 240, 200, 30),
+    ]  # 약 사진 글자와 같은 줄의 오른쪽 안내 문장(큼)
+    assert rows_of(data(head() + cards + note)) == [("로라탐정", [1.0, 2.0, 3.0]), ("타이레놀정", [1.0, 2.0, 3.0])]
+
+
+def test_name_join_rules_size_truncation_marker_and_slightly_overlapping_boxes():
+    nums = [fld(v, x, 290, 10, 15) for x, v in zip((806, 850, 885), ("1", "6", "3"), strict=True)]
+    # 이름 바로 옆에 붙은 작은 글자(안내 문장, 간격 4px)는 크기가 작아서 붙이지 않는다
+    small = [fld("알마겔정", 136, 286, 100, 24), fld("쪼개지", 240, 295, 45, 15)]
+    assert rows_of(data(head() + small + nums)) == [("알마겔정", [1.0, 6.0, 3.0])]
+    # "···"로 끝난 이름 뒤에는 같은 크기의 글자가 바로 옆에 있어도 붙이지 않는다
+    cut = [fld("슈가메트서방정5/100···", 136, 286, 200, 24), fld("20mg", 338, 286, 40, 24)]
+    assert rows_of(data(head() + cut + nums)) == [("슈가메트서방정5/100", [1.0, 6.0, 3.0])]
+    # 상자가 살짝 겹쳐 있어도(간격 -2px) 이름 뒤 함량은 붙는다
+    touching = [fld("리피토정", 136, 286, 100, 24), fld("10mg", 234, 286, 40, 24)]
+    assert rows_of(data(head() + touching + nums)) == [("리피토정10mg", [1.0, 6.0, 3.0])]
+
+
+def test_dispensed_date_label_split_into_letters_and_other_rows_in_between():
+    """실제 p3: "조 제 일" 글자가 낱낱이 나뉘고, 낱말 순서 중간에 다른 줄(전표 번호)이 끼어 있다"""
+    fields = [
+        fld("조", 1127, 129, 30, 17),
+        fld("제", 1162, 129, 30, 17),
+        fld("일", 1200, 129, 30, 17),
+        fld("20250602-002", 1274, 74, 120, 17),
+        fld("2025.06.02", 1274, 129, 100, 17),
+        fld("2025.05.15", 1359, 958, 100, 17),  # 라벨 없는 다른 날짜
+    ]
+    assert dispensed_date(fields, TODAY) == (date(2025, 6, 2), [])
+    # 날짜가 다른 줄에 있으면 라벨과 잇지 않는다
+    far = [fld("조제일", 100, 10, 90, 17), fld("2025.06.02", 100, 60, 100, 17)]
+    assert dispensed_date(far, TODAY)[0] is None
+
+
+def test_dispensed_date_same_line_tolerates_small_vertical_offset():
+    fields = [fld("조제일", 100, 10, 90, 17), fld("2025.06.02", 220, 13, 100, 17)]  # 3px 어긋남
+    assert dispensed_date(fields, TODAY) == (date(2025, 6, 2), [])
+
+
+def test_dispensed_date_between_two_stacked_labels_is_not_taken():
+    """실제 r2: "조제일자:"(위)와 "복용완료일"(아래) 두 줄 사이에 날짜가 끼어 있다. 어느 쪽 날짜인지 알 수 없으니 읽지 않는다"""
+    fields = [
+        fld("조제일자:", 954, 116, 110, 23),
+        fld("복용완료일", 954, 146, 95, 23),
+        fld("2024-05-04", 1060, 136, 122, 22),
+    ]
+    assert dispensed_date(fields, TODAY) == (None, ["조제일 못 읽음"])
+    # 글자 높이의 0.3배를 넘게 어긋난 날짜는 같은 줄이 아니다 (17px 글자, 8px 어긋남)
+    off = [fld("조제일", 100, 10, 90, 17), fld("2025.06.02", 220, 18, 100, 17)]
+    assert dispensed_date(off, TODAY)[0] is None

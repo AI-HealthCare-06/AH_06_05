@@ -33,8 +33,10 @@ _DOSE = re.compile(r"(?:투[약여])?량")
 _TIMES = re.compile(r"(?:투[약여])?횟수")
 _DAYS = re.compile(r"(?:투[약여])?일수")
 _HANGUL = re.compile(r"[가-힣]")
-_UNIFORM = 1.3  # 이름 칸 글자 높이의 최대/최소가 이 값 이하면 한 줄형(모든 줄이 이름)
-_BOLD = 0.85  # 이름 줄의 글자 높이 기준 (이름 줄 중 가장 큰 글자의 이 비율 이상)
+_NAME_GAP = 1.2  # 이름 뒤에 이어 붙이는 조각과의 간격 한도 (머리글 글자 높이의 배수). 실측: 이름 뒤 함량은 0~6px, 이름 옆 안내 문장은 30px 이상
+_SAME_SIZE = 0.7  # 이름 뒤에 이어 붙이는 조각(100mg 등)의 글자 높이가 이름 글자의 이 비율 이상일 때만 (실측 p1: 안내 문장 17~18 / 이름 24~29 = 0.75 이하, p3: 함량 "0.1%" 18 / 이름 20 = 0.9)
+_NEAR_TALLEST = 0.9  # 구간 안에서 가장 큰 글자의 이 비율 이상인 줄 중 맨 위가 이름 (이름이 성분보다 약간만 커도, 숫자 없는 카드의 작은 줄이 섞여도 이름을 찾는다)
+_SEPARATE = 1.15  # 이름 줄 평균 글자 높이가 나머지 줄의 이 배수보다 클 때만, 숫자 없는 약 줄을 글자 크기로 가려낸다
 _LEAD = re.compile(r"^[\s*·•]+")
 _TAIL = re.compile(r"(?:[·.]{2,}|…)\s*$")  # "슈가메트서방정5/100···"처럼 잘린 이름의 끝
 _DATE = re.compile(r"(\d{4})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})")
@@ -83,62 +85,100 @@ Box = tuple[float, float, float, float]
 Item = tuple[dict[str, Any], Box]
 
 
-def _height_cut(firsts: list[float]) -> float:
-    """이름 칸 글자 높이를 두 무리(이름 / 성분 · 분류 · 안내)로 나눌 기준. 한 줄형(높이가 거의 같음)이면 0 = 모든 줄이 이름.
-    실제 약봉투(p1)에서 이름 23~29, 나머지 15~21로 겹침이 좁아서, 상위 값이 아니라 두 무리의 가운데로 가른다"""
-    small, big = min(firsts), max(firsts)
-    if big <= _UNIFORM * small:
-        return 0.0
-    cut = (small + big) / 2
-    for _ in range(20):
-        low = [x for x in firsts if x < cut]
-        up = [x for x in firsts if x >= cut]
-        if not low or not up:
-            break
-        new_cut = (sum(low) / len(low) + sum(up) / len(up)) / 2
-        if abs(new_cut - cut) < 0.01:
-            break
-        cut = new_cut
-    return cut
+def _row_centers(nums: list[tuple[int, float, float]], h: float) -> list[float]:
+    """세로로 가까운 숫자들을 한 줄(카드)로 묶은 줄 가운데 높이들. 한 카드의 세 숫자는 거의 같은 높이에 있다"""
+    ys = sorted(n[1] for n in nums)
+    groups = [[ys[0]]]
+    for y in ys[1:]:
+        if y - groups[-1][-1] > 0.5 * h:
+            groups.append([y])
+        else:
+            groups[-1].append(y)
+    return [statistics.mean(g) for g in groups]
 
 
-def _names(zone: list[Item], h: float) -> tuple[list[tuple[float, str, bool]], float]:
-    """이름 칸에서 약 이름 줄들: ([(줄 높이 위치, 이름, 끝이 잘렸는지)], 이름 글자 높이)"""
+def _windows(centers: list[float], h: float) -> list[tuple[float, float]]:
+    """줄(카드)마다 맡는 높이 구간: 이웃한 줄 가운데의 중간선까지. 맨 위 · 아래 줄은 이웃과의 간격의 절반만큼.
+    줄이 하나뿐이면 간격을 알 수 없어서 머리글 글자 높이의 3.5배만큼 위 · 아래로 본다 (실측 카드 높이의 절반은 약 2.5배)"""
+    if len(centers) < 2:
+        return [(c - 3.5 * h, c + 3.5 * h) for c in centers]
+    bounds = [(a + b) / 2 for a, b in zip(centers, centers[1:], strict=False)]
+    first = centers[0] - (centers[1] - centers[0]) / 2
+    last = centers[-1] + (centers[-1] - centers[-2]) / 2
+    edges = [first, *bounds, last]
+    return list(zip(edges, edges[1:], strict=False))
+
+
+def _left_lines(zone: list[Item], h: float) -> list[tuple[float, str, bool, float]]:
+    """이름 칸의 왼쪽 끝에서 시작하는 줄들: (줄 높이 위치, 글자, 끝이 잘렸는지, 글자 높이).
+    왼쪽 끝의 한글 글자에서 시작해 오른쪽으로, 세로로 겹치고 가까운 같은 크기의 조각("100mg" · "5/100")을 이어 붙인다.
+    이름 오른쪽의 안내 문장은 크기가 작거나 떨어져 있어 붙지 않고, "["로 시작하는 분류 줄과 약 사진 안의 글자("SW" · "10")는 시작이 되지 않는다"""
     cand = [(f, b) for f, b in zone if _HANGUL.search(f["inferText"])]
     if not cand:
-        return [], 0.0
+        return []
     edge = (
         min(b[0] for _, b in cand) + 2 * h
     )  # 이름은 이름 칸 왼쪽 끝에서 시작한다 (오른쪽의 안내 문장은 이름이 아니다)
-    cut = _height_cut([b[3] - b[1] for _, b in cand if b[0] <= edge])
-    # 이름 뒤에 붙은 "100mg" · "5/100" 같은 영문 · 숫자 조각도 같은 줄이면 이름에 이어 붙인다 (줄의 첫 글자는 한글이어야 한다)
-    bold = sorted(((b[1] + b[3]) / 2, b[0], b[2], f) for f, b in zone if b[3] - b[1] >= cut)
-    line_h = statistics.median(b[3] - b[1] for _, b in cand if b[3] - b[1] >= cut)
-    lines: list[tuple[float, list[tuple[float, float, dict[str, Any]]]]] = []
-    for cy, x0, x1, f in bold:
-        if lines and cy - lines[-1][0] <= 0.6 * line_h:
-            lines[-1][1].append((x0, x1, f))
-        else:
-            lines.append((cy, [(x0, x1, f)]))
-
-    out: list[tuple[float, str, bool]] = []
-    for cy, toks in lines:
-        toks.sort(key=lambda t: t[0])
-        first = _core(toks[0][2]["inferText"])
-        if toks[0][0] > edge or not _HANGUL.search(first) or first.startswith("["):
-            continue  # 왼쪽 끝에서 시작하지 않는 글자, "[당뇨병 치료제]" 같은 분류 줄
-        kept = [toks[0]]
-        for t in toks[1:]:
-            if t[0] - kept[-1][1] > 3 * h:
-                break  # 이름 줄 오른쪽에 떨어져 있는 다른 글자(안내 문장)는 이름에 붙이지 않는다
-            kept.append(t)
-        text = "".join(_core(f["inferText"]) for _, _, f in kept)
-        text = _LEAD.sub("", text)
+    starts = sorted(
+        (t for t in cand if t[1][0] <= edge and not _core(t[0]["inferText"]).startswith(("[", "(", "{"))),
+        key=lambda t: (t[1][1] + t[1][3]) / 2,
+    )
+    used: set[int] = set()
+    out: list[tuple[float, str, bool, float]] = []
+    for f, b in starts:
+        if id(f) in used:
+            continue
+        height = b[3] - b[1]
+        kept = [(f, b)]
+        while not _TAIL.search(kept[-1][0]["inferText"]):
+            last = kept[-1][1]
+            nxt = [
+                (g, c)
+                for g, c in zone
+                if id(g) not in used
+                and g is not f
+                and all(g is not k[0] for k in kept)
+                and -0.5 * h <= c[0] - last[2] <= _NAME_GAP * h  # 바로 오른쪽, 가까이 (상자가 살짝 겹쳐도 됨)
+                and c[3] - c[1] >= _SAME_SIZE * height  # 이름보다 작은 글자(안내 문장)는 붙이지 않는다
+                and min(b[3], c[3]) - max(b[1], c[1]) >= 0.5 * min(height, c[3] - c[1])  # 세로로 겹친다
+            ]
+            if not nxt:
+                break
+            kept.append(min(nxt, key=lambda t: t[1][0]))
+        used.update(id(g) for g, _ in kept)
+        text = _LEAD.sub("", "".join(_core(g["inferText"]) for g, _ in kept))
         cut_end = bool(_TAIL.search(text))
         text = _TAIL.sub("", text).strip()
         if text:
-            out.append((cy, text, cut_end))
-    return out, line_h
+            out.append(((b[1] + b[3]) / 2, text, cut_end, statistics.median(c[3] - c[1] for _, c in kept)))
+    return out
+
+
+def _names(zone: list[Item], h: float, windows: list[tuple[float, float]]) -> list[tuple[float, str, bool]]:
+    """약 이름 줄들: [(줄 높이 위치, 이름, 끝이 잘렸는지)].
+    각 줄(카드)의 숫자가 맡은 구간 안에서, 가장 큰 글자에 가까운 줄 중 **맨 위 줄이 약 이름**이다. 카드형은 이름 아래에 성분 · 분류 · 안내가 오고, 한 줄형은 줄마다 구간이 하나다.
+    (처음에는 글자 높이로 이름을 골랐는데, 실제 샘플 p3는 이름 19~22 · 성분 16~18로 차이가 작아 불안정했고 표 밖의 큰 광고 글자에도 흔들렸다)
+    숫자를 하나도 못 읽은 약은 구간의 첫 줄이 아니어도, 이름 글자가 성분 글자보다 뚜렷이 클 때만 약으로 더한다."""
+    lines = _left_lines(zone, h)
+    if not lines or not windows:
+        return []
+    first_of: set[int] = set()
+    for lo, hi in windows:
+        inside = [i for i, ln in enumerate(lines) if lo <= ln[0] < hi]
+        if inside:
+            tallest = max(lines[i][3] for i in inside)
+            near = [i for i in inside if lines[i][3] >= _NEAR_TALLEST * tallest]
+            first_of.add(min(near, key=lambda i: lines[i][0]))
+    others = [ln[3] for i, ln in enumerate(lines) if i not in first_of]
+    cut = float("inf")
+    if first_of and others:
+        mean_name = statistics.mean(lines[i][3] for i in first_of)
+        mean_other = statistics.mean(others)
+        if mean_name > _SEPARATE * mean_other:
+            cut = (mean_name + mean_other) / 2
+    lo_all, hi_all = windows[0][0], windows[-1][1]
+    keep = [ln for i, ln in enumerate(lines) if (i in first_of or (ln[3] >= cut and lo_all <= ln[0] < hi_all))]
+    return [(cy, text, cut_end) for cy, text, cut_end, _ in keep]
 
 
 def _attach(names: list[tuple[float, str, bool]], nums: list[tuple[int, float, float]]) -> list[Row]:
@@ -185,8 +225,14 @@ def parse_pouch(data: dict[str, Any]) -> Table | None:
             if abs(cx[col] - c) <= tol:
                 nums.append((col, (b[1] + b[3]) / 2, float(f["inferText"].strip())))
 
-    names, line_h = _names([(f, b) for f, b in body if (b[0] + b[2]) / 2 <= cx[0] - 0.5 * spacing], h)
-    if not names or not nums:
+    if not nums:
+        return None
+    windows = _windows(_row_centers(nums, h), h)
+    ends = windows[-1][1]  # 마지막 숫자 줄이 맡은 구간의 끝 — 그 아래(광고 · 안내 글자)는 표 밖이다
+    names = _names(
+        [(f, b) for f, b in body if (b[0] + b[2]) / 2 <= cx[0] - 0.5 * spacing and (b[1] + b[3]) / 2 < ends], h, windows
+    )
+    if not names:
         return None
     rows = _attach(names, nums)
     numbered = [i for i, r in enumerate(rows) if any(v is not None for v in r.nums)]
@@ -199,21 +245,39 @@ def parse_pouch(data: dict[str, Any]) -> Table | None:
     return Table(rows=rows, n_anchor=n_anchor, disease_raw=None)
 
 
+_SAME_LINE = 0.3  # 같은 줄로 묶는 세로 가운데 차이 (글자 높이 배). 위아래 두 줄 사이에 낀 값을 어느 쪽 줄에도 붙이지 않으려고 좁게 잡는다
+
+
+def _line_texts(fields: list[dict[str, Any]]) -> list[str]:
+    """같은 줄(세로 가운데 차이가 글자 높이의 `_SAME_LINE`배 안)의 낱말을 왼쪽부터 이어 붙인 줄 글.
+    CLOVA 낱말 순서는 줄 순서가 아니고, "조 제 일"처럼 글자가 낱낱이 쪼개지기도 해서 줄로 묶어야 라벨이 이어진다.
+    줄의 평균 높이와 견주어 묶는다 (바로 앞 낱말과만 견주면 위아래 줄이 사슬처럼 한 줄이 된다)"""
+    items = sorted(((_box(f), f["inferText"]) for f in fields), key=lambda t: (t[0][1] + t[0][3]) / 2)
+    lines: list[list[tuple[float, float, str]]] = []
+    for (x0, y0, _x1, y1), text in items:
+        cy, h = (y0 + y1) / 2, max(y1 - y0, 1.0)
+        if lines and abs(sum(c for _x, c, _t in lines[-1]) / len(lines[-1]) - cy) <= _SAME_LINE * h:
+            lines[-1].append((x0, cy, text))
+        else:
+            lines.append([(x0, cy, text)])
+    return [" ".join(t for _x, _y, t in sorted(line)) for line in lines]
+
+
 def dispensed_date(fields: list[dict[str, Any]], today: date | None = None) -> tuple[date | None, list[str]]:
     """약봉투의 조제일. "조제일" · "조제일자" 바로 뒤의 날짜들이 모두 같을 때만 쓰고, 다르면 비워 두고 확인하게 한다.
     (처방전의 교부일과 달리 약봉투에는 교부일이 없고, 조제일이 약을 받은 날이다 — ERD prescriptions.issued_date)"""
     today = today or date.today()
-    text = " ".join(f["inferText"] for f in fields)
     found: set[date] = set()
-    for m in _DATE.finditer(text):
-        if not _LABEL.search(text[max(0, m.start() - 12) : m.start()]):
-            continue
-        try:
-            d = date(int(m[1]), int(m[2]), int(m[3]))
-        except ValueError:
-            continue
-        if 2000 <= d.year and d <= today:
-            found.add(d)
+    for text in _line_texts(fields):
+        for m in _DATE.finditer(text):
+            if not _LABEL.search(text[max(0, m.start() - 12) : m.start()]):
+                continue
+            try:
+                d = date(int(m[1]), int(m[2]), int(m[3]))
+            except ValueError:
+                continue
+            if 2000 <= d.year and d <= today:
+                found.add(d)
     if len(found) == 1:
         return next(iter(found)), []
     return None, ["조제일 못 읽음" if not found else "조제일이 서로 다르게 적혀 있음"]
