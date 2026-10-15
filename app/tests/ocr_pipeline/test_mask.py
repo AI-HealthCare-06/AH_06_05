@@ -120,3 +120,97 @@ def test_birth_year_is_kept_and_spacing_after_birthdate_stays():
 def test_labels_next_to_drug_numbers_do_not_eat_the_drug_line():
     text = "주민등록번호 900101-1234567 노바스크정5밀리그램 1 1 30"
     assert mask(text) == f"주민등록번호 {RRN} 노바스크정5밀리그램 1 1 30"
+
+
+# ── 이름 보강 (10/15): 라벨이 깨졌거나 없는 이름 ──────────────────────────────────────────────────────
+
+HEADER = "환자 성명 [이름] 전화번호 [전화번호] "  # 이름 근처에 신호(환자 · 성명 · 전화번호)가 있는 머리말
+
+
+@pytest.mark.parametrize(
+    "text, hidden",
+    [
+        ("환자 성멍 홍길동 전화번호 02-000-0000", "홍길동"),  # OCR이 '성명'을 잘못 읽음
+        ("환자 성병 홍길동 전화번호 02-000-0000", "홍길동"),
+        ("성멍 홍길동", "홍길동"),  # 신호가 깨진 라벨 하나뿐이어도 가림
+        ("환자 홍길동 전화번호 02-000-0000", "홍길동"),  # 성명 라벨이 없음
+        ("홍길동 성명 전화번호 02-000-0000", "홍길동"),  # 이름이 라벨 앞에 읽힘
+        ("홍길동 900101-1234567", "홍길동"),  # 주민번호 옆
+        ("홍길동 님 귀하", "홍길동"),
+        ("홍길동님께 복약 안내", "홍길동"),
+        ("홍길동씨", "홍길동"),
+        ("환자명 홍길동", "홍길동"),
+        ("환자명 이솔", "이솔"),  # 라벨이 분명하면 두 글자 이름도 가림
+        ("수진자 김철수", "김철수"),
+        ("보호자 김철수 연락처 010-1234-5678", "김철수"),
+        ("조제약사 박약사", "박약사"),
+        ("약사 성명 최약사", "최약사"),
+        ("복약안내 남궁민수 님", "남궁민수"),  # 복성
+        ("성명 전화영 전화번호 02-000-0000", "전화영"),  # 이름이 라벨 낱말(전화)로 시작해도 가림
+        ("성명 사용광 생년 1955년생", "사용광"),
+        ("이름 주소누", "주소누"),
+        ("성명 교부솔", "교부솔"),  # 성씨 목록에 없는 이름이 라벨 글자(교부)로 시작해도 라벨 뒤라서 가림
+        ("홍길동 test@example.com", "홍길동"),  # 가려진 이메일 표시도 신호
+    ],
+)
+def test_names_without_a_clean_label_are_hidden_when_near_a_patient_signal(text, hidden):
+    out = mask(text)
+    assert hidden not in out and NAME in out
+    assert mask(out) == out  # 다시 적용해도 같음
+
+
+@pytest.mark.parametrize(
+    "text, kept",
+    [
+        (HEADER + "주사액 1 1 30", "주사액"),  # 이름 모양인 의학 낱말
+        (HEADER + "서방정 1 1 30", "서방정"),
+        (HEADER + "마약류 처방", "마약류"),
+        ("연락처 (02) 123-4567 끝", "연락처"),  # 라벨 낱말이 이름 모양
+        ("이메일 test@example.com 끝", "이메일"),
+        (HEADER + "전에는 복용하지 마세요", "전에는"),  # 조사로 끝나는 낱말
+        (HEADER + "주의할 점", "주의할"),
+        ("의료기관 명칭 서울행복내과의원 전화번호 02-000-0000", "서울행복내과의원"),  # 병원 이름은 남김
+        # 성씨로 시작하는 병원 이름 (다섯 글자 한 낱말이라 이름 모양이 아님)
+        ("김내과의원 전화번호 02-000-0000", "김내과의원"),
+        ("이상반응 안전성 확인 필요", "안전성"),  # 환자 신호가 없는 의학 글은 건드리지 않음
+        ("고혈압 당뇨병 신장애 소아용 성인용", "고혈압"),
+        (
+            "환자 성명 [이름] 노바스크정5밀리그램 1 1 30 아스피린프로텍트정100밀리그램 1 3 7",
+            "아스피린프로텍트정100밀리그램",
+        ),
+    ],
+)
+def test_medical_and_form_words_that_look_like_names_are_kept(text, kept):
+    out = mask(text)
+    assert kept in out
+    assert out.count(NAME) == text.count(NAME)  # 새로 이름으로 가려진 것이 없음
+    assert mask(out) == out
+
+
+def test_a_name_far_from_any_patient_signal_is_left_alone_and_two_letter_names_need_a_label():
+    # 한계를 그대로 적어 둔다: 신호에서 멀리 떨어진 이름 · 라벨 없는 두 글자 이름은 못 가린다 (docs/design/ocr_mask.md)
+    far = "환자 하나 둘 셋 넷 다섯 홍길동"
+    assert "홍길동" in mask(far)
+    assert "이솔" in mask("환자 이솔 전화번호 02-000-0000")
+
+
+def test_name_masking_does_not_change_existing_results_and_stays_idempotent():
+    text = sample_text() + " 보호자 김철수 홍길동 님 주민등록번호 900101-1234567"
+    once = mask(text)
+    assert "김철수" not in once and "홍길동" not in once and "김의사" not in once
+    assert mask(once) == once
+    assert NAME in once and "가나다내과의원" in once
+
+
+def test_stopwords_file_is_loaded():
+    from app.services.ocr import mask as mask_module
+
+    assert len(mask_module._STOP) > 500 and "주사액" in mask_module._STOP and "서방정" in mask_module._STOP
+
+
+def test_masking_a_name_never_creates_a_new_signal_for_the_next_run():
+    # 첫 번째 적용에서 가려진 이름이 두 번째 적용에서 다른 낱말을 가리는 신호가 되면 안 된다 (여러 번 실행해도 같은 결과)
+    text = "환자 홍길동 가 나 김철수"  # 김철수는 '환자'에서 4칸, 가려진 홍길동에서 3칸
+    once = mask(text)
+    assert "홍길동" not in once and "김철수" in once
+    assert mask(once) == once
