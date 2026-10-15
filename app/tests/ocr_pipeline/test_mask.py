@@ -342,3 +342,28 @@ def test_the_attending_doctor_label_itself_is_not_taken_for_a_name():
 
 def test_a_masked_registration_number_is_a_signal_for_a_name_next_to_it():
     assert "이솔" not in mask("등록번호 06071226 이솔 접수")
+
+
+# ── 10/15 점검에서 놓친 모양들 ───────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "text, digits",
+    [
+        ("번호 900101 1234567", "1234567"),  # 라벨 없이 공백으로만 나뉨
+        ("연락 010.1234.5678", "5678"),  # 점으로 나뉨
+        ("연락 +82 10-1234-5678", "5678"),  # 국제번호
+        ("연락 82-10-1234-5678", "5678"),
+        ("연락 010 12345678", "5678"),  # 앞 세 자리 뒤에 공백 하나
+        ("연락 010-1234-567", "1234"),  # 끝자리가 하나 덜 읽힘
+        ("조제 1990년 1월 1일생", "1990"),  # 연 · 월 · 일이 다 있는 생년월일
+    ],
+)
+def test_more_phone_resident_and_birthdate_shapes_are_hidden(text, digits):
+    out = mask(text)
+    assert digits not in out and mask(out) == out
+
+
+def test_spaced_honorific_name_is_hidden_but_ordinary_words_are_not():
+    assert "길" not in mask("홍 길 동 님") and NAME in mask("홍 길 동 님")
+    assert mask("식후 30분 복용하세요") == "식후 30분 복용하세요"
+    assert mask("1955년생 남자") == "1955년생 남자"  # 연도만 있는 생년은 남긴다
+    assert mask("교부일 2026년 10월 15일") == "교부일 2026년 10월 15일"

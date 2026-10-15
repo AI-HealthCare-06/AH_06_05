@@ -61,6 +61,11 @@ def _brand(name: str) -> str:
     return re.split(r"[\d(]", base_name(name))[0]
 
 
+def _strength_numbers(name: str) -> list[str]:
+    """이름에서 괄호(성분) 앞까지의 숫자들 (노바스크정5밀리그램(암로디핀) → ["5"] · 엔피포지정5/160 → ["5", "160"])"""
+    return re.findall(r"\d+(?:\.\d+)?", re.split(r"[(\[]", unify(name))[0])
+
+
 def _different_ingredient(a: set[str | None], b: set[str | None]) -> bool:
     """두 상표의 주성분코드가 하나도 겹치지 않으면 다른 약 (코드를 모르는 약이 끼어 있으면 다르다고 봄)"""
     return None in a or None in b or not (a & b)
@@ -85,6 +90,7 @@ class Decision:
     candidates: list[Candidate]
     exact: bool = False  # 이름이 제품명과 글자 그대로 같음
     same_name: bool = False  # mg · 밀리그람 같은 표기를 통일하면 제품명과 같음 (약 이름 검색의 "확실" 기준)
+    strength: bool = False  # 읽은 이름의 함량 숫자가 맞는 약의 숫자와 달라 사용자가 고르게 함 (decide)
     sibling: bool = False  # 이름이 글자 하나 차이인 다른 성분의 약이 있어 사용자가 고르게 함 (아래 NameMatcher.decide)
 
 
@@ -98,6 +104,7 @@ class NameMatcher:
         """products: [(edi_code, 제품명)], makers: 급여목록의 제조사 이름들 (처방전에서 이름에 붙어 읽힌 제조사를 떼는 데 씀),
         ingredients: {edi_code: 주성분코드} — 주면 "글자 하나 차이인 다른 성분의 약"을 알아본다 (없으면 그 검사를 하지 않음)"""
         self._idx = [(edi, nm, grams(unify(base_name(nm)))) for edi, nm in products]
+        self._base = [base_name(nm) for _, nm in products]  # 이름이 글자 그대로 같은 제품을 동점에서 먼저 고르는 데 씀
         self._tidx: list[tuple[str, str, frozenset[str]]] | None = None
         self._ingr = ingredients
         self._sib: dict[str, list[str]] | None = None
@@ -166,10 +173,19 @@ class NameMatcher:
     def decide(self, read_name: str, top_n: int = 3, siblings: bool = True) -> Decision:
         """siblings=False면 형제 약 확인을 건너뜀 (이미 사용자가 고르는 경로이거나, 사용자가 직접 이름을 친 검색)"""
         qb = base_name(self.without_maker(read_name))  # 제조사 꼬리를 먼저 뗌
-        if len(qb) < MIN_LEN or not self._idx:
+        if not self._idx:
             return Decision(NOT_FOUND, 0.0, [])
+        if len(qb) < MIN_LEN:
+            return self._short_exact(qb)
         qg = grams(unify(qb))
-        top = heapq.nlargest(top_n, ((overlap(qg, g), edi, nm) for edi, nm, g in self._idx))
+        # 글자 조각이 같은 다른 이름(브록솔정 ↔ 록솔정: 2글자 조각 집합이 같음)과 동점이면 이름이 글자 그대로 같은 제품이 먼저 (점수에는 영향 없는 1e-9)
+        top = heapq.nlargest(
+            top_n,
+            (
+                (overlap(qg, g) + (1e-9 if self._base[i] == qb else 0.0), edi, nm)
+                for i, (edi, nm, g) in enumerate(self._idx)
+            ),
+        )
         cands = [Candidate(edi, nm, round(sc, 3)) for sc, edi, nm in top]
         best = top[0][0]
         if best < NOT_FOUND_BELOW or _brand_overlap(qb, top[0][2]) < BRAND_MIN:
@@ -184,11 +200,26 @@ class NameMatcher:
         )
         if close:
             return Decision(AMBIGUOUS, round(best, 3), cands)
+        read_nums = _strength_numbers(qb)
+        if read_nums and read_nums != _strength_numbers(top[0][2].split("_(")[0]):
+            # 읽은 이름의 함량 숫자가 맞는 약의 숫자와 다르다 (60을 30으로, 5를 50으로 잘못 읽은 경우 · 목록에 없는 함량).
+            # 글자는 거의 같아서 점수가 높게 나오지만 다른 함량의 약일 수 있다 → 틀린 함량이 확정되지 않게 사용자가 고른다 (10/15, 급여목록으로 한 자리 바꾸기 시험에서 3%)
+            return Decision(AMBIGUOUS, round(best, 3), cands, strength=True)
         if siblings and (sib := self._sibling_choices(top[0][2], qg, top_n)):
             # 읽힌 이름이 목록에 있는 이름이어도, 글자 하나 차이의 다른 성분 약이 있으면 오타인지 다른 약인지 글자만으로는 알 수 없다
             # (예: 로글리코엠정을 로글리코정으로 읽음). 틀린 약이 확정되는 것을 막으려고 사용자가 고르게 한다
             return Decision(AMBIGUOUS, round(best, 3), [cands[0], *sib], sibling=True)
         return Decision(FOUND, round(best, 3), cands, exact=exact, same_name=unify(base_name(top[0][2])) == unify(qb))
+
+    def _short_exact(self, qb: str) -> Decision:
+        """짧은 이름(3글자: 울셋정 · 코푸정 · 아트정 등 급여목록에 실제로 있음)은 비슷한 이름을 찾으면 엉뚱한 약이 나오기 쉬워서,
+        급여목록 제품명과 글자 그대로 같을 때만 찾는다. 2글자 이하는 찾지 않는다 (병원 · 약국 같은 낱말이 약 이름 칸에 섞여 읽히는 경우)"""
+        if len(qb) >= MIN_LEN - 1:
+            hits = [i for i, b in enumerate(self._base) if b == qb]
+            if hits:
+                edi, nm, _ = self._idx[hits[0]]
+                return Decision(FOUND, 1.0, [Candidate(edi, nm, 1.0)], exact=True, same_name=True)
+        return Decision(NOT_FOUND, 0.0, [])
 
     def _sibling_choices(self, name: str, qg: frozenset[str], top_n: int) -> list[Candidate]:
         """찾은 약의 형제 상표들에서 질문 이름과 가장 가까운 제품을 하나씩 (읽은 이름의 약 포함 최대 max(top_n, SIBLING_CHOICES)개).

@@ -401,3 +401,88 @@ def test_confidence_just_at_the_limit_is_still_auto_matched():
 
     r = read(_one_drug("노바스크정5밀리그람", LOW_CONF), matcher(), CODES, today=TODAY).rows[0]
     assert r.decision.status == FOUND and LOW_CONF_FLAG not in r.flags
+
+
+# ── 10/15 약 이름 맞추기 점검: 실제 급여목록(22,045개)으로 재다가 찾은 문제 ─────────────────────────
+def test_unit_symbols_in_the_master_do_not_decide_which_strength_matches():
+    # 급여목록 이름 234개는 "㎎" 같은 호환 문자를 쓴다. 통일하지 않으면 "500mg"로 읽은 약이 250mg로 확정됐다
+    m = NameMatcher(
+        [
+            (
+                "1",
+                "데파코트서방정250mg(디발프로엑스나트륨)_(0.2691g/1정)",
+            ),  # 이쪽은 mg, 500은 ㎎ (실제 급여목록이 이렇게 섞여 있다)
+            ("2", "데파코트서방정500㎎(디발프로엑스나트륨)_(0.5381g/1정)"),
+        ]
+    )
+    d = m.decide("데파코트서방정500mg(디발프로엑스나트륨)")
+    assert d.status == FOUND and d.candidates[0].edi_code == "2"
+    d = m.decide("데파코트서방정500㎎(디발프로엑스나트륨)")
+    assert d.status == FOUND and d.candidates[0].edi_code == "2"
+
+
+def test_a_name_in_the_master_wins_over_a_name_with_the_same_letter_pairs():
+    # "브록솔정(암브록솔염산염)"과 "록솔정(암브록솔염산염)"은 2글자 조각 집합이 같아 점수가 같다 — 글자 그대로 같은 쪽이 맞는 약이다
+    m = NameMatcher(
+        [
+            ("9", "록솔정(암브록솔염산염)_(30mg/1정)"),  # 번호가 더 커서 동점이면 이쪽이 먼저 나오던 쪽
+            ("1", "브록솔정(암브록솔염산염)_(30mg/1정)"),
+        ]
+    )
+    d = m.decide("브록솔정(암브록솔염산염)_(30mg/1정)")
+    assert d.status == FOUND and d.candidates[0].edi_code == "1"
+
+
+def test_three_letter_names_are_found_only_when_they_match_exactly():
+    # 급여목록에는 울셋정 · 코푸정처럼 3글자 이름이 실제로 있다 (이전에는 4글자 미만이면 무조건 못 찾음)
+    m = NameMatcher(
+        [
+            ("1", "울셋정(트라마돌염산염)_(37.5mg/1정)"),
+            ("2", "코푸정_(1정)"),
+            ("3", "울셋서방정(트라마돌)_(1정)"),
+            ("4", "티씰_(1병)"),
+        ]
+    )
+    d = m.decide("코푸정")
+    assert d.status == FOUND and d.candidates[0].edi_code == "2"
+    assert (
+        m.decide("티씰").status == NOT_FOUND
+    )  # 목록에 정확히 있어도 2글자는 안 찾는다 (병원 · 약국 같은 낱말이 섞일 수 있음)
+    assert m.decide("코푼정").status == NOT_FOUND  # 비슷한 이름으로는 3글자를 확정하지 않는다
+    assert m.decide("병원").status == NOT_FOUND
+
+
+def test_a_misread_strength_is_not_auto_matched_to_another_strength():
+    # 한 자리를 잘못 읽어도 글자는 거의 같아 점수가 높다. 함량 숫자가 다르면 사용자가 고르게 한다 (급여목록으로 시험: 1,500개 중 49개가 다른 함량으로 확정됐었다)
+    m = NameMatcher(
+        [
+            ("1", "피엠에스로수바스타틴정20밀리그램(로수바스타틴칼슘)_(20.838mg/1정)"),
+            ("2", "피엠에스로수바스타틴정10밀리그램(로수바스타틴칼슘)_(10.4mg/1정)"),
+            ("3", "피엠에스로수바스타틴정5밀리그램(로수바스타틴칼슘)_(5.2mg/1정)"),
+        ]
+    )
+    ok = m.decide("피엠에스로수바스타틴정5밀리그램")
+    assert ok.status == FOUND and ok.candidates[0].edi_code == "3" and not ok.strength
+    assert m.decide("피엠에스로수바스타틴정5mg").status == FOUND  # 표기만 다름(mg)은 그대로 확정
+    for misread in ("피엠에스로수바스타틴정2밀리그램", "피엠에스로수바스타틴정50밀리그램"):
+        d = m.decide(misread)
+        assert d.status == AMBIGUOUS, (
+            misread
+        )  # (50은 20 · 5와 점수가 비슷해 동점 규칙으로도 걸리고, 2는 함량 규칙으로 걸린다)
+        assert {"1", "2", "3"} >= {c.edi_code for c in d.candidates} and d.candidates  # 사용자가 고를 후보가 있다
+    assert m.decide("피엠에스로수바스타틴정2밀리그램").strength  # 목록에 없는 함량: 가장 가까운 약으로 확정하지 않는다
+    assert not m.decide("피엠에스로수바스타틴정").strength  # 숫자가 없으면 이 규칙은 쓰지 않는다
+
+
+def test_strength_with_slash_and_decimal_numbers_compares_every_number():
+    m = NameMatcher(
+        [
+            ("1", "엔피포지정10/160밀리그램_(1정)"),
+            ("2", "엔피포지정5/160밀리그램_(1정)"),
+            ("3", "온글라이자정2.5밀리그램(삭사글립틴수화물)_(1정)"),
+        ]
+    )
+    assert m.decide("엔피포지정5/160밀리그램").status == FOUND
+    assert m.decide("엔피포지정1/160밀리그램").status == AMBIGUOUS  # 10/160의 앞 숫자를 한 자리 놓침
+    assert m.decide("온글라이자정2.5밀리그램").status == FOUND
+    assert m.decide("온글라이자정5밀리그램").status == AMBIGUOUS

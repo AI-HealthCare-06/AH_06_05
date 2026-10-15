@@ -38,10 +38,21 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     # 주민등록번호 900101-1234567 · 900101-1****** · 900101-1 · 붙여 쓴 13자리
     (re.compile(rf"(?<!\d)\d{{6}}\s*{_MARK}\s*[1-8*●○ⅹXx][\d*●○ⅹXx]{{0,6}}(?!\d)"), RRN),
     (re.compile(r"(?<!\d)\d{6}[1-8]\d{6}(?!\d)"), RRN),
+    # 앞 여섯 · 뒤 일곱 자리가 공백으로만 나뉜 경우
+    (re.compile(r"(?<!\d)\d{6}[ \t]+[1-8]\d{6}(?!\d)"), RRN),
     # 전화번호 02-000-0000 · 010-1234-5678 · 붙여 쓴 휴대폰
-    (re.compile(rf"(?<!\d)\(?0\d{{1,2}}(?:\s*[-–‐.)]\s*|\s+)\d{{3,4}}(?:\s*{_MARK}\s*|\s+)\d{{4}}(?!\d)"), PHONE),
-    (re.compile(r"(?<!\d)01[016789]\d{7,8}(?!\d)"), PHONE),
+    (re.compile(r"(?<!\d)\(?0\d{1,2}(?:\s*[-–‐.)]\s*|\s+)\d{3,4}(?:\s*[-–‐.]\s*|\s+)\d{3,4}(?!\d)"), PHONE),
+    (
+        re.compile(r"(?<!\d)01[016789][ \t.\-]?\d{7,8}(?!\d)"),
+        PHONE,
+    ),  # 붙여 쓴 휴대폰 (앞 세 자리 뒤에 공백 하나가 끼기도 함)
+    (
+        re.compile(r"(?<![\d])\+?82[ \t.\-]*\(?0?1[016789]\)?[ \t.\-]*\d{3,4}[ \t.\-]*\d{4}(?!\d)"),
+        PHONE,
+    ),  # 국제번호 +82 10-1234-5678
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), EMAIL),
+    # 연 · 월 · 일이 다 있는 생년월일 "1990년 1월 1일생" (연도만 쓴 "1955년생"은 남긴다)
+    (re.compile(r"(?<!\d)\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일\s*생"), BIRTH),
 ]
 
 # 라벨은 남기고 값만 가린다: (라벨, 값) → "라벨 [표시]"
@@ -114,6 +125,9 @@ _SIGNED_NAME = re.compile(
 
 # 님 · 씨 · 귀하 앞
 _HONORIFIC = re.compile(rf"(?<![가-힣\[])({_SHAPE}|[{SURNAMES}][가-힣](?<!씨))(?=\s*(?:님|씨(?![가-힣])|귀하))")
+_SPACED_HONORIFIC = re.compile(
+    rf"(?<![가-힣\[])([{SURNAMES}](?:[ \t][가-힣]){{1,2}})(?=[ \t]*님)"
+)  # OCR이 글자 사이에 공백을 넣은 "홍 길 동 님"
 _CANDIDATE = re.compile(rf"(?<![가-힣\[])({_SHAPE})(?![가-힣\]])")
 _CANDIDATE2 = re.compile(rf"(?<![가-힣\[])([{SURNAMES}][가-힣])(?![가-힣\]])")  # 두 글자 이름: 신호 바로 옆일 때만
 _TOKEN = re.compile(r"\S+")
@@ -163,4 +177,5 @@ def mask(text: str) -> str:
     for spaced in (_SPACED_NAME, _SIGNED_NAME):
         text = spaced.sub(lambda m: m[0] if m[2].replace(" ", "") in _STOP else m[1] + NAME, text)
     text = _HONORIFIC.sub(lambda m: m[0] if m[1] in _STOP else NAME, text)
+    text = _SPACED_HONORIFIC.sub(lambda m: m[0] if m[1].replace(" ", "").replace("\t", "") in _STOP else NAME, text)
     return _hide_names_near_anchors(text)
