@@ -191,7 +191,49 @@ def test_a_name_far_from_any_patient_signal_is_left_alone_and_two_letter_names_n
     # 한계를 그대로 적어 둔다: 신호에서 멀리 떨어진 이름 · 라벨 없는 두 글자 이름은 못 가린다 (docs/design/ocr_mask.md)
     far = "환자 하나 둘 셋 넷 다섯 홍길동"
     assert "홍길동" in mask(far)
-    assert "이솔" in mask("환자 이솔 전화번호 02-000-0000")
+    assert "이솔" in mask("환자 가나 이솔")  # 신호에서 두 칸 떨어진 두 글자 이름
+    assert "이솔" in mask("약국 이솔 접수")  # 신호가 없는 두 글자 이름
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "환자 이솔 전화번호 02-000-0000",  # 신호 바로 옆
+        "환자 성멍 이솔",
+        "이솔 [주민번호]",
+        "이솔님 안녕하세요",
+        "이솔씨 안녕하세요",
+        "보호자 이솔",
+        "조제약사 박솔",
+    ],
+)
+def test_two_letter_names_right_next_to_a_signal_are_hidden(text):
+    out = mask(text)
+    assert "이솔" not in out and "박솔" not in out
+    assert mask(out) == out
+
+
+@pytest.mark.parametrize(
+    ("text", "hidden"),
+    [
+        ("환자명:이솔 접수", "이솔"),
+        ("수진자:이솔", "이솔"),
+        ("보호자:김철수 접수", "김철수"),
+        ("조제약사:박약사 확인", "박약사"),
+    ],
+)
+def test_names_glued_to_their_label_with_a_colon_are_hidden(text, hidden):
+    # 라벨과 이름이 한 덩어리로 읽히면 낱말 단위 신호로는 못 잡는다 → 라벨 규칙이 담당
+    assert hidden not in mask(text)
+
+
+def test_a_word_ending_in_ssi_is_not_a_name_plus_ssi():
+    assert "지씨씨" in mask("환자 알부민 지씨씨 주")  # 제조사 이름 (지씨 + 씨로 읽히면 안 됨)
+
+
+def test_two_letter_medical_and_form_words_next_to_a_signal_are_kept():
+    for word in ("서명", "조제", "고객", "선생"):
+        assert "[이름]" not in mask(f"환자 {word} 전화번호"), word
 
 
 def test_name_masking_does_not_change_existing_results_and_stays_idempotent():
@@ -214,3 +256,36 @@ def test_masking_a_name_never_creates_a_new_signal_for_the_next_run():
     once = mask(text)
     assert "홍길동" not in once and "김철수" in once
     assert mask(once) == once
+
+
+# 실제 처방전 사진 9장(10/15)의 CLOVA 결과에서 새던 모양들 (이름은 지어낸 것)
+@pytest.mark.parametrize(
+    ("text", "hidden"),
+    [
+        ("환 자 성 명 홍 길 동 팩스번호 02-123", "홍 길 동"),  # OCR이 이름 글자 사이에 공백을 넣음
+        ("피보험자 : 김 영 희 ①의료보험", "김 영 희"),
+        ("처방 의료인의 성 명 박 형 구 (인) 면허번호", "박 형 구"),
+        ("조제약사 성명 (서명 또는 날인) 최민수 조 제 량", "최민수"),  # 성명 뒤에 괄호가 낌
+        ("성 명 (인) 정 우 성 조제일수", "정 우 성"),
+    ],
+)
+def test_names_the_real_prescriptions_leaked_are_hidden(text, hidden):
+    out = mask(text)
+    assert hidden not in out
+    assert "[이름]" in out
+    assert mask(out) == out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "환 자 성 명 조 제 일 자 투 약 일 수 2024-05",  # 이름 칸이 비어 다음 칸 이름이 이어짐
+        "전화 번 호 성 명 기 팩 스 번 호 환 자",
+        "성 명 처 방 전 이 하 여 백",
+        "요양기관기호 : 12345678 교부 연월일 ⑧·미 번호 2022년 12월 1일",
+        "환 자 성 명 팩 스 번 호 2024-05",  # 성씨로 시작하지 않는 글자 줄은 이름이 아님
+        "조제약사 성명 (서명 또는 날인) 조 제 량 (조제일수)",
+    ],
+)
+def test_empty_name_boxes_followed_by_other_labels_are_not_hidden(text):
+    assert "[이름]" not in mask(text)

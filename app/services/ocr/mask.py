@@ -78,7 +78,7 @@ _SHAPE2 = rf"(?:{_SHAPE}|[{SURNAMES}][가-힣])"  # 라벨이 분명할 때는 �
 _STOP_FILE = Path(__file__).with_name("mask_stopwords.txt")
 # 이름 모양이지만 이름이 아닌 낱말: 양식 · 직책 · 의학 낱말 (+ 파일: 약 이름 · 제조사 · 질병명에서 뽑은 것 — scripts/gen_mask_stopwords.py)
 _STOP = frozenset(
-    "이메일 이용자 전문의 한의원 주사제 조제량 조제약 조제일 조제시 조제자 주사액 서방정 장용정 연질캡 전화번 의료인 수진자 조제기관 약사님 마약류".split()
+    "이메일 이용자 전문의 한의원 주사제 조제량 조제약 조제일 조제시 조제자 주사액 서방정 장용정 연질캡 전화번 의료인 수진자 조제기관 약사님 마약류 처방전 이하여백 조제내역 조제연월일 조제일수 처방의약품 투약일수 조제기관명 연월일 년월일 선생 고객 서명 조제 주사 용량 금액 전문 한방 진료 성별 연령 나이 유효 기간 국민 인쇄 방문 변경 구분 기호 방법 주민 연번".split()
 ) | frozenset(_STOP_FILE.read_text(encoding="utf-8").split() if _STOP_FILE.exists() else [])
 
 # 이름 근처에 있는 신호: 이 낱말이나 가려진 번호 표시가 앞뒤 3칸 안에 있을 때만 "라벨 없는 이름 모양"을 가린다
@@ -100,9 +100,19 @@ _ROLE_NAME = re.compile(
 _ROLE_NAME_3 = re.compile(
     rf"((?:보호자|대리인|수령인|조제\s*약사|약사|조제자|복약\s*지도(?:자|\s*약사)?)(?:\s*성\s*명)?\s*[:：]?\s*)({_SHAPE})(?![가-힣])"
 )
+# OCR이 이름 글자 사이에 공백을 넣은 경우 ("성 명 박 형 구", "피보험자 : 이 현 상") · 성명 뒤에 "(서명 또는 날인)"이 낀 경우
+_SPACED = rf"[{SURNAMES}](?:[ \t][가-힣]){{1,3}}(?![가-힣])(?![ \t][가-힣](?![가-힣]))"  # 뒤에 한 글자 낱말이 또 오면 칸 이름(투 약 일 수)일 수 있어 가리지 않음
+_SPACED_NAME = re.compile(
+    rf"((?:성\s*명|이\s*름|환자\s*명|수진자(?:\s*명)?|피보험자(?:\s*명)?)\s*[:：]?\s*)(?<![가-힣])({_SPACED})"
+)
+_SIGNED_NAME = re.compile(
+    rf"((?:성\s*명|이\s*름)\s*\(\s*(?:서\s*명\s*또는\s*날\s*인|서\s*명|인)\s*\)\s*[:：]?\s*)({_SHAPE}|{_SPACED})(?![가-힣])"
+)
+
 # 님 · 씨 · 귀하 앞
-_HONORIFIC = re.compile(rf"(?<![가-힣\[])({_SHAPE})(?=\s*(?:님|씨(?![가-힣])|귀하))")
+_HONORIFIC = re.compile(rf"(?<![가-힣\[])({_SHAPE}|[{SURNAMES}][가-힣](?<!씨))(?=\s*(?:님|씨(?![가-힣])|귀하))")
 _CANDIDATE = re.compile(rf"(?<![가-힣\[])({_SHAPE})(?![가-힣\]])")
+_CANDIDATE2 = re.compile(rf"(?<![가-힣\[])([{SURNAMES}][가-힣])(?![가-힣\]])")  # 두 글자 이름: 신호 바로 옆일 때만
 _TOKEN = re.compile(r"\S+")
 
 
@@ -128,6 +138,13 @@ def _hide_names_near_anchors(text: str) -> str:
         i = bisect_right(starts, m.start()) - 1
         if any(abs(a - i) <= _ANCHOR_WINDOW for a in anchors):
             spans.append((m.start(1), m.end(1)))
+    for m in _CANDIDATE2.finditer(text):
+        if m[1] in _STOP or m[1][-1] in _PARTICLE_END:
+            continue
+        i = bisect_right(starts, m.start()) - 1
+        if any(abs(a - i) <= 1 for a in anchors):
+            spans.append((m.start(1), m.end(1)))
+    spans = sorted(set(spans))
     for start, end in reversed(spans):
         text = text[:start] + NAME + text[end:]
     return text
@@ -140,5 +157,7 @@ def mask(text: str) -> str:
         text = pattern.sub(lambda m, mark=mark: m[1] + mark, text)  # type: ignore[misc]
     for role in (_ROLE_NAME, _ROLE_NAME_3):
         text = role.sub(lambda m: m[0] if m[2] in _STOP else m[1] + NAME, text)
+    for spaced in (_SPACED_NAME, _SIGNED_NAME):
+        text = spaced.sub(lambda m: m[0] if m[2].replace(" ", "") in _STOP else m[1] + NAME, text)
     text = _HONORIFIC.sub(lambda m: m[0] if m[1] in _STOP else NAME, text)
     return _hide_names_near_anchors(text)
