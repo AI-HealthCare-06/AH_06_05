@@ -23,6 +23,11 @@ _DZ_LABEL_SHORT = r"분\s*류\s*기\s*호(?![를은는이가]\s*기재)"
 _DZ_STOP = r"(?:처\s*방|의료인|면허\s*종|※|환자의\s*요구)"
 
 
+def _add_conf(row: "Row", c: Any) -> None:
+    if isinstance(c, int | float):
+        row.confs.append(float(c))
+
+
 @dataclass
 class Row:
     name: str
@@ -35,6 +40,12 @@ class Row:
         default_factory=list
     )  # 약봉투: 약국이 약 아래에 인쇄한 복약 안내 표시 · 문장 (pouch_guide)
     cut: bool = False  # 이름 끝이 "···"로 잘려 있음 (약봉투). 뒷부분(함량 등)이 없어서 사용자가 확인한다
+    confs: list[float] = field(default_factory=list)  # 이름을 이룬 글자 조각들의 CLOVA 인식 신뢰도
+
+    @property
+    def conf(self) -> float | None:
+        """이름 글자의 평균 인식 신뢰도 (값이 없으면 None)"""
+        return sum(self.confs) / len(self.confs) if self.confs else None
 
 
 @dataclass
@@ -215,7 +226,7 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
             continue
         v = f["boundingPoly"]["vertices"]
         h = ((v[3]["x"] - v[0]["x"]) ** 2 + (v[3]["y"] - v[0]["y"]) ** 2) ** 0.5  # 왼쪽 변의 길이(기울어도 글자 높이)
-        lines.append({"name": f["inferText"], "x": v[0]["x"], "y": level_y(f), "h": h})
+        lines.append({"name": f["inferText"], "x": v[0]["x"], "y": level_y(f), "h": h, "c": f.get("inferConfidence")})
 
     # 이름이 칸을 넘어 둘 이상의 줄이 되면 뒷줄을 앞 이름에 붙인다. 새 약이 시작되는 곳은 두 가지로 정한다.
     #  (1) 앞 줄과의 간격이 줄 간격(일수 칸 숫자 간격)의 절반 이상이거나 왼쪽 시작이 다를 때
@@ -259,6 +270,7 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
             owner = max((i for i, a in enumerate(anchors) if ln["y"] >= a - 8), default=None)
             if owner is not None:
                 rows[owner].name += ln["name"]
+                _add_conf(rows[owner], ln["c"])
         rows = [r for r in rows if r.name]
     else:
         for i, ln in enumerate(lines):
@@ -267,6 +279,7 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
             else:
                 rows[-1].name += ln["name"]
                 rows[-1].y = (rows[-1].y + ln["y"]) / 2
+            _add_conf(rows[-1], ln["c"])
 
     if len(col_x) == 3 and rows:
         # 줄마다 숫자를 모은다. 한 줄에 정확히 3개가 읽혔으면 왼쪽부터 순서대로 1회량 · 횟수 · 일수로 본다

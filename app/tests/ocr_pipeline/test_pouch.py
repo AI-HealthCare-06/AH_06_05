@@ -568,3 +568,18 @@ def test_strength_piece_that_is_tiny_or_on_another_line_is_not_joined():
     ):  # 너무 작음(0.2배) · 거의 아래 줄(겹침 0.18)
         t = parse_pouch(data(head() + base + [piece]))
         assert t is not None and t.rows[0].name == "로라탐정"
+
+
+def test_name_confidence_follows_the_name_pieces_only():
+    """이름 글자의 신뢰도만 평균에 들어간다 (성분 · 안내 줄이 흐려도 이름은 영향 없음)"""
+    cards = card(200, "알마겔정") + card(300, "리피토정10mg", ("2", "1", "7"))
+    for f in cards:
+        if f["inferText"] == "알마겔정":
+            f["inferConfidence"] = 0.30
+        elif f["inferText"] == "리피토정10mg":
+            f["inferConfidence"] = 0.95
+        elif f["inferText"] in ("아세트아미노펜", "해열 · 진통제"):
+            f["inferConfidence"] = 0.10  # 이름 아래 줄: 흐려도 이름의 신뢰도가 아니다
+    t = parse_pouch(data(head() + strip() + cards))
+    assert t is not None
+    assert [round(r.conf or -1, 2) for r in t.rows] == [0.30, 0.95]

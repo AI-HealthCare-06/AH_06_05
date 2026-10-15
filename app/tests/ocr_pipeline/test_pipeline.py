@@ -375,3 +375,29 @@ def test_notices_keep_reading_flags_the_user_should_see():
     assert notices_of(only_birth) is None  # 출생연도는 저장하지 않으니 알리지 않는다
     r = OcrRead(status="ok", meta_flags=["교부일 못 읽음", "출생연도 못 읽음"], row_count_mismatch=True)
     assert notices_of(r) == ["교부일 못 읽음", ROW_COUNT_NOTICE]
+
+
+# ── 10/15: 이름 글자를 낮은 확신으로 읽었으면 자동으로 정하지 않는다 ────────────────────────────
+def _one_drug(name: str, conf: float) -> dict:
+    head = [_fld("명칭", 100, 100), _fld("투약량", 380, 100), _fld("투여횟수", 480, 100), _fld("총투약일수", 580, 100)]
+    name_f = _fld(name, 100, 200, 160)
+    name_f["inferConfidence"] = conf
+    nums = [_fld("1", 400, 200, 20), _fld("3", 500, 200, 20), _fld("7", 600, 200, 20)]
+    return {"images": [{"fields": head + [name_f] + nums}]}
+
+
+def test_low_confidence_name_is_not_auto_matched():
+    from app.services.ocr.pipeline import LOW_CONF_FLAG
+
+    clear = read(_one_drug("노바스크정5밀리그람", 0.95), matcher(), CODES, today=TODAY).rows[0]
+    assert clear.decision.status == FOUND and LOW_CONF_FLAG not in clear.flags
+
+    blurry = read(_one_drug("노바스크정5밀리그람", 0.40), matcher(), CODES, today=TODAY).rows[0]
+    assert blurry.decision.status == AMBIGUOUS and LOW_CONF_FLAG in blurry.flags  # 후보로만 올리고 사용자가 고른다
+
+
+def test_confidence_just_at_the_limit_is_still_auto_matched():
+    from app.services.ocr.pipeline import LOW_CONF, LOW_CONF_FLAG
+
+    r = read(_one_drug("노바스크정5밀리그람", LOW_CONF), matcher(), CODES, today=TODAY).rows[0]
+    assert r.decision.status == FOUND and LOW_CONF_FLAG not in r.flags

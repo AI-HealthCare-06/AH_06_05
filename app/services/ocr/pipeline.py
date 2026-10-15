@@ -26,6 +26,10 @@ SIBLING_FLAG = (
     "이름이 비슷한 다른 약이 있어요"  # 글자 하나 차이의 다른 성분 약이 있어 사용자가 고름 (matcher.decide의 siblings)
 )
 CUT_FLAG = "약 이름이 잘려 있어요"  # 약봉투 카드가 긴 이름을 "···"로 줄인 경우: 함량 등 뒷부분이 없어 자동으로 정하지 않고 사용자가 고름
+LOW_CONF_FLAG = (
+    "약 이름 글자가 흐리게 읽혔어요"  # CLOVA가 이름 글자를 낮은 확신으로 읽음: 이름이 맞게 읽혔는지 사용자가 확인
+)
+LOW_CONF = 0.5  # 이름 글자 평균 신뢰도가 이보다 낮으면 자동으로 정하지 않는다 (실제 사진 17장에서 이 아래로 맞게 읽힌 이름은 없었다)
 UNSURE_FLAG = "약 이름 줄이 확실하지 않아요"  # 약봉투에서 이름 줄을 위치가 아닌 글자 크기로 골랐을 때: 사진이 흔들려 이름과 성분이 헷갈렸을 수 있어 사용자가 확인
 HEADERLESS_FLAG = "표 머리글이 없어 칸 순서를 추정했어요 (1회량 · 하루 횟수 · 총 일수)"  # 약봉투 목록에 머리글이 없을 때: 숫자가 어느 칸인지 사용자가 확인 (약 줄은 모두 사용자 확인으로 넘김)
 ICD_CONF = 0.95  # 질병분류기호 글자의 확실도가 이보다 낮으면 보정 결과와 상관없이 사용자가 고르게 한다
@@ -160,7 +164,12 @@ def read(  # noqa: C901
         flags += [f"{x} 범위 밖" for x in numeric.check(dose, times, days)]
         decision = matcher.decide(r.name)
         # 머리글 없는 목록은 숫자가 어느 칸인지 추정한 것이고 글자도 흐린 경우가 많아, 자동으로 정하지 않고 줄마다 사용자가 확인한다
-        for unsure, flag in ((r.cut, CUT_FLAG), (r.unsure, UNSURE_FLAG), (table.headerless, HEADERLESS_FLAG)):
+        for unsure, flag in (
+            (r.cut, CUT_FLAG),
+            (r.unsure, UNSURE_FLAG),
+            (r.conf is not None and r.conf < LOW_CONF, LOW_CONF_FLAG),
+            (table.headerless, HEADERLESS_FLAG),
+        ):
             if not unsure:
                 continue
             flags.append(flag)

@@ -132,7 +132,7 @@ def _joins(g: dict[str, Any], c: Box, first: Box, last: Box, height: float, h: f
     )
 
 
-def _left_lines(zone: list[Item], h: float) -> list[tuple[float, str, bool, float]]:
+def _left_lines(zone: list[Item], h: float) -> list[tuple[float, str, bool, float, list[float]]]:
     """이름 칸의 왼쪽 끝에서 시작하는 줄들: (줄 높이 위치, 글자, 끝이 잘렸는지, 글자 높이).
     왼쪽 끝의 한글 글자에서 시작해 오른쪽으로, 세로로 겹치고 가까운 같은 크기의 조각("100mg" · "5/100")을 이어 붙인다.
     이름 오른쪽의 안내 문장은 크기가 작거나 떨어져 있어 붙지 않고, "["로 시작하는 분류 줄과 약 사진 안의 글자("SW" · "10")는 시작이 되지 않는다"""
@@ -147,7 +147,7 @@ def _left_lines(zone: list[Item], h: float) -> list[tuple[float, str, bool, floa
         key=lambda t: (t[1][1] + t[1][3]) / 2,
     )
     used: set[int] = set()
-    out: list[tuple[float, str, bool, float]] = []
+    out: list[tuple[float, str, bool, float, list[float]]] = []
     for f, b in starts:
         if id(f) in used:
             continue
@@ -171,11 +171,14 @@ def _left_lines(zone: list[Item], h: float) -> list[tuple[float, str, bool, floa
         cut_end = bool(_TAIL.search(text))
         text = _TAIL.sub("", text).strip()
         if text:
-            out.append(((b[1] + b[3]) / 2, text, cut_end, statistics.median(c[3] - c[1] for _, c in kept)))
+            confs = [float(g["inferConfidence"]) for g, _ in kept if isinstance(g.get("inferConfidence"), int | float)]
+            out.append(((b[1] + b[3]) / 2, text, cut_end, statistics.median(c[3] - c[1] for _, c in kept), confs))
     return out
 
 
-def _names(zone: list[Item], h: float, windows: list[tuple[float, float]]) -> list[tuple[float, str, bool, bool]]:
+def _names(
+    zone: list[Item], h: float, windows: list[tuple[float, float]]
+) -> list[tuple[float, str, bool, bool, list[float]]]:
     """약 이름 줄들: [(줄 높이 위치, 이름, 끝이 잘렸는지, 이름 줄이 불확실한지)].
     각 줄(카드)의 숫자가 맡은 구간 안에서, 가장 큰 글자에 가까운 줄 중 **맨 위 줄이 약 이름**이다. 카드형은 이름 아래에 성분 · 분류 · 안내가 오고, 한 줄형은 줄마다 구간이 하나다.
     (처음에는 글자 높이로 이름을 골랐는데, 실제 샘플 p3는 이름 19~22 · 성분 16~18로 차이가 작아 불안정했고 표 밖의 큰 광고 글자에도 흔들렸다)
@@ -217,23 +220,25 @@ def _names(zone: list[Item], h: float, windows: list[tuple[float, float]]) -> li
     pitch = statistics.median(hi - lo for lo, hi in windows)
     firsts = [lines[i][0] for i in first_of]
 
-    def extra(ln: tuple[float, str, bool, float]) -> bool:
+    def extra(ln: tuple[float, str, bool, float, list[float]]) -> bool:
         # 숫자 없는 약의 이름: 크기가 이름급이고, 이미 정한 이름들과 카드 간격의 일정 비율 이상 떨어져 있어야 한다 (이름 바로 아래의 "[분류]" 줄이 흔들려 커 보여도 약이 되지 않게)
         return ln[3] >= cut and lo_all <= ln[0] < hi_all and all(abs(ln[0] - y) >= _MIN_APART * pitch for y in firsts)
 
     keep = [ln for i, ln in enumerate(lines) if i in first_of or extra(ln)]
-    return [(ln[0], ln[1], ln[2], any(lines[i] is ln for i in unsure)) for ln in keep]
+    return [(ln[0], ln[1], ln[2], any(lines[i] is ln for i in unsure), ln[4]) for ln in keep]
 
 
 def _attach(
-    names: list[tuple[float, str, bool, bool]], nums: list[tuple[int, float, float]], guides: list[list[str]]
+    names: list[tuple[float, str, bool, bool, list[float]]],
+    nums: list[tuple[int, float, float]],
+    guides: list[list[str]],
 ) -> list[Row]:
     """이름 줄 사이의 가운데선으로 나눈 칸 안의 숫자를 그 약에 붙인다 (카드형은 숫자가 카드 가운데에 있다)"""
     rows: list[Row] = []
-    for i, (cy, text, cut_end, unsure) in enumerate(names):
+    for i, (cy, text, cut_end, unsure, confs) in enumerate(names):
         upper = (names[i - 1][0] + cy) / 2 if i else float("-inf")
         lower = (cy + names[i + 1][0]) / 2 if i + 1 < len(names) else float("inf")
-        row = Row(name=text, y=cy, cut=cut_end, unsure=unsure, guide=guides[i])
+        row = Row(name=text, y=cy, cut=cut_end, unsure=unsure, guide=guides[i], confs=confs)
         mine = [n for n in nums if upper <= n[1] < lower]
         mid = statistics.median(n[1] for n in mine) if mine else cy
         for col in range(3):
