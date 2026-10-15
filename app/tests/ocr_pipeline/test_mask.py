@@ -289,3 +289,56 @@ def test_names_the_real_prescriptions_leaked_are_hidden(text, hidden):
 )
 def test_empty_name_boxes_followed_by_other_labels_are_not_hidden(text):
     assert "[이름]" not in mask(text)
+
+
+# 실제 처방전 3장(s1~s3, 10/15)의 CLOVA 결과에서 새던 모양 (이름 · 번호는 지어낸 것)
+@pytest.mark.parametrize(
+    ("text", "hidden"),
+    [
+        ("보 험 보험 주 치 의 김외과 / 외과 용량 횟수", "김외과"),  # OCR이 라벨 글자마다 공백을 넣음
+        ("주치의 : 박솔 접수", "박솔"),
+        ("담당의사 최민수 확인", "최민수"),
+        ("진료의 이솔 접수", "이솔"),
+    ],
+)
+def test_attending_doctor_names_are_hidden(text, hidden):
+    out = mask(text)
+    assert hidden not in out and "[이름]" in out
+    assert mask(out) == out
+
+
+def test_attending_doctor_label_alone_does_not_hide_the_next_word():
+    assert "[이름]" not in mask("주치의 확인 필요")
+
+
+@pytest.mark.parametrize(
+    ("text", "number"),
+    [
+        ("이 름 김환자 등록번호 06071226 주민번호 xxxxxx", "06071226"),
+        ("병록번호: 12345678 요양기관기호:", "12345678"),
+        ("차트번호 0012-345 환자", "0012-345"),
+    ],
+)
+def test_hospital_registration_numbers_are_hidden(text, number):
+    out = mask(text)
+    assert number not in out and "[등록번호]" in out
+    assert mask(out) == out
+
+
+def test_registration_number_rule_leaves_resident_numbers_and_empty_labels_alone():
+    assert "[등록번호]" not in mask("주민등록번호 900101-1234567")
+    assert "[등록번호]" not in mask("주민등록 번호 871014-6")
+    assert mask("병록번호: 요양기관기호:") == "병록번호: 요양기관기호:"  # 번호가 비어 있음
+
+
+def test_resident_number_labels_are_never_taken_for_registration_number_labels():
+    assert "[등록번호]" not in mask("주민등록번호: 12345")  # 주민등록번호의 "등록번호"만 따로 보지 않음
+    assert "[등록번호]" not in mask("주민등록 번호 87101")
+
+
+def test_the_attending_doctor_label_itself_is_not_taken_for_a_name():
+    assert "주치의" in mask("환자 주치의 확인")
+
+
+def test_a_masked_registration_number_is_a_signal_for_a_name_next_to_it():
+    assert "이솔" not in mask("등록번호 06071226 이솔 접수")

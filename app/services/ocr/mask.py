@@ -23,6 +23,7 @@ INSTITUTION = "[기관기호]"
 INSURANCE = "[보험번호]"
 EMAIL = "[이메일]"
 BIRTH = "[생년월일]"
+REGNO = "[등록번호]"
 
 _MARK = r"[\-–‐]"  # 하이픈 · 엔 대시
 _HIDDEN = r"[*●○ⅹXx]"  # 양식에 이미 가려져 인쇄된 자리
@@ -64,6 +65,8 @@ _LABELED: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(면허\s*번호\s*[:：]?\s*)제?\s*\d[\d\-]*\s*호?"), LICENSE),
     (re.compile(r"(요양\s*기관\s*기호\s*[:：]?\s*)\d{6,10}"), INSTITUTION),
     (re.compile(r"((?:보험증|증)\s*번호\s*[:：]?\s*)[\w\-]{5,}"), INSURANCE),
+    # 병원 환자 등록번호 · 병록번호 · 차트번호 (주민등록번호는 위 규칙이 먼저 처리: 앞에 "주민"이 붙으면 제외)
+    (re.compile(r"((?<!주민)(?:병\s*록|차\s*트|환\s*자|등\s*록)\s*번\s*호\s*[:：]?\s*)\d[\d\-]{4,}"), REGNO),
 ]
 
 # ── 이름 보강 (10/15) ─────────────────────────────────────────────────────────────────────────
@@ -87,7 +90,7 @@ _ANCHOR_WORDS = frozenset(
 )
 _STOP = _STOP | _ANCHOR_WORDS | frozenset(_LABELS.split("|"))  # 라벨 낱말(연락처 등)을 이름으로 오인하지 않음
 # 가려진 번호 표시. NAME은 일부러 뺌 (가려진 이름이 다음 적용에서 신호가 되면 결과가 달라진다)
-_ANCHOR_MARKS = (RRN, PHONE, BIRTH, LICENSE, EMAIL, INSTITUTION, INSURANCE)
+_ANCHOR_MARKS = (RRN, PHONE, BIRTH, LICENSE, EMAIL, INSTITUTION, INSURANCE, REGNO)
 _GARBLED_LABEL = re.compile(r"성[명멍몀병영맹뎡]|이[름믐릅]")  # OCR이 라벨을 잘못 읽은 모양
 _ANCHOR_WINDOW = 3
 # 조사 · 어미로 끝나는 낱말(전에는 · 서버에 · 주의할 · 마세요)은 이름이 아니다. 이름 끝에는 거의 오지 않는 글자만 골랐다 (이 · 서 · 은 · 한 · 성 등 이름에 흔한 글자는 뺌)
@@ -95,7 +98,7 @@ _PARTICLE_END = "는을를에의할요"
 
 # 라벨 뒤의 이름: 이름 모양일 때만 (라벨이 흔한 낱말이라 아무 낱말이나 가리면 안 됨)
 _ROLE_NAME = re.compile(
-    rf"((?:환자\s*명|환자\s*이름|수진자(?:\s*명)?|피보험자(?:\s*명)?)\s*[:：]?\s*)({_SHAPE2})(?![가-힣])"
+    rf"((?:환자\s*명|환자\s*이름|수진자(?:\s*명)?|피보험자(?:\s*명)?|주\s*치\s*의(?:사)?|담\s*당\s*의(?:사)?|진\s*료\s*의|집\s*도\s*의)\s*[:：]?\s*)({_SHAPE2})(?![가-힣])"
 )
 _ROLE_NAME_3 = re.compile(
     rf"((?:보호자|대리인|수령인|조제\s*약사|약사|조제자|복약\s*지도(?:자|\s*약사)?)(?:\s*성\s*명)?\s*[:：]?\s*)({_SHAPE})(?![가-힣])"
