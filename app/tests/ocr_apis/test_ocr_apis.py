@@ -467,6 +467,18 @@ class TestUploadAndJob(OcrApiCase):
         names = " | ".join(i.raw_name for i in await PrescriptionItem.filter(prescription_id=job["prescriptionIds"][0]))
         assert "홍길동" not in names and "5678" not in names and "노바스크정5밀리그램" in names
 
+    async def test_stored_timing_goes_through_the_mask(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        for f in sample["images"][0]["fields"]:
+            if f["inferText"] == "복용":
+                f["inferText"] = "복용 전화번호 010-1234-5678"
+        async with self.client() as client:
+            headers = await self.auth(client, "mk2@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        timings = {i["timing"] for i in rx["items"]}
+        assert timings and all(t and "5678" not in t and t.startswith("식후 30분") for t in timings)
+
     async def test_clean_prescription_has_no_notices(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
         async with self.client() as client:
@@ -758,3 +770,59 @@ class TestItemsAndSearch(OcrApiCase):
         assert typo["status"] == "candidates" and typo["items"][0]["ediCode"] == "645600020"
         assert none == {"status": "not_found", "items": []}
         assert bad.status_code == 400 and noauth.status_code == 401
+
+
+class OcrJobEdgeCase(OcrApiCase):
+    """10/15 점검: 여러 쪽 PDF · 멈춘 작업"""
+
+    async def _pdf_job(self, client, headers, data: dict):
+        async def fake(content, fmt, name):
+            return data
+
+        with patch.object(clova, "recognize", fake):
+            res = await client.post(
+                "/api/v1/prescriptions", files=[("files", ("a.pdf", b"%PDF-1.4 x", "application/pdf"))], headers=headers
+            )
+        return (await client.get(f"/api/v1/ocr-jobs/{res.json()['jobId']}", headers=headers)).json()
+
+    async def test_every_page_of_a_pdf_is_read(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        second = with_days(sample, "30", "28")
+        data = {**sample, "images": [sample["images"][0], second["images"][0]]}
+        async with self.client() as client:
+            headers = await self.auth(client, "e1@example.com")
+            job = await self._pdf_job(client, headers, data)
+        assert job["status"] == "done" and len(job["prescriptionIds"]) == 2 and job["failedFiles"] == []
+
+    async def test_unreadable_page_in_a_pdf_does_not_fail_the_readable_one(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        junk = {"fields": sample["images"][0]["fields"][:3]}
+        data = {**sample, "images": [sample["images"][0], junk]}
+        async with self.client() as client:
+            headers = await self.auth(client, "e2@example.com")
+            job = await self._pdf_job(client, headers, data)
+        assert len(job["prescriptionIds"]) == 1 and job["failedFiles"] == []
+
+    async def test_pdf_with_no_readable_page_is_reported_once(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        junk = {"fields": sample["images"][0]["fields"][:3]}
+        data = {**sample, "images": [junk, junk]}
+        async with self.client() as client:
+            headers = await self.auth(client, "e3@example.com")
+            job = await self._pdf_job(client, headers, data)
+        assert job["prescriptionIds"] == [] and len(job["failedFiles"]) == 1
+
+    async def test_job_left_running_after_a_restart_is_closed_as_failed(self):
+        from datetime import timedelta
+
+        async with self.client() as client:
+            headers = await self.auth(client, "e4@example.com")
+            user = await User.get(login_id="e4@example.com")
+            old = await OcrJob.create(user=user, status="running", file_count=1)
+            fresh = await OcrJob.create(user=user, status="running", file_count=1)
+            await OcrJob.filter(id=old.id).update(
+                created_at=datetime.now(UTC) - timedelta(seconds=svc.STALE_JOB_SECONDS + 60)
+            )
+            a = (await client.get(f"/api/v1/ocr-jobs/{old.id}", headers=headers)).json()
+            b = (await client.get(f"/api/v1/ocr-jobs/{fresh.id}", headers=headers)).json()
+        assert a["status"] == "failed" and b["status"] == "running"

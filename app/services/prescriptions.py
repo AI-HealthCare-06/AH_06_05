@@ -10,7 +10,7 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 MAX_FILES = 5
 MAX_BYTES = 10 * 1024 * 1024
+STALE_JOB_SECONDS = 15 * 60  # 사진 5장 × CLOVA 제한 시간(40초)보다 충분히 길게
 FAIL_CODES = {"Q": "IMAGE_QUALITY_LOW", "D": "NOT_A_DOCUMENT", "F": "OCR_FAILED"}
 
 
@@ -215,7 +216,8 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
                 "dose_per_time": Decimal(str(r.dose)) if r.dose is not None else None,
                 "times_per_day": int(r.times) if r.times is not None else None,
                 "total_days": int(r.days) if r.days is not None else None,
-                "timing": res.timing,
+                # 용법 문구 끝에 다른 글자가 섞여도 전화번호 등은 저장하지 않는다
+                "timing": mask(res.timing) if res.timing else None,
                 "suggested_by": r.suggested_by,
                 # 약국이 약 카드에 인쇄한 안내 (영수증 띠는 읽지 않는다). 가려서 저장하고, 없으면 null
                 "guidance": [m for g in r.guide if (m := mask(g))] or None,
@@ -300,6 +302,58 @@ async def saved_content_key(rx: Prescription) -> str | None:
     return make_key(rx.issued_date, rx.hospital_name, lines)
 
 
+def _pages(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """CLOVA 결과를 쪽마다 따로 읽을 수 있게 나눔 (사진은 1쪽, 여러 쪽 PDF는 쪽 수만큼)"""
+    images = data.get("images") or [{}]
+    return [{**data, "images": [img]} for img in images]
+
+
+@dataclass
+class FileOutcome:
+    failures: list[str]
+    saved: int = 0
+    duplicated: list[dict[str, int]] = field(default_factory=list)
+    first_id: int | None = None  # 이 파일에서 처음 저장했거나 이미 있던 처방전 ID
+
+
+async def _read_file(job_id: int, user_id: int, b: Blob, matcher: NameMatcher, codes: dict[str, str]) -> FileOutcome:
+    """사진(또는 PDF) 1개를 읽어 저장한다. 여러 쪽 PDF는 쪽마다 처방전 하나로 읽는다 (첫 쪽만 읽고 나머지를 말없이 버리지 않게)"""
+    try:
+        data = await clova.recognize(b.content, b.fmt, b.name)
+    except clova.ClovaError as e:
+        logger.warning("CLOVA OCR 실패 job=%s file=%s (%s)", job_id, b.file_index, e)
+        return FileOutcome(failures=[f"F{b.file_index}"])
+    out = FileOutcome(failures=[])
+    page_failures: list[str] = []
+    for page in _pages(data):
+        # 이름 맞추기가 CPU를 쓰므로 서버가 멈추지 않게 별도 스레드에서
+        res = await asyncio.to_thread(read, page, matcher, codes)
+        if res.status != "ok":
+            page_failures.append(f"{_failure_code(page, res)}{b.file_index}")
+            continue
+        # 규칙이 못 찾은 약 이름만 LLM이 고쳐 "추천" (꺼짐이 기본 · 실패해도 규칙 결과 그대로)
+        res = await llm_fix.apply(res, matcher)
+        key = content_key(res)
+        # 병원 · 교부일 · 약 목록이 모두 같은 처방전이 이미 있으면(이 작업의 앞 사진이든 지난번 업로드든) 새로 저장하지 않고
+        # 기존 기록을 쓰게 한다 (수인님 결정 10/14: "이미 올린 처방전이에요"로 안내 + 기존 기록 사용)
+        existing = await Prescription.filter(user_id=user_id, content_key=key).order_by("id").first() if key else None
+        if existing is not None:
+            logger.info("이미 있는 처방전이라 저장하지 않음 job=%s file=%s rx=%s", job_id, b.file_index, existing.id)
+            out.duplicated.append({"fileIndex": b.file_index, "prescriptionId": existing.id})
+            if out.first_id is None:
+                out.first_id = existing.id
+            continue
+        rx_id = await save_read(user_id, job_id, b.file_index, res, key)
+        out.saved += 1
+        if out.first_id is None:
+            out.first_id = rx_id
+    if out.first_id is None and page_failures:
+        out.failures.append(
+            page_failures[0]
+        )  # 한 쪽도 못 읽었을 때만 실패로 알린다 (처방전이 아닌 쪽이 섞인 PDF는 읽힌 쪽만 쓴다)
+    return out
+
+
 async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
     """백그라운드 작업. 어떤 오류가 나도 작업이 queued · running에 멈춰 있지 않게 마무리한다"""
     try:
@@ -313,34 +367,12 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
         saved_ids: dict[int, int] = {}  # 사진 번호 → 처방전 ID (새로 저장했거나 이미 있던 것)
         duplicated: list[dict[str, int]] = []
         for b in screened.ready:
-            try:
-                data = await clova.recognize(b.content, b.fmt, b.name)
-                # 이름 맞추기가 CPU를 쓰므로 서버가 멈추지 않게 별도 스레드에서
-                res = await asyncio.to_thread(read, data, matcher, codes)
-            except clova.ClovaError as e:
-                logger.warning("CLOVA OCR 실패 job=%s file=%s (%s)", job_id, b.file_index, e)
-                failures.append(f"F{b.file_index}")
-                continue
-            if res.status != "ok":
-                failures.append(f"{_failure_code(data, res)}{b.file_index}")
-                continue
-            # 규칙이 못 찾은 약 이름만 LLM이 고쳐 "추천" (꺼짐이 기본 · 실패해도 규칙 결과 그대로)
-            res = await llm_fix.apply(res, matcher)
-            key = content_key(res)
-            # 병원 · 교부일 · 약 목록이 모두 같은 처방전이 이미 있으면(이 작업의 앞 사진이든 지난번 업로드든) 새로 저장하지 않고
-            # 기존 기록을 쓰게 한다 (수인님 결정 10/14: "이미 올린 처방전이에요"로 안내 + 기존 기록 사용)
-            existing = (
-                await Prescription.filter(user_id=user_id, content_key=key).order_by("id").first() if key else None
-            )
-            if existing is not None:
-                logger.info(
-                    "이미 있는 처방전이라 저장하지 않음 job=%s file=%s rx=%s", job_id, b.file_index, existing.id
-                )
-                saved_ids[b.file_index] = existing.id
-                duplicated.append({"fileIndex": b.file_index, "prescriptionId": existing.id})
-                continue
-            saved_ids[b.file_index] = await save_read(user_id, job_id, b.file_index, res, key)
-            saved += 1
+            outcome = await _read_file(job_id, user_id, b, matcher, codes)
+            failures += outcome.failures
+            saved += outcome.saved
+            duplicated += outcome.duplicated
+            if outcome.first_id is not None:
+                saved_ids[b.file_index] = outcome.first_id
         for i, first in screened.duplicates.items():  # 바이트가 똑같은 사진은 먼저 읽은 사진의 처방전을 가리킴
             logger.info("같은 사진이라 건너뜀 job=%s file=%s (=%s번)", job_id, i, first)
             if first in saved_ids:
@@ -369,6 +401,15 @@ async def get_job(user: User, job_id: int) -> dict[str, Any]:
     job = await OcrJob.get_or_none(id=job_id, user=user)
     if job is None:
         raise AppError(status.HTTP_404_NOT_FOUND, "NOT_FOUND")
+    if (
+        job.status in (OcrJobStatus.QUEUED, OcrJobStatus.RUNNING)
+        and (datetime.now(config.TIMEZONE) - job.created_at).total_seconds() > STALE_JOB_SECONDS
+    ):
+        # 작업은 서버 안의 백그라운드로 돌아서, 서버가 다시 시작되면 끝나지 못한 채 남는다 → 화면이 계속 기다리지 않게 실패로 닫는다
+        job.status = OcrJobStatus.FAILED
+        job.error_code = "OCR_FAILED"
+        job.finished_at = datetime.now(config.TIMEZONE)
+        await job.save(update_fields=["status", "error_code", "finished_at"])
     # 이 작업에서 새로 저장한 처방전 + 이미 있어서 새로 저장하지 않은 사진이 가리키는 기존 처방전을 사진 순서대로
     pairs = await Prescription.filter(ocr_job_id=job.id).values_list("file_index", "id")
     dups = [(d["fileIndex"], d["prescriptionId"]) for d in (job.duplicates or [])]
