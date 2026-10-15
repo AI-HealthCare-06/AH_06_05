@@ -110,7 +110,7 @@ def read(  # noqa: C901
         confidence=round(sum(confs) / len(confs), 4) if confs else None,
         # 숫자 칸 중 가장 많이 읽힌 칸의 숫자 수와 약 줄 수가 다르면 줄 나누기가 틀렸을 수 있다
         row_count_mismatch=table.n_anchor >= 2 and len(table.rows) != table.n_anchor,
-        raw_text=join_masked(pfields),  # 저장용: 이름 칸은 위치로 먼저 가림 (나머지는 저장 직전 mask())
+        raw_text=join_masked(pfields),  # 저장하지 않는 값 (10/15). 이름 칸은 위치로 가려 둔다
     )
 
     if table.disease_raw:

@@ -397,14 +397,16 @@ class TestUploadAndJob(OcrApiCase):
             )
         assert second["duplicatedFiles"] == [{"fileIndex": 1, "prescriptionId": first["prescriptionIds"][0]}]
 
-    async def test_raw_text_is_stored_masked(self):
+    async def test_raw_text_is_not_stored(self):
+        # 10/15 결정: 인식 원문은 저장하지 않는다. 원문이 아닌 읽은 결과(병원 · 약 · 숫자)는 그대로 저장
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
         async with self.client() as client:
             headers = await self.auth(client, "pc11@example.com")
             _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
-        raw = (await Prescription.get(id=job["prescriptionIds"][0])).ocr_raw_text
-        assert raw and "홍길동" not in raw and "02-000-0000" not in raw and "[이름]" in raw and "[전화번호]" in raw
-        assert "가나다내과의원" in raw and "노바스크정" in raw  # 병원 · 약 정보는 남김
+        rx = await Prescription.get(id=job["prescriptionIds"][0])
+        assert rx.ocr_raw_text is None
+        assert rx.hospital_name and "가나다내과의원" in rx.hospital_name
+        assert await PrescriptionItem.filter(prescription_id=rx.id).count() == 4
 
     async def test_same_prescription_shot_twice_is_saved_once(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))

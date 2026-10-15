@@ -35,7 +35,6 @@ from app.models.ocr import (
 from app.models.users import ConsentType, User, UserConsent
 from app.services.drug_names import base_name
 from app.services.ocr import clova, llm_fix, numeric, precheck
-from app.services.ocr.mask import mask
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
 from app.services.ocr.pipeline import OcrRead, read
 
@@ -169,7 +168,7 @@ def _clamp(score: float) -> Decimal:
 
 
 async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, key: str | None = None) -> int:
-    """읽은 결과를 prescriptions · 질병 · 약 · 후보로 저장하고 처방전 ID를 돌려줌"""
+    """읽은 결과를 prescriptions · 질병 · 약 · 후보로 저장하고 처방전 ID를 돌려줌. 인식 원문(res.raw_text)은 저장하지 않는다 (10/15 결정, docs/design/ocr_mask.md)"""
     async with in_transaction():
         rx = await Prescription.create(
             user_id=user_id,
@@ -178,7 +177,6 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
             doc_type=DocType.PRESCRIPTION,
             issued_date=res.issued,
             hospital_name=res.hospital_name,
-            ocr_raw_text=mask(res.raw_text),  # 이름 · 주민번호 · 전화번호 등을 가린 뒤 저장 (수인님 결정 10/14)
             content_key=key,
             ocr_confidence=Decimal(str(res.confidence)) if res.confidence is not None else None,
             quality_flag=QualityFlag.OK,
