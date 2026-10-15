@@ -225,3 +225,42 @@ def test_truncated_name_is_never_auto_confirmed_even_when_one_product_matches():
     assert cut_row.decision.status == AMBIGUOUS and cut_row.decision.candidates[0].edi_code == "1"
     assert CUT_FLAG in cut_row.flags
     assert whole_row.decision.status == FOUND and CUT_FLAG not in whole_row.flags
+
+
+def _rotated(fields: list[dict], deg: float) -> list[dict]:
+    import copy
+    import math
+
+    out = copy.deepcopy(fields)
+    a = math.radians(deg)
+    for f in out:
+        for v in f["boundingPoly"]["vertices"]:
+            x, y = v["x"], v["y"]
+            v["x"], v["y"] = x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a)
+    return out
+
+
+def test_tilted_pill_bag_photo_is_read_like_a_straight_one():
+    """실제 p1은 1~3도만 기울어도 (기울기 보정 없이는) 줄이 깨졌다. 처방전과 같은 기울기 보정을 거쳐 읽는다"""
+    matcher = NameMatcher([("1", "알마겔정")])
+    fields = (
+        head()
+        + strip()
+        + card_table(card(200, "알마겔정"), card(300, "소론도정", ("1", "1", "3")), card(400, "리피토정10mg"))
+    )
+    want = [(r.read_name, r.dose, r.times, r.days) for r in read(data(fields), matcher, {}, today=TODAY).rows]
+    assert len(want) == 3
+    for deg in (-5, -2, 1, 3, 8):
+        res = read(data(_rotated(fields, deg)), matcher, {}, today=TODAY)
+        assert (res.status, res.doc_type) == ("ok", "pill_bag")
+        assert [(r.read_name, r.dose, r.times, r.days) for r in res.rows] == want, deg
+
+
+def test_lost_name_line_makes_row_count_mismatch_visible():
+    """이름이 작게 읽혀 약 줄이 사라져도 그 약의 숫자는 남아 있으므로 "줄 수가 맞지 않아요"로 사용자에게 알린다"""
+    matcher = NameMatcher([("1", "알마겔정")])
+    first = card(200, "알마겔정")
+    first[0] = fld("알마겔정", 200, 200, 220, 17)  # 이름 글자가 성분 줄만큼 작게 읽힌 경우
+    d = data(head() + card_table(first, card(300, "소론도정", ("1", "1", "3")), card(400, "리피토정10mg")))
+    res = read(d, matcher, {}, today=TODAY)
+    assert len(res.rows) == 2 and res.row_count_mismatch

@@ -194,8 +194,8 @@ def parse_pouch(data: dict[str, Any]) -> Table | None:
         return None
     # 숫자가 없는 줄이 표의 처음이나 끝에 있으면 표 바깥 글자(안내 문구 · 방문일 등)로 보고 버린다. 가운데는 약일 수 있어 남긴다
     rows = rows[numbered[0] : numbered[-1] + 1]
-    inside = [n for n in nums if rows[0].y - 0.6 * line_h <= n[1]]
-    n_anchor = max((sum(1 for n in inside if n[0] == col) for col in range(3)), default=0)
+    # 줄 수 확인용 숫자 개수는 버린 줄의 숫자도 포함해 센다 (약 이름을 놓쳐 줄이 사라지면 `row_count_mismatch`로 사용자에게 알린다)
+    n_anchor = max((sum(1 for n in nums if n[0] == col) for col in range(3)), default=0)
     return Table(rows=rows, n_anchor=n_anchor, disease_raw=None)
 
 

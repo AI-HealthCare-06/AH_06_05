@@ -95,18 +95,20 @@ def read(  # noqa: C901
             return OcrRead(status="retake", reason="tilt")
         table = parse_table(prep)
         pouch = table is None
-        if pouch:  # 처방전 머리글이 없으면 약봉투 표(투약량 · 횟수 · 일수)로 다시 본다. 약봉투는 기울기 보정을 하지 않은 원본 위치로 읽는다
-            table = parse_pouch(data)
+        if (
+            pouch
+        ):  # 처방전 머리글이 없으면 약봉투 표(투약량 · 횟수 · 일수)로 다시 본다. 기울기를 바로잡은 위치(prep)로 읽는다
+            table = parse_pouch(prep)
     except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
         return OcrRead(status="retake", reason="no_header")  # 글자 목록 모양이 이상함 → 읽을 수 없는 사진으로 본다
     if table is None:
         return OcrRead(status="retake", reason="no_header")
 
-    pfields = fields if pouch else prep["images"][0]["fields"]
+    pfields = prep["images"][0]["fields"]
     text = " ".join(f["inferText"] for f in pfields)
     if pouch:
         # 약봉투에는 교부일 · 병원 · 출생연도가 없다. 영수증 띠의 날짜 · 약국 이름을 교부일 · 병원으로 읽지 않도록 조제일만 읽는다
-        issued, mflags = dispensed_date(fields, today)
+        issued, mflags = dispensed_date(pfields, today)
         birth = None
     else:
         issued, birth, mflags = parse_meta(text, today)
