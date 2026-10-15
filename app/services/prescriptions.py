@@ -155,13 +155,30 @@ async def create_job(user: User, blobs: list[Blob]) -> OcrJob:
 # ── OCR 작업 실행 ─────────────────────────────────────────────────────────────────────────────
 def _failure_code(data: dict[str, Any], res: OcrRead) -> str:
     """읽지 못한 사진을 Q(흐림 · 기울음 · 표 일부 잘림) 또는 D(문서가 아닌 듯)로 나눔"""
-    if res.reason == "tilt":
+    if res.reason in ("tilt", "no_rows"):  # 기울었거나, 처방전 머리글은 있는데 약 줄을 못 읽음 → 다시 찍기
         return "Q"
     fields = data.get("images", [{}])[0].get("fields", [])
     confs = [f.get("inferConfidence", 0) for f in fields]
     if len(fields) < 12 or (confs and sum(confs) / len(confs) < 0.8):
         return "Q"
     return "D"
+
+
+def _stored_name(name: str) -> str:
+    """저장하는 약 이름. 표 읽기에 이름 · 전화번호 같은 글자가 섞여 들어와도 저장하지 않도록 같은 마스킹을 거친다
+    (약 이름 22,045개에 적용해도 바뀌는 것이 0개라 정상 이름에는 영향이 없다)"""
+    return mask(name)[:300]
+
+
+ROW_COUNT_NOTICE = "약 줄 수가 사진과 다를 수 있어요. 빠진 약이 없는지 확인해 주세요"
+
+
+def notices_of(res: OcrRead) -> list[str] | None:
+    """읽을 때 만든 확인 표시 중 사용자가 알아야 할 것 (화면에 보여 줌). 출생연도는 저장하지 않으니 뺀다. 없으면 None"""
+    out = [f for f in res.meta_flags if "출생연도" not in f]
+    if res.row_count_mismatch:
+        out.append(ROW_COUNT_NOTICE)
+    return out or None
 
 
 def _clamp(score: float) -> Decimal:
@@ -181,6 +198,7 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
             content_key=key,
             ocr_confidence=Decimal(str(res.confidence)) if res.confidence is not None else None,
             quality_flag=QualityFlag.OK,
+            notices=notices_of(res),
         )
         # 상병마스터에 있고 글자 확실도도 높은 코드만 바로 쓴다. 나머지(보정 · 후보 여러 개 · 모름)는 비워 두고
         # 사용자가 고르게 한다 (RG-05-E1) — 잘못된 질환으로 생활습관 안내가 나가는 것을 막기 위해
@@ -193,7 +211,7 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
             dec = r.decision
             item_kwargs: dict[str, Any] = {
                 "prescription": rx,
-                "raw_name": r.read_name[:300],
+                "raw_name": _stored_name(r.read_name),
                 "dose_per_time": Decimal(str(r.dose)) if r.dose is not None else None,
                 "times_per_day": int(r.times) if r.times is not None else None,
                 "total_days": int(r.days) if r.days is not None else None,
@@ -254,7 +272,7 @@ def content_key(res: OcrRead) -> str | None:
     """읽은 직후의 열쇠"""
     lines = [
         _line_key(
-            r.decision.candidates[0].edi_code if r.decision.status == FOUND else _name_key(r.read_name),
+            r.decision.candidates[0].edi_code if r.decision.status == FOUND else _name_key(_stored_name(r.read_name)),
             r.dose,
             r.times,
             r.days,
@@ -434,6 +452,7 @@ async def get_prescription(user: User, prescription_id: int) -> dict[str, Any]:
         "docType": rx.doc_type.value,
         "issuedDate": rx.issued_date,
         "hospitalName": rx.hospital_name,
+        "notices": rx.notices or [],
         "diseaseCodes": list(diseases),
         "items": out_items,
     }

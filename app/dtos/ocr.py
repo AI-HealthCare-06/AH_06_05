@@ -66,6 +66,9 @@ class PrescriptionResponse(CamelModel):
     issued_date: date | None
     hospital_name: str | None
     disease_codes: list[str]
+    notices: list[
+        str
+    ]  # 사진을 읽을 때 사용자가 확인해야 할 점 (줄 수 불일치 · 칸 순서 추정 · 날짜 이상 등, 명세서에 추가 제안). 없으면 빈 배열
     items: list[ItemResponse]
 
 

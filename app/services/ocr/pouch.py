@@ -293,7 +293,8 @@ def _regular_run(ys: list[float]) -> tuple[list[float], float]:
     if len(ys) < 2:
         return [], 0.0
     pitch = statistics.median(b - a for a, b in zip(ys, ys[1:], strict=False))
-    run, best = [ys[0]], []
+    run: list[float] = [ys[0]]
+    best: list[float] = []
     for y in ys[1:]:
         if abs((y - run[-1]) - pitch) <= 0.4 * pitch:
             run.append(y)

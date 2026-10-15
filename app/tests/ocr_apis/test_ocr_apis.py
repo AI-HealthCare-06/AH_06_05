@@ -432,6 +432,49 @@ class TestUploadAndJob(OcrApiCase):
         stored = " ".join(i.raw_name for i in await PrescriptionItem.filter(prescription_id=rx["id"]))
         assert not any(w in stored for w in ("홍길동", "영등포구", "01012345678"))
 
+    async def test_reading_notices_are_saved_and_returned(self):
+        # 10/15: 읽을 때 만든 확인 표시(칸 순서 추정 · 날짜 이상 · 줄 수 불일치)를 저장해 응답에 싣는다. 출생연도 표시는 싣지 않는다
+        from app.tests.ocr_pipeline.test_pouch import _list_table, _receipt_above, data
+
+        bag = data(_receipt_above() + _list_table(names=("노바스크정5밀리그람", "다이아벡스정500밀리그램", "화록소정")))
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        sample["images"][0]["fields"] = [
+            f for f in sample["images"][0]["fields"] if not f["inferText"].startswith("2026")
+        ]
+        async with self.client() as client:
+            headers = await self.auth(client, "nt1@example.com")
+            _, job = await self.read_with(
+                client, headers, [jpeg_of_size(1200, 1600), jpeg_of_size(1300, 1700)], [bag, sample]
+            )
+            got = [
+                (await client.get(f"/api/v1/prescriptions/{i}", headers=headers)).json() for i in job["prescriptionIds"]
+            ]
+        bag_rx, date_rx = got
+        assert any("머리글이 없어" in n for n in bag_rx["notices"])
+        # 숫자 칸 순서를 추정한 목록은 이름이 정확히 맞아도 자동으로 정하지 않는다 (화록소정은 약 목록에 없음)
+        assert [i["matchStatus"] for i in bag_rx["items"]] == ["needs_confirm", "needs_confirm", "unmatched"]
+        assert "교부일 못 읽음" in date_rx["notices"] and not any("출생연도" in n for n in date_rx["notices"])
+
+    async def test_stored_drug_name_goes_through_the_mask(self):
+        # 표 읽기에 환자 이름 · 전화번호가 약 이름 줄로 섞여 들어와도 그대로 저장하지 않는다 (10/15)
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        for f in sample["images"][0]["fields"]:
+            if f["inferText"].startswith("노바스크정"):
+                f["inferText"] = "환자 홍길동 전화번호 010-1234-5678 " + f["inferText"]
+        async with self.client() as client:
+            headers = await self.auth(client, "mk1@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+        names = " | ".join(i.raw_name for i in await PrescriptionItem.filter(prescription_id=job["prescriptionIds"][0]))
+        assert "홍길동" not in names and "5678" not in names and "노바스크정5밀리그램" in names
+
+    async def test_clean_prescription_has_no_notices(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "nt2@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        assert rx["notices"] == []
+
     async def test_pill_bag_guidance_is_saved_masked_and_returned_per_drug(self):
         # 10/15: 약봉투 카드에 약국이 인쇄한 복약 안내를 약 줄마다 저장한다. 가려서 저장하고, 영수증 띠는 저장하지 않는다
         from app.tests.ocr_pipeline.test_pouch import card as plain_card
@@ -579,6 +622,25 @@ class TestUploadAndJob(OcrApiCase):
                 job_id = (await self.upload(client, headers)).json()["jobId"]
             job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
         assert job["failedFiles"] == [{"fileIndex": 1, "code": "NOT_A_DOCUMENT"}]
+
+    async def test_header_without_drug_rows_asks_for_a_retake_and_saves_nothing(self):
+        from app.tests.ocr_pipeline.test_pipeline import _fld, _table
+
+        head = [f for f in _table(False, [])["images"][0]["fields"] if f["boundingPoly"]["vertices"][0]["y"] < 150]
+        # 머리글 앞 번호에 선명한 글자를 충분히 둔다 → 문서 아님(D)이 아니라 다시 찍기(Q)로 나뉘는지 본다
+        fields = [_fld(f"글자{i}", 20 + i * 40, 20, 36) for i in range(14)] + head
+        empty = {"images": [{"fields": fields}]}
+
+        async def fake(content, fmt, name):
+            return empty
+
+        async with self.client() as client:
+            headers = await self.auth(client, "o12@example.com")
+            with patch.object(clova, "recognize", fake):
+                job_id = (await self.upload(client, headers)).json()["jobId"]
+            job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
+        assert job["prescriptionIds"] == []
+        assert job["failedFiles"] == [{"fileIndex": 1, "code": "IMAGE_QUALITY_LOW"}]
 
     async def test_clova_failure_marks_job_failed(self):
         async def boom(content, fmt, name):

@@ -140,7 +140,13 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
     if head is None:
         return None
     start = head + 1
-    end = next((i for i, t in enumerate(tokens) if t.startswith("용법")), len(tokens))
+    # 표 끝을 알리는 "용법"은 머리글 줄보다 아래에 있는 것이다. 머리글의 "용법" 칸(투약일수 오른쪽)은 약 줄보다 앞 번호로 읽히기도 해서
+    # (s1: "투약일수 : 용법 645400610 스타브론정 …") 번호만 보면 약 줄이 통째로 잘린다
+    hy, hh = center(fields[head])[1], _box_height(fields[head])
+    end = next(
+        (i for i in range(start, len(tokens)) if tokens[i].startswith("용법") and center(fields[i])[1] > hy + hh),
+        len(tokens),
+    )
     # 약 줄 아래에 붙은 문구가 가짜 약 줄이 되지 않게, 표 끝 표시가 먼저 나오면 거기서 자른다
     end = min(
         end,
@@ -218,6 +224,8 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
     first_x = lines[0]["x"] if lines else 0
     for i in range(1, len(lines)):
         a, b = lines[i - 1], lines[i]
+        if abs(b["y"] - a["y"]) < 0.5 * min(a["h"], b["h"]):
+            continue  # 같은 줄에서 따로 읽힌 글자("스타브론정12.5MG" 옆의 "(제일)")는 같은 약 이름이다. 약은 줄이 달라야 나뉜다
         limit = 0.5 * pitch if pitch else 1.4 * max(b["h"], 20)
         if 0 < b["y"] - a["y"] < limit and abs(b["x"] - first_x) < 40:
             continue

@@ -7,7 +7,7 @@
 import random
 from datetime import date
 
-from app.services.ocr.matcher import NameMatcher
+from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
 from app.services.ocr.pipeline import read
 from app.services.ocr.pouch import dispensed_date, parse_pouch
 
@@ -414,9 +414,12 @@ def test_headerless_list_read_flags_every_row_and_document():
     assert r.status == "ok" and r.doc_type == "pill_bag"
     assert any("머리글이 없어" in f for f in r.meta_flags)
     assert all(any("머리글이 없어" in f for f in x.flags) for x in r.rows)
-    # 머리글이 있는 표에는 이 표시가 붙지 않는다
+    # 이름이 정확히 맞아도 자동으로 정하지 않는다: 숫자 칸 순서를 추정한 목록이라 줄마다 사용자가 확인 (10/15)
+    assert r.rows[1].read_name == "화록소정" and r.rows[1].decision.status == AMBIGUOUS
+    # 머리글이 있는 표에는 이 표시가 붙지 않고, 이름이 맞으면 자동으로 정한다
     r2 = read(data(head() + card_table(card(200, "알마겔정"))), NameMatcher([("1", "알마겔정")]), {}, today=TODAY)
     assert not any("머리글이 없어" in f for f in r2.meta_flags + r2.rows[0].flags)
+    assert r2.rows[0].decision.status == FOUND
 
 
 def test_headerless_two_row_list_with_stray_number_between_columns():

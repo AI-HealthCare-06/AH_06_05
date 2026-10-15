@@ -25,6 +25,7 @@ import httpx
 
 from app.core import config
 from app.services.drug_names import base_name, strip_maker, unify
+from app.services.ocr.mask import mask
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NOT_FOUND, Candidate, Decision, NameMatcher
 from app.services.ocr.pipeline import OcrRead, RowRead
 
@@ -142,7 +143,8 @@ async def apply(res: OcrRead, matcher: NameMatcher, client: ChatClient | None = 
     idx = [i for i, r in enumerate(res.rows) if _eligible(r, matcher.without_maker)][: config.OCR_LLM_MAX_NAMES]
     if not idx:
         return res
-    names = [clean(res.rows[i].read_name, matcher.without_maker) for i in idx]
+    # 약 이름 줄에 이름 · 전화번호 같은 글자가 섞여 들어왔어도 외부(OpenAI)로 보내지 않도록 같은 마스킹을 거친다
+    names = [mask(clean(res.rows[i].read_name, matcher.without_maker)) for i in idx]
     user = json.dumps({"names": [{"i": k, "name": n} for k, n in enumerate(names)]}, ensure_ascii=False)
     try:
         answers = parse(await client.complete(SYSTEM, user), len(idx))

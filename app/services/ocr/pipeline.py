@@ -2,7 +2,7 @@
 
 (1) prepare 기울임 바로잡기 · 숫자 칸 정리 → (2) table 표 읽기 → (3) meta 교부일 · 출생연도
 → (4) icd 질병분류기호 보정 → (5) matcher 약 이름 맞추기 (못 찾으면 자모 조각으로 비슷한 이름 추천) → (6) numeric 숫자 범위 검사
-상태가 "retake"이면 사진을 다시 찍게 한다 (reason: tilt | no_header).
+상태가 "retake"이면 사진을 다시 찍게 한다 (reason: tilt | no_header | no_rows).
 """
 
 import re
@@ -27,7 +27,7 @@ SIBLING_FLAG = (
 )
 CUT_FLAG = "약 이름이 잘려 있어요"  # 약봉투 카드가 긴 이름을 "···"로 줄인 경우: 함량 등 뒷부분이 없어 자동으로 정하지 않고 사용자가 고름
 UNSURE_FLAG = "약 이름 줄이 확실하지 않아요"  # 약봉투에서 이름 줄을 위치가 아닌 글자 크기로 골랐을 때: 사진이 흔들려 이름과 성분이 헷갈렸을 수 있어 사용자가 확인
-HEADERLESS_FLAG = "표 머리글이 없어 칸 순서를 추정했어요 (1회량 · 하루 횟수 · 총 일수)"  # 약봉투 목록에 머리글이 없을 때: 숫자가 어느 칸인지 사용자가 확인
+HEADERLESS_FLAG = "표 머리글이 없어 칸 순서를 추정했어요 (1회량 · 하루 횟수 · 총 일수)"  # 약봉투 목록에 머리글이 없을 때: 숫자가 어느 칸인지 사용자가 확인 (약 줄은 모두 사용자 확인으로 넘김)
 ICD_CONF = 0.95  # 질병분류기호 글자의 확실도가 이보다 낮으면 보정 결과와 상관없이 사용자가 고르게 한다
 
 
@@ -59,7 +59,7 @@ class RowRead:
 @dataclass
 class OcrRead:
     status: str  # ok | retake
-    reason: str | None = None  # retake일 때: tilt | no_header
+    reason: str | None = None  # retake일 때: tilt | no_header | no_rows (머리글은 찾았는데 약 줄이 하나도 없음)
     doc_type: str = "prescription"  # prescription | pill_bag (처방전 표를 못 읽고 약봉투 표를 읽었을 때)
     issued: date | None = None
     birth: int | None = None
@@ -108,6 +108,9 @@ def read(  # noqa: C901
         return OcrRead(status="retake", reason="no_header")  # 글자 목록 모양이 이상함 → 읽을 수 없는 사진으로 본다
     if table is None:
         return OcrRead(status="retake", reason="no_header")
+    if not table.rows:
+        # 머리글만 찾고 약 줄을 하나도 못 읽었다. 약이 없는 처방전으로 저장하면 사용자는 빈 목록을 보게 되므로 다시 찍게 한다
+        return OcrRead(status="retake", reason="no_rows")
 
     pfields = prep["images"][0]["fields"]
     text = " ".join(f["inferText"] for f in pfields)
@@ -155,10 +158,9 @@ def read(  # noqa: C901
             f"{label} 못 읽음" for label, v in (("1회량", dose), ("하루 횟수", times), ("총 일수", days)) if v is None
         ]
         flags += [f"{x} 범위 밖" for x in numeric.check(dose, times, days)]
-        if table.headerless:
-            flags.append(HEADERLESS_FLAG)
         decision = matcher.decide(r.name)
-        for unsure, flag in ((r.cut, CUT_FLAG), (r.unsure, UNSURE_FLAG)):
+        # 머리글 없는 목록은 숫자가 어느 칸인지 추정한 것이고 글자도 흐린 경우가 많아, 자동으로 정하지 않고 줄마다 사용자가 확인한다
+        for unsure, flag in ((r.cut, CUT_FLAG), (r.unsure, UNSURE_FLAG), (table.headerless, HEADERLESS_FLAG)):
             if not unsure:
                 continue
             flags.append(flag)

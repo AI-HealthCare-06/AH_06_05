@@ -28,6 +28,7 @@ async def run(paths: list[str]) -> None:
         if res.status != "ok":
             continue
         print(f"   날짜 {res.issued} · 확인 항목 {res.meta_flags} · 약 줄 수 불일치 {res.row_count_mismatch}")
+        print(f"   화면에 나가는 확인 표시(notices): {svc.notices_of(res) or []}")
         for r in res.rows:
             top = r.decision.candidates[0].item_name if r.decision.candidates else "-"
             print(f"   {r.read_name} | {r.dose}/{r.times}/{r.days} | {r.decision.status} | {top} | {r.flags}")

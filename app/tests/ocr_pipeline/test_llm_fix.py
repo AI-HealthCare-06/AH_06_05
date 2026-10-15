@@ -188,3 +188,14 @@ async def test_suggestion_survives_when_the_fixed_name_has_a_sibling_drug():
     d = out.rows[0].decision
     assert d.status == AMBIGUOUS and d.candidates[0].edi_code == "100000001"
     assert out.rows[0].suggested_by == "llm"
+
+
+@sync
+async def test_names_sent_to_the_llm_are_masked(matcher):
+    """약 이름 줄에 환자 이름 · 전화번호가 섞여 들어와도 OpenAI로 보내지 않는다 (원문 raw_text는 원래 보내지 않음)"""
+    res = result(matcher, "환자 홍길동 전화번호 010-1234-5678 엘로시드캡슬7.5mg(엘록시캄)")
+    fake = Fake({0: None})
+    await llm_fix.apply(res, matcher, fake)
+    assert fake.calls, "후보정이 불리지 않았다 (시험 가정이 깨짐)"
+    sent = fake.calls[0][1]
+    assert "홍길동" not in sent and "5678" not in sent and "엘로시드캡슬" in sent

@@ -318,3 +318,60 @@ def test_real_head_wins_over_lone_days_word_and_prepare_keeps_tokens():
     ]  # 열 위치도 진짜 머리글 줄에서 잡는다 (영수증 쪽 "투약일수" 위치로 잡으면 약 이름이 칸 밖으로 밀려 줄이 사라진다)
     assert prepare.find_head(_pouch_strip()) is None
     assert prepare.prepare({"images": [{"fields": _pouch_strip()}]})[2] == 0  # 가짜 머리글로는 숫자 칸을 지우지 않는다
+
+
+# ── 10/15 s1 사진: 약이 1개뿐인 처방전이 0줄로 저장되던 문제 ───────────────────────────────────
+def _s1_like(order_yongbeop_first: bool) -> dict:
+    """머리글 오른쪽 "용법" 칸이 약 줄보다 앞 번호로 읽히고, 이름 옆 "(제일)"이 따로 읽힌 처방전"""
+    head = [_fld("명칭", 100, 100), _fld("투약량", 380, 100), _fld("투여횟수", 480, 100), _fld("총투약일수", 580, 100)]
+    yong = [_fld("용법", 700, 100, 40)]
+    body = [
+        _fld("스타브론정12.5MG", 100, 200, 160),
+        _fld("(제일)", 270, 200, 50),  # 같은 줄에서 따로 읽힌 제조사 표시
+        _fld("1", 400, 200, 20),
+        _fld("3", 500, 200, 20),
+        _fld("7", 600, 200, 20),
+    ]
+    tail = [_fld("용법", 100, 400, 40), _fld("식후", 150, 400, 40)]  # 표 아래의 진짜 "용법:" 문구
+    fields = head + (yong + body if order_yongbeop_first else body + yong) + tail
+    return {"images": [{"fields": fields}]}
+
+
+def test_header_yongbeop_column_does_not_cut_the_drug_rows():
+    from app.services.ocr.table import parse_table
+
+    for first in (True, False):
+        t = parse_table(_s1_like(first))
+        assert t is not None and len(t.rows) == 1, first
+        assert t.rows[0].nums == [1.0, 3.0, 7.0]
+
+
+def test_name_pieces_on_the_same_line_are_one_drug():
+    from app.services.ocr.table import parse_table
+
+    t = parse_table(_s1_like(False))
+    assert t is not None and [r.name for r in t.rows] == ["스타브론정12.5MG(제일)"]
+
+
+def test_two_drugs_on_different_lines_still_split():
+    from app.services.ocr.table import parse_table
+
+    t = parse_table(_table(False, []))
+    assert t is not None and [r.name for r in t.rows] == ["돔페리돈", "라니티딘"]
+
+
+def test_header_without_any_drug_row_is_a_retake_not_an_empty_prescription():
+    fields = [f for f in _table(False, [])["images"][0]["fields"] if f["boundingPoly"]["vertices"][0]["y"] < 150]
+    res = read({"images": [{"fields": fields}]}, matcher(), CODES, today=TODAY)
+    assert res.status == "retake" and res.reason == "no_rows" and res.rows == []
+
+
+def test_notices_keep_reading_flags_the_user_should_see():
+    from app.services.ocr.pipeline import OcrRead
+    from app.services.prescriptions import ROW_COUNT_NOTICE, notices_of
+
+    assert notices_of(OcrRead(status="ok")) is None
+    only_birth = OcrRead(status="ok", meta_flags=["출생연도 못 읽음", "출생연도 범위 밖"])
+    assert notices_of(only_birth) is None  # 출생연도는 저장하지 않으니 알리지 않는다
+    r = OcrRead(status="ok", meta_flags=["교부일 못 읽음", "출생연도 못 읽음"], row_count_mismatch=True)
+    assert notices_of(r) == ["교부일 못 읽음", ROW_COUNT_NOTICE]
