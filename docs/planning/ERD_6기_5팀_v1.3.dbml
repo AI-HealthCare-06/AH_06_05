@@ -110,6 +110,7 @@ Table prescription_items {
   times_per_day   smallint
   total_days      smallint
   timing          varchar(50)   [note: '아침 식후 등']
+  guidance        jsonb         [note: '약봉투 약 카드에 약국이 인쇄한 복약 안내 문장 목록 (마스킹 후 저장). 없으면 null']
 
   Note: 'needs_confirm · unmatched가 남아 있으면 분석 시작 불가 (REQ-033). 1일 총량 = dose_per_time * times_per_day. 약이 정해졌으면(auto · user_confirmed) edi_code · item_seq 중 하나는 있음'
 }
