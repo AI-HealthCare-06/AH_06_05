@@ -81,7 +81,20 @@ def prepare(data: dict[str, Any]) -> tuple[dict[str, Any], float, int, str]:
     head = find_head(fields)
     removed = 0
     if head is not None:
-        end = next((i for i, t in enumerate(tokens) if t.startswith("용법")), len(tokens))
+        # 표 끝은 머리글 아래의 "용법:" 문구다. 머리글 줄에 있는 "용법" 칸(오른쪽 머리글)을 끝으로 잡으면 표 안이 비어 버린다 (table.py와 같은 기준)
+        head_y, head_h = (
+            center(fields[head])[1],
+            max(
+                abs(
+                    fields[head]["boundingPoly"]["vertices"][2]["y"] - fields[head]["boundingPoly"]["vertices"][0]["y"]
+                ),
+                1.0,
+            ),
+        )
+        end = next(
+            (i for i, t in enumerate(tokens) if t.startswith("용법") and center(fields[i])[1] > head_y + head_h),
+            len(tokens),
+        )
         col_x = []
         for word in (r"투[약여]량", r"투[약여]\s*횟수", r"투[약여]\s*일수"):
             f = head_word(fields, head, word)

@@ -26,10 +26,12 @@ def fix_one(tok: str, codes: Container[str]) -> tuple[str, str | list[str] | Non
     heads = [s[0]]
     if s[0].isdigit() or lower_l:
         heads = (["I", "L"] if lower_l else D2L.get(s[0], [])) + ([s[0]] if s[0].isdigit() else [])
-    mid = "".join(L2D.get(c, c) if c.isalpha() else c for c in s[1:3])
+    mid = "".join(
+        L2D.get(c, c) if c.isalpha() else c for c in s[1:]
+    )  # 첫 글자 뒤는 모두 숫자 자리다 (M545를 M54S로 읽은 경우도 바로잡는다)
     swap: list[str] = []
     for h in heads:
-        cand = h + mid + s[3:]
+        cand = h + mid
         if cand in codes and cand not in swap and (cand != s or lower_l):
             swap.append(cand)
     prepend: list[str] = []

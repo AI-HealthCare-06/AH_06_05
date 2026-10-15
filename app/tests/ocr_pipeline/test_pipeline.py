@@ -47,6 +47,7 @@ def test_icd_rules():
     assert icd.fix_one("M54.5", CODES) == (icd.NORMAL, "M545")
     assert icd.fix_one("l10", CODES)[0] == icd.MANY
     assert icd.fix_one("E1L", CODES) == (icd.FIXED, "E11")
+    assert icd.fix_one("M54S", CODES) == (icd.FIXED, "M545")  # 네 번째 글자(5)를 S로 읽음 — 세 번째 글자 뒤도 숫자 자리
     assert icd.fix_one("XYZ", CODES) == (icd.UNKNOWN, None)
     assert icd.fix_one("", CODES) == (icd.UNKNOWN, None)
 
@@ -486,3 +487,18 @@ def test_strength_with_slash_and_decimal_numbers_compares_every_number():
     assert m.decide("엔피포지정1/160밀리그램").status == AMBIGUOUS  # 10/160의 앞 숫자를 한 자리 놓침
     assert m.decide("온글라이자정2.5밀리그램").status == FOUND
     assert m.decide("온글라이자정5밀리그램").status == AMBIGUOUS
+
+
+def test_misread_short_text_near_a_number_column_is_removed_even_with_a_yongbeop_header_column():
+    # 머리글 오른쪽의 "용법" 칸이 표 끝으로 잡히면 숫자 칸 근처의 잘못 읽힌 글자("l")가 지워지지 않아 약 줄이 하나 더 생긴다
+    for yongbeop_first in (True, False):
+        d = _s1_like(yongbeop_first)
+        fields = d["images"][0]["fields"]
+        fields.insert(
+            len(fields) - 2, _fld("l", 395, 260, 12)
+        )  # 1회 투약량 칸 아래의 "1"을 잘못 읽은 글자 (표 아래 "용법:" 문구 앞)
+        from app.services.ocr import prepare as prep
+
+        out, _ang, removed, status = prep.prepare(d)
+        assert status == "ok" and removed == 1, yongbeop_first
+        assert all(f["inferText"] != "l" for f in out["images"][0]["fields"])
