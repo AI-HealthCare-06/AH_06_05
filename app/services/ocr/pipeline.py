@@ -30,6 +30,7 @@ LOW_CONF_FLAG = (
     "약 이름 글자가 흐리게 읽혔어요"  # CLOVA가 이름 글자를 낮은 확신으로 읽음: 이름이 맞게 읽혔는지 사용자가 확인
 )
 LOW_CONF = 0.5  # 이름 글자 평균 신뢰도가 이보다 낮으면 자동으로 정하지 않는다 (실제 사진 17장에서 이 아래로 맞게 읽힌 이름은 없었다)
+NUMS_FLAG = "숫자가 어느 약 줄의 것인지 확실하지 않아요"  # 처방전 표에서 숫자 줄이 두 약 줄의 한가운데쯤에 있음: 이웃 약의 숫자와 바뀌었을 수 있어 사용자가 확인
 UNSURE_FLAG = "약 이름 줄이 확실하지 않아요"  # 약봉투에서 이름 줄을 위치가 아닌 글자 크기로 골랐을 때: 사진이 흔들려 이름과 성분이 헷갈렸을 수 있어 사용자가 확인
 HEADERLESS_FLAG = "표 머리글이 없어 칸 순서를 추정했어요 (1회량 · 하루 횟수 · 총 일수)"  # 약봉투 목록에 머리글이 없을 때: 숫자가 어느 칸인지 사용자가 확인 (약 줄은 모두 사용자 확인으로 넘김)
 ICD_CONF = 0.95  # 질병분류기호 글자의 확실도가 이보다 낮으면 보정 결과와 상관없이 사용자가 고르게 한다
@@ -167,6 +168,7 @@ def read(  # noqa: C901
         for unsure, flag in (
             (r.cut, CUT_FLAG),
             (r.unsure, UNSURE_FLAG),
+            (r.nums_unsure, NUMS_FLAG),
             (r.conf is not None and r.conf < LOW_CONF, LOW_CONF_FLAG),
             (table.headerless, HEADERLESS_FLAG),
         ):

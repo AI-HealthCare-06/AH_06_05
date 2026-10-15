@@ -13,6 +13,7 @@ import statistics
 from typing import Any
 
 MAX_TILT = 20.0
+REF_HEIGHT = 16.0  # 글자 높이의 중앙값을 이 값으로 맞춘다 (아래 normalize_scale)
 _NUM = re.compile(r"\d+(\.\d+)?")
 
 
@@ -60,10 +61,34 @@ def tilt_degrees(fields: list[dict[str, Any]]) -> float:
     return statistics.median(angs) if len(angs) >= 5 else 0.0
 
 
+def _text_height(f: dict[str, Any]) -> float:
+    v = f["boundingPoly"]["vertices"]
+    return math.hypot(v[3]["x"] - v[0]["x"], v[3]["y"] - v[0]["y"])
+
+
+def normalize_scale(fields: list[dict[str, Any]]) -> float:
+    """좌표를 글자 높이의 중앙값이 REF_HEIGHT가 되게 키우거나 줄이고, 곱한 배율을 돌려준다.
+    표 읽기의 거리 기준(칸 거리 120 · 줄 오차 40 등)은 픽셀 값이라, 같은 처방전도 사진 해상도에 따라 결과가 달랐다
+    (10/15 점검: 샘플 좌표를 1.5배로 키우기만 해도 하루 횟수 3이 2로 바뀌는 등 조용히 틀렸다). 글자 크기로 맞추면 해상도와 상관없이 같은 결과가 나온다.
+    실제 샘플 17장의 글자 높이는 7~28(중앙값 16)이고, 16으로 맞춰도 읽은 결과는 줄 수 불일치 표시 하나만 달라졌다"""
+    heights = [h for f in fields if (h := _text_height(f)) > 0]
+    if len(heights) < 5:
+        return 1.0
+    k = REF_HEIGHT / statistics.median(heights)
+    if abs(k - 1.0) < 0.02:
+        return 1.0
+    for f in fields:
+        for v in f["boundingPoly"]["vertices"]:
+            v["x"] *= k
+            v["y"] *= k
+    return k
+
+
 def prepare(data: dict[str, Any]) -> tuple[dict[str, Any], float, int, str]:
     """반환: (바로잡은 데이터, 기울기, 지운 글자 수, 상태) — 상태는 "ok" 또는 "too_tilted" """
     d = copy.deepcopy(data)
     fields = d["images"][0]["fields"]
+    normalize_scale(fields)  # 이후의 모든 거리 기준(기울기 · 칸 · 줄)이 같은 크기에서 쓰이도록 가장 먼저
     ang = tilt_degrees(fields)
     if abs(ang) > MAX_TILT:
         return d, ang, 0, "too_tilted"

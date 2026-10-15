@@ -502,3 +502,69 @@ def test_misread_short_text_near_a_number_column_is_removed_even_with_a_yongbeop
         out, _ang, removed, status = prep.prepare(d)
         assert status == "ok" and removed == 1, yongbeop_first
         assert all(f["inferText"] != "l" for f in out["images"][0]["fields"])
+
+
+# ── 10/15: 사진 해상도가 달라도 같은 결과 ───────────────────────────────────────────────────────
+def _scaled(data: dict, k: float) -> dict:
+    out = json.loads(json.dumps(data))
+    for f in out["images"][0]["fields"]:
+        for v in f["boundingPoly"]["vertices"]:
+            v["x"] *= k
+            v["y"] *= k
+    return out
+
+
+def test_result_does_not_depend_on_photo_resolution():
+    # 표 읽기의 거리 기준이 픽셀 값이라 같은 처방전이 해상도에 따라 다르게(조용히 틀리게) 읽혔다: 샘플 좌표를 1.5배로 키우면 하루 횟수가 바뀜
+    base = _table(False, [])
+    expected = [("돔페리돈", 1.0, 3.0, 2.0), ("라니티딘", 3.0, 2.0, 5.0)]
+    for k in (0.5, 1.0, 1.5, 2.5, 4.0):
+        res = read(_scaled(base, k), matcher(), CODES, today=TODAY)
+        assert res.status == "ok", k
+        assert [(r.read_name, r.dose, r.times, r.days) for r in res.rows] == expected, k
+
+
+def test_pouch_result_does_not_depend_on_photo_resolution():
+    from app.tests.ocr_pipeline.test_pouch import card, card_table, data, head, strip
+
+    base = data(head() + strip() + card_table(card(200, "알마겔정"), card(300, "리피토정10mg", ("2", "1", "7"))))
+    seen = set()
+    for k in (0.6, 1.0, 1.7, 3.0):
+        t = read(_scaled(base, k), matcher(), CODES, today=TODAY)
+        seen.add(tuple((r.read_name, r.dose, r.times, r.days) for r in t.rows))
+    assert len(seen) == 1 and len(next(iter(seen))) == 2
+
+
+def test_sample_prescription_reads_the_same_at_any_resolution():
+    # 저장소에 있는 가짜 처방전(1,093 × 1,653)으로: 4배로 키우면(휴대폰 원본 크기) 정규화 없이는 네 줄의 숫자가 모두 달라졌다
+    def rows(k: float):
+        res = read(_scaled(SAMPLE, k), matcher(), CODES, today=TODAY)
+        return res.status, [(r.read_name, r.dose, r.times, r.days) for r in res.rows], res.issued
+
+    base = rows(1.0)
+    assert base[0] == "ok" and len(base[1]) == 4
+    for k in (0.5, 2.0, 3.0, 4.0):
+        assert rows(k) == base, k
+
+
+# ── 10/15: 숫자 줄이 두 약 줄의 한가운데에 있으면 사용자가 확인한다 ──────────────────────────────
+def _two_drugs(num_dy: float) -> dict:
+    """약 이름 줄 둘(y 200 · 260)과 그 숫자. 숫자는 이름 줄에서 num_dy만큼 아래에 있다 (30이면 두 이름의 한가운데)"""
+    head = [_fld("명칭", 100, 100), _fld("투약량", 380, 100), _fld("투여횟수", 480, 100), _fld("총투약일수", 580, 100)]
+    body = []
+    for y, name, nums in ((200, "노바스크정5밀리그람", (1, 1, 30)), (260, "리피토정10밀리그램", (1, 1, 7))):
+        body.append(_fld(name, 100, y, 200))
+        body += [_fld(str(v), x, y + num_dy, 20) for x, v in zip((400, 500, 600), nums, strict=True)]
+    return {"images": [{"fields": head + body}]}
+
+
+def test_numbers_halfway_between_two_drugs_are_confirmed_by_the_user():
+    from app.services.ocr.pipeline import NUMS_FLAG
+
+    clear = read(_two_drugs(0), matcher(), CODES, today=TODAY)
+    assert [r.decision.status for r in clear.rows] == [FOUND, FOUND]
+    assert all(NUMS_FLAG not in r.flags for r in clear.rows)
+
+    middle = read(_two_drugs(30), matcher(), CODES, today=TODAY)  # 이름 줄과 이름 줄의 한가운데
+    assert [r.decision.status for r in middle.rows] == [AMBIGUOUS, AMBIGUOUS]
+    assert all(NUMS_FLAG in r.flags for r in middle.rows)  # 어느 약의 숫자인지 확실하지 않으니 사용자가 확인한다

@@ -10,6 +10,7 @@ from typing import Any
 
 from app.services.ocr.prepare import center, find_head, head_word
 
+NEAR_MIDDLE = 0.3  # 숫자가 두 약 줄의 한가운데에서 줄 간격의 이 비율 안쪽에 있으면 어느 줄의 숫자인지 확실하지 않다
 _NUM = re.compile(r"\d+(\.\d+)?")
 _HEAD_WORDS = ((0, r"투[약여]량"), (1, r"투[약여]\s*횟수"), (2, r"투[약여]\s*일수"))
 # 표가 끝났다는 표시: 약 줄 아래의 "조제시 참고사항", "주사제 처방내역", "사용기간", "이하 여백", 구분선 (실제 양식 5장 시험에서 추가)
@@ -41,6 +42,7 @@ class Row:
     )  # 약봉투: 약국이 약 아래에 인쇄한 복약 안내 표시 · 문장 (pouch_guide)
     cut: bool = False  # 이름 끝이 "···"로 잘려 있음 (약봉투). 뒷부분(함량 등)이 없어서 사용자가 확인한다
     confs: list[float] = field(default_factory=list)  # 이름을 이룬 글자 조각들의 CLOVA 인식 신뢰도
+    nums_unsure: bool = False  # 숫자 줄이 이 약 줄과 이웃 약 줄의 한가운데쯤에 있어, 어느 약의 숫자인지 확실하지 않다. 사용자가 확인한다
 
     @property
     def conf(self) -> float | None:
@@ -287,9 +289,16 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
         per_row: dict[int, list[dict[str, Any]]] = {}
         for f in nums:
             cx, cy = center(f)[0], level_y(f)
-            i = min(range(len(rows)), key=lambda i: abs(rows[i].y - cy))
+            by_dist = sorted(range(len(rows)), key=lambda i: abs(rows[i].y - cy))
+            i = by_dist[0]
             if abs(rows[i].y - cy) <= 40 and any(abs(c - cx) <= 120 for c in col_x.values()):
                 per_row.setdefault(i, []).append(f)
+                if len(by_dist) > 1:
+                    j = by_dist[1]
+                    gap = abs(rows[j].y - rows[i].y)
+                    # 숫자가 두 약 줄의 한가운데쯤에 있으면(가까운 쪽과 먼 쪽의 거리 차이가 줄 간격의 30% 미만) 흔들림 하나에 이웃 줄로 넘어갈 수 있다
+                    if gap > 0 and (abs(rows[j].y - cy) - abs(rows[i].y - cy)) < NEAR_MIDDLE * gap:
+                        rows[i].nums_unsure = rows[j].nums_unsure = True
         order = sorted(col_x, key=lambda k: col_x[k])
         for i, group in per_row.items():
             group.sort(key=lambda f: center(f)[0])
