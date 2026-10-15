@@ -61,9 +61,14 @@ def _brand(name: str) -> str:
     return re.split(r"[\d(]", base_name(name))[0]
 
 
+# 처방전에 "60mg/1정"처럼 "1정당 함량"까지 붙어 읽히는 양식이 있다 (실제 샘플 r5). 이 "/1정"의 1은 함량이 아니라서 숫자로 세지 않는다
+# ("5/160"처럼 단위 없는 뒤 숫자는 복합제의 함량이라 센다)
+_PER_UNIT = re.compile(r"/\s*\d+(?:\.\d+)?\s*(?:정|캡슐|포|병|앰플|매|개|환)")
+
+
 def _strength_numbers(name: str) -> list[str]:
-    """이름에서 괄호(성분) 앞까지의 숫자들 (노바스크정5밀리그램(암로디핀) → ["5"] · 엔피포지정5/160 → ["5", "160"])"""
-    return re.findall(r"\d+(?:\.\d+)?", re.split(r"[(\[]", unify(name))[0])
+    """이름에서 괄호(성분) 앞까지의 숫자들 (노바스크정5밀리그램(암로디핀) → ["5"] · 엔피포지정5/160 → ["5", "160"] · 카나브정60mg/1정 → ["60"])"""
+    return re.findall(r"\d+(?:\.\d+)?", _PER_UNIT.sub("", re.split(r"[(\[]", unify(name))[0]))
 
 
 def _different_ingredient(a: set[str | None], b: set[str | None]) -> bool:

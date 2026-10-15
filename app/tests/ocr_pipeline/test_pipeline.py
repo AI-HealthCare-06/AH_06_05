@@ -489,6 +489,16 @@ def test_strength_with_slash_and_decimal_numbers_compares_every_number():
     assert m.decide("온글라이자정5밀리그램").status == AMBIGUOUS
 
 
+def test_per_unit_quantity_after_strength_is_not_counted_as_a_strength_number():
+    # 처방전에 "100mg/1정"처럼 1정당 함량이 붙어 읽히는 양식이 있다 (실제 샘플 r5). 이 1을 함량으로 세면 맞게 읽은 약도 확인 필요가 된다
+    m = NameMatcher([("1", "명문아스피린장용정100mg_(0.1g/1정)"), ("2", "하원아스피린장용정100mg_(0.1g/1정)")])
+    d = m.decide("명문아스피린장용정100mg/1정")
+    assert d.status == FOUND and d.candidates[0].edi_code == "1" and not d.strength
+    m2 = NameMatcher([("1", "엔피포지정5/160밀리그램_(1정)"), ("2", "엔피포지정10/160밀리그램_(1정)")])
+    assert m2.decide("엔피포지정5/160밀리그램/1정").status == FOUND  # 뒤의 /1정만 빼고 5/160은 그대로 비교
+    assert m2.decide("엔피포지정1/160밀리그램").status == AMBIGUOUS  # 단위 없는 뒤 숫자(복합제)는 계속 센다
+
+
 def test_misread_short_text_near_a_number_column_is_removed_even_with_a_yongbeop_header_column():
     # 머리글 오른쪽의 "용법" 칸이 표 끝으로 잡히면 숫자 칸 근처의 잘못 읽힌 글자("l")가 지워지지 않아 약 줄이 하나 더 생긴다
     for yongbeop_first in (True, False):
