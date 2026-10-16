@@ -15,7 +15,6 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.1 | 2026-09-28 | 리뷰 반영 — OCR 업로드 202 + 작업 조회(O-5) 추가, 생활습관 출처를 실천 항목별로, 칼륨 등 "의료진 확인" 표시, 파기 범위 제안, R-4 다제약물 반영 | 이형준 |
 | v1.2 | 2026-09-29 | RW-01 제외 확정 반영 (P-1 화면을 RG-05로), 기준 화면 수 50개 | 이형준 |
 | v1.3 | 2026-10-06 | 챗봇 1단계 반영 (PR #3) — answerType 8가지, H-1 · H-3 `clientRequestId` · `sources` 형식, H-2 응답 형식, 대화 삭제(H-6) · 맥락 추가(H-7) 추가 / 기준 화면 수 50개 · 요구사항 v1.5 · ERD v1.3 / RAG 담당 채연 / 10/6: 로그인 재발급(A-4 신규) · 로그아웃 제외 · 약 이름 검색 결과 3가지(O-4) | 김채연 |
-| v1.5 (초안) | 2026-10-16 | 별명(`nickname`) 제거 (A-1 · A-2 · U-1 · U-2, #96 · 10/14 팀 합의) / R-4 복약 안내: `purpose` 문구를 "~에 쓰는 약이에요"로, `cautions`(문장 배열) 추가, 사람이 확인한 안내문만 채움 (`drug_guides`) | 김채연 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -128,23 +127,6 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | 8. 남은 결정 / RW-03 · 04 · 05 합치기 | [ ] 한 화면의 상태로 합칠지 🟡 성규 | 담당을 수인으로 바꿈 — 화면 쪽 결정이라서 (10/6 수인 PR #74 리뷰) |
 | 0. 공통 / 공통 에러 코드 | (없음 — 403은 `CONSENT_REQUIRED`만 있음) | `403 FORBIDDEN` 추가 — 앱은 `UNAUTHORIZED`를 받으면 로그인 화면으로 보내서, 권한 오류와 구분함 (10/6 수인 PR #77 리뷰) |
 | 머리말 / 작성 기준 (화면 수) | Figma 통합 와이어프레임(53개 화면, 화면 번호표 v0.5) | 50개 화면, 화면 번호표 v0.6 — 키보드 받아쓰기로 바뀌어 CB-05-E1 · CB-05-P · CB-05-E2 삭제, CB-05는 "받아쓰기 안내" (10/6 수인 #50) |
-
-</details>
-
-<details>
-<summary><b>v1.5 (초안)</b> · 2026-10-16 · 별명 제거 · R-4 복약 안내 — 세부 9건</summary>
-
-| 위치 | 현행 (As-Is) | 개정 (To-Be) |
-|---|---|---|
-| 2. 회원 / A-1 요청 | `nickname` (선택, 50자 이내) | 삭제 — 홈 인사말을 뺐고(3회차 멘토링 · 10/7 회의) 인사말용 별명이 쓸 곳이 없어 최소 수집 원칙에 맞춤 (10/14 팀 합의 · #96) |
-| 2. 회원 / A-1 · A-2 응답 `user` | `{ id, nickname, birthYear, sex }` | `{ id, birthYear, sex }` |
-| 2. 회원 / U-1 응답 · 화면 | 화면 `CM-03 (인사말) · CM-05`, 응답에 `nickname` | 화면 `CM-05`, `nickname` 삭제 |
-| 2. 회원 / U-2 요청 | `{ nickname, birthYear, sex }` | `{ birthYear, sex }` |
-| 4. RAG / R-4 `medication.items[].purpose` 예시 | `"혈압을 낮춰요"` | `"혈압 관리에 쓰는 약이에요"` — 의료 표현 목록(#61)의 "효과를 약속하는 말"을 피해 "~에 쓰는 약이에요" 꼴로 통일 |
-| 4. RAG / R-4 `medication.items[].caution` 예시 | `"어지러울 수 있으니 천천히 일어나세요"` | 허가정보 문장을 줄바꿈으로 이은 문자열 |
-| 4. RAG / R-4 `medication.items[].cautions` | (없음) | 문장별 배열 추가 (최대 3개, 없으면 빈 배열) — 수인 확인 필요 |
-| 4. RAG / R-4 `medication.items[]` 채우는 기준 | 근거가 없으면 `null` | 미리 저장한 안내문(`drug_guides`) 중 사람이 확인한(approved) 약만 채움. 아니면 `purpose`는 "처방받은 목적을 약사에게 확인해 주세요", 나머지는 `null` |
-| 머리말 / 작성 기준 (ERD) | ERD v1.3 | `users.nickname` 삭제 · `drug_guides` 추가 반영 (ERD 변경 이력 참고) |
 
 </details>
 
@@ -262,6 +244,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 {
   "email": "hong@email.com",
   "password": "abcd1234",
+  "nickname": "홍길동",
   "birthYear": 1958,
   "sex": "M",
   "consents": {
@@ -276,6 +259,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 |---|---|---|
 | email | ✅ | 이메일 형식, 100자 이내 |
 | password | ✅ | 영문 + 숫자 포함 8자 이상 |
+| nickname | | 50자 이내. 없으면 홈에서 "안녕하세요"만 |
 | birthYear | ✅ | 1900 ~ 올해. 노인주의 · 연령금기 판정에 사용 |
 | sex | ✅ | `M` / `F` |
 | consents.* | ✅ | 세 개 모두 `true`여야 가입 가능 |
@@ -285,7 +269,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 {
   "accessToken": "eyJhbGciOi...",
   "refreshToken": "eyJhbGciOi...",
-  "user": { "id": 12, "birthYear": 1958, "sex": "M" }
+  "user": { "id": 12, "nickname": "홍길동", "birthYear": 1958, "sex": "M" }
 }
 ```
 - 재발급권 쿠키 `refresh_token`도 같이 보냄 (A-2와 같음)
@@ -315,7 +299,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 {
   "accessToken": "eyJhbGciOi...",
   "refreshToken": "eyJhbGciOi...",
-  "user": { "id": 12, "birthYear": 1958, "sex": "M" }
+  "user": { "id": 12, "nickname": "홍길동", "birthYear": 1958, "sex": "M" }
 }
 ```
 
@@ -371,13 +355,14 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 ### U-1. 내 정보 조회 `GET /users/me`
 
-화면 CM-05
+화면 CM-03 (인사말) · CM-05
 
 **응답 `200`**
 ```json
 {
   "id": 12,
   "email": "hong@email.com",
+  "nickname": "홍길동",
   "birthYear": 1958,
   "sex": "M",
   "createdAt": "2026-09-20T10:00:00+09:00"
@@ -392,7 +377,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 **요청**
 ```json
-{ "birthYear": 1958, "sex": "M" }
+{ "nickname": "길동", "birthYear": 1958, "sex": "M" }
 ```
 
 **응답 `200`** — U-1과 같은 형식
@@ -709,10 +694,9 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
         "ediCode": "645301220",
         "itemName": "노바스크정 5mg",
         "category": "혈압약",
-        "purpose": "혈압 관리에 쓰는 약이에요",
+        "purpose": "혈압을 낮춰요",
         "howToTake": "하루 1번, 아침 식후 1알 · 30일",
-        "caution": "부종이 생기면 의사에게 알리세요.\n자몽이나 자몽주스는 함께 드시는 것을 피하세요.",
-        "cautions": ["부종이 생기면 의사에게 알리세요.", "자몽이나 자몽주스는 함께 드시는 것을 피하세요."],
+        "caution": "어지러울 수 있으니 천천히 일어나세요",
         "source": "식약처 의약품 허가정보"
       }
     ]
@@ -760,9 +744,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | `warnings[].summary` | DB 금기 사유를 **템플릿으로** 만든 문장. AI를 거치지 않음 | 경고 카드 |
 | `checkedItems` | 경고가 없을 때 "무엇을 점검했는지" 보여주기 위한 목록 | RG-02-E1 |
 | `medication.status` · `lifestyle.status` | `done` / `failed` — RG-01-E1에서 안전성만 보고 들어온 경우 `failed` | RG-04 · RG-05 "만들지 못했어요" |
-| `medication.items[]` | 항목 순서 · 이름 고정 (결과 일관성 NFR-030). 근거가 없으면 값 `null` → "허가정보에 내용이 없어요". 미리 저장해 둔 안내문(`drug_guides`) 중 사람이 확인한(approved) 약만 채워지고, 아니면 `purpose`는 "처방받은 목적을 약사에게 확인해 주세요", `category` · `caution` · `source`는 `null` | RG-04 약 카드 |
-| `medication.items[].caution` · `cautions` | `cautions`는 문장별 배열(최대 3개, 없으면 빈 배열), `caution`은 그 문장을 줄바꿈으로 이은 문자열. 각 문장은 허가정보 원문 문장을 근거로 쓰고 근거 번호와 원문을 `drug_guides.evidence_ids`에 저장 — **`cautions`는 명세서에 추가 제안 (수인 확인)** | RG-04 약 카드 |
-| `medication.items[].purpose` | "~에 쓰는 약이에요" 꼴. 의료 표현 목록(#61)의 "효과를 약속하는 말"을 피해 "혈압을 낮춰요" 같은 표현은 쓰지 않음 | RG-04 약 카드 |
+| `medication.items[]` | 항목 순서 · 이름 고정 (결과 일관성 NFR-030). 근거가 없으면 값 `null` → "허가정보에 내용이 없어요" | RG-04 약 카드 |
 | `lifestyle.diseases[].origin` | `prescription`(처방전 코드) / `user`(RG-05-E1에서 직접 선택) | RG-05 |
 | `lifestyle.diseases` 빈 배열 | 질병분류기호 없음 (약봉투 등) → **RG-05-E1** | RG-05-E1 |
 | `lifestyle.sections[].conflict` | 질환끼리 권고가 부딪힐 때 `{ "message": "...", "label": "의료진 상담 필요" }` (REQ-062) | RG-05 |
