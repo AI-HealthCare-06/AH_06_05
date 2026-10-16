@@ -111,6 +111,7 @@ class NameMatcher:
         self._idx = [(edi, nm, grams(unify(base_name(nm)))) for edi, nm in products]
         self._base = [base_name(nm) for _, nm in products]  # 이름이 글자 그대로 같은 제품을 동점에서 먼저 고르는 데 씀
         self._tidx: list[tuple[str, str, frozenset[str]]] | None = None
+        self._hidx: list[tuple[str, str, frozenset[str]]] | None = None
         self._ingr = ingredients
         self._sib: dict[str, list[str]] | None = None
         self._by_brand: dict[str, list[int]] = {}
@@ -175,16 +176,22 @@ class NameMatcher:
             # 약봉투는 이름이 두 줄로 나뉘어 "가스므틴정5밀리그람(모"처럼 괄호 안이 잘려 읽히는 경우가 있다 (10/16 실물 약봉투).
             # 잘린 이름은 후보의 긴 성분 이름과 비교하면 점수가 낮아서, 괄호 앞(상표 + 함량)끼리만 비교한다
             head = trigrams(unify(qb.split("(")[0]))
-            top = heapq.nlargest(
-                top_n, ((similarity(head, self._head_grams(nm)), edi, nm) for edi, nm, _ in self.prepare())
-            )
+            top = heapq.nlargest(top_n, ((similarity(head, g), edi, nm) for edi, nm, g in self._head_index()))
+            top = [
+                t for t in top if t[0] >= limit
+            ]  # 기준에 못 미치는 다른 약(성분이 다르고 함량 글자만 비슷한 약)은 후보로 보이지 않음
+            if not top:
+                return None
         if top[0][0] < limit:
             return None
         return Decision(AMBIGUOUS, round(top[0][0], 3), [Candidate(edi, nm, round(sc, 3)) for sc, edi, nm in top])
 
-    @staticmethod
-    def _head_grams(name: str) -> frozenset[str]:
-        return trigrams(unify(base_name(name).split("(")[0]))
+    def _head_index(self) -> list[tuple[str, str, frozenset[str]]]:
+        """괄호 앞(상표 + 함량)만의 조각 색인 (잘려 읽힌 이름용, 처음 쓸 때 한 번 만듦)"""
+        idx = self._hidx
+        if idx is None:
+            idx = self._hidx = [(edi, nm, trigrams(unify(base_name(nm).split("(")[0]))) for edi, nm, _ in self._idx]
+        return idx
 
     def decide(self, read_name: str, top_n: int = 3, siblings: bool = True) -> Decision:
         """siblings=False면 형제 약 확인을 건너뜀 (이미 사용자가 고르는 경로이거나, 사용자가 직접 이름을 친 검색)"""

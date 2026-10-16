@@ -122,5 +122,8 @@ def test_name_cut_inside_the_parenthesis_is_matched_by_brand_and_strength():
         assert mm.decide(cut).status == NOT_FOUND  # 규칙은 못 찾음
         sug = mm.similar(cut)
         assert sug is not None and sug.status == AMBIGUOUS and sug.candidates[0].edi_code == edi, cut
+    # 기준에 못 미치는 다른 약은 후보에 끼지 않는다 (10/16 폰 확인: 크바스틴정5밀리그램이 60%로 끼어 보임)
+    assert [c.edi_code for c in mm.similar("가스므틴정5밀리그람(모").candidates] == ["1"]
+    assert [c.edi_code for c in mm.similar("펜크티정375밀리그램(아").candidates] == ["3"]
     # 잘리지 않은 이름의 판단은 그대로, 다른 약의 잘린 이름은 추천하지 않음
     assert mm.similar("전혀다른약정10밀리그램(가") is None
