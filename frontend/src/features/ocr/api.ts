@@ -1,4 +1,5 @@
 // OCR API 호출 (O-1 ~ O-5). 화면은 이 함수들만 부름
+import { File } from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import { api } from '@/shared/api/client';
@@ -14,7 +15,8 @@ async function toFormData(uris: string[]): Promise<FormData> {
     if (Platform.OS === 'web') {
       form.append('files', await (await fetch(uri)).blob(), `photo${i + 1}.jpg`);
     } else {
-      form.append('files', { uri, name: `photo${i + 1}.jpg`, type: 'image/jpeg' } as unknown as Blob);
+      // Expo의 fetch는 {uri, name, type} 모양을 보낼 수 없어서(Unsupported FormDataPart) File 객체로 붙임
+      form.append('files', new File(uri) as unknown as Blob, `photo${i + 1}.jpg`);
     }
   }
   return form;
