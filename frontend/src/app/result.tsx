@@ -22,6 +22,7 @@ const errText = (e: unknown) => (e instanceof ApiError ? e.message : copy.common
 // RG-02 · RG-02-E1 안전성 / RG-04 복약 안내 / RG-05 · RG-05-E1 생활습관 (R-4 한 번에 받아서 탭만 바꿈)
 export default function Result() {
   const router = useRouter();
+  const goHome = () => router.replace('/'); // 결과 화면은 쌓인 화면이 분석 중이라 홈으로 보냄 (뒤로 스와이프는 꺼 둠)
   const { openChat } = useChatLauncher();
   const { analysisId } = useFlow();
   const [data, setData] = useState<AnalysisResult | null>(null);
@@ -45,7 +46,7 @@ export default function Result() {
 
   if (analysisId === null) {
     return (
-      <Screen title={r.title} back={false} footer={<Btn label={copy.common.goHome} onPress={() => router.replace('/')} />}>
+      <Screen title={r.title} onBack={goHome} footer={<Btn label={copy.common.goHome} onPress={goHome} />}>
         <Text style={T.body}>{r.loadFail}</Text>
       </Screen>
     );
@@ -54,7 +55,7 @@ export default function Result() {
     return (
       <Screen
         title={r.title}
-        back={false}
+        onBack={goHome}
         footer={error ? <Btn label={copy.common.retry} onPress={load} /> : undefined}
       >
         {error ? <Text style={[T.body, { color: C.danger }]}>{r.loadFail} · {error}</Text> : <ActivityIndicator color={C.p600} style={{ marginTop: 40 }} />}
@@ -71,8 +72,7 @@ export default function Result() {
   return (
     <Screen
       title={r.title}
-      back={false}
-      onBack={() => router.replace('/')}
+      onBack={goHome}
       footer={<Btn label={r.askChat} kind="secondary" onPress={openChat} />}
     >
       <Card style={{ gap: 4 }}>
