@@ -17,7 +17,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.3 | 2026-10-06 | 챗봇 1단계 반영 (PR #3) — answerType 8가지, H-1 · H-3 `clientRequestId` · `sources` 형식, H-2 응답 형식, 대화 삭제(H-6) · 맥락 추가(H-7) 추가 / 기준 화면 수 50개 · 요구사항 v1.5 · ERD v1.3 / RAG 담당 채연 / 10/6: 로그인 재발급(A-4 신규) · 로그아웃 제외 · 약 이름 검색 결과 3가지(O-4) | 김채연 |
 | v1.4 | 2026-10-07 | 담당을 피처 단위로 다시 정함(화면부터 서버까지 한 사람이 맡음). 공통과 챗봇은 수인, OCR과 RAG는 채연, 실천과 보상은 담당 미정(챌린지는 뒤로 미룸). 성규님 조기 수료로 2인 체제 / 10/8: 챗봇 점검 결과 카드 칸 `safetyCard` 제안 (H-2, H-3, 수인 확인 필요) | 김채연 |
 | v1.5 초안 | 2026-10-12 | R-4 `medication.items[]`와 `lifestyle.medicationLinks[]`에 약 번호 `itemId` 추가 (챗봇 설계 메모 v0.9, PR #80의 요청 4번). 챗봇 5장 정리(수인 10/12 정리안): `safetyCard` 확정, H-1 `firstMessage`, H-2 `status`, H-3 `drugMatch`와 `safety` 칸, H-4 `createdAt`, H-8 오늘 대화 찾기 신규, 2단계 API 목록 | 채연 (챗봇은 수인 정리안 반영) |
-| v1.5 초안 추가 | 2026-10-16 | 별명(`nickname`) 제거 (A-1 · A-2 · U-1 · U-2, #96 · 10/14 팀 합의) / R-4 복약 안내: `purpose` 문구를 "~에 쓰는 약이에요"로, `cautions`(문장 배열) 추가, 사람이 확인한 안내문만 채움 (`drug_guides`) | 김채연 |
+| v1.5 초안 추가 | 2026-10-16 | 별명(`nickname`) 제거 (A-1 · A-2 · U-1 · U-2, #96 · 10/14 팀 합의) / O-5 `duplicatedFiles`, O-2 `notices`, `itemName`, `suggestedBy`, `guidance`, `checkFields` 추가 / R-4 `summary.drugCount`는 점검한 약만 셈 / R-4 복약 안내: `purpose` 문구를 "~에 쓰는 약이에요"로, `cautions`(문장 배열) 추가, 사람이 확인한 안내문만 채움 (`drug_guides`) | 김채연 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -182,7 +182,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 </details>
 
 <details>
-<summary><b>v1.5 초안 추가</b> 2026-10-16 별명 제거, R-4 복약 안내 세부 9건</summary>
+<summary><b>v1.5 초안 추가</b> 2026-10-16 별명 제거, R-4 복약 안내, OCR 응답 필드 세부 13건</summary>
 
 | 위치 | 현행 (As-Is) | 개정 (To-Be) |
 |---|---|---|
@@ -192,8 +192,12 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | 2. 회원 / U-2 요청 | `{ nickname, birthYear, sex }` | `{ birthYear, sex }` |
 | 4. RAG / R-4 `medication.items[].purpose` 예시 | `"혈압을 낮춰요"` | `"혈압 관리에 쓰는 약이에요"` — 의료 표현 목록(#61)의 "효과를 약속하는 말"을 피해 "~에 쓰는 약이에요" 꼴로 통일 |
 | 4. RAG / R-4 `medication.items[].caution` 예시 | `"어지러울 수 있으니 천천히 일어나세요"` | 허가정보 문장을 줄바꿈으로 이은 문자열 |
-| 4. RAG / R-4 `medication.items[].cautions` | (없음) | 문장별 배열 추가 (최대 3개, 없으면 빈 배열) — 수인 확인 필요 |
+| 4. RAG / R-4 `medication.items[].cautions` | (없음) | 문장별 배열 추가 (최대 3개, 없으면 빈 배열). 수인 찬성 (10/16 PR #97 리뷰) |
 | 4. RAG / R-4 `medication.items[]` 채우는 기준 | 근거가 없으면 `null` | 미리 저장한 안내문(`drug_guides`) 중 사람이 확인한(approved) 약만 채움. 아니면 `purpose`는 "처방받은 목적을 약사에게 확인해 주세요", 나머지는 `null` |
+| 3. OCR / O-5 응답 | `prescriptionIds`, `failedFiles` | `duplicatedFiles[{ fileIndex, prescriptionId }]` 추가 (같은 사진 중복 업로드) |
+| 3. OCR / O-2 응답 `items[]` | `itemName`, `suggestedBy`, `guidance`, `checkFields` 없음 | 4개 추가 (코드에는 이미 있음, 문서에 빠져 있던 것) |
+| 3. OCR / O-2 응답 최상위 | `notices` 없음 | `notices[]` 추가 |
+| 4. RAG / R-4 `summary.drugCount` | 올라온 약 전체 개수 | 점검한 약(먹는 약)만 셈. 외용약은 `excludedDrugs`에 `not_oral`로 나옴 |
 | 머리말 / 작성 기준 (ERD) | ERD v1.5 초안 (10/12) | `users.nickname` 삭제 · `drug_guides` 추가 반영 (ERD 변경 이력 참고) |
 
 </details>
@@ -539,9 +543,14 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
   "prescriptionIds": [101, 102],
   "failedFiles": [
     { "fileIndex": 2, "code": "IMAGE_QUALITY_LOW" }
+  ],
+  "duplicatedFiles": [
+    { "fileIndex": 3, "prescriptionId": 101 }
   ]
 }
 ```
+
+- `duplicatedFiles`: 같은 사진을 두 번 올리면 다시 읽지 않고, 먼저 읽은 사진의 처방전 번호를 알려줌 (없으면 빈 배열)
 
 | `status` · `failedFiles[].code` | 화면 |
 |---|---|
@@ -569,6 +578,8 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
       "matchStatus": "needs_confirm",
       "ediCode": null,
       "itemSeq": null,
+      "itemName": null,
+      "suggestedBy": "similar",
       "candidates": [
         { "ediCode": "645301220", "itemSeq": null, "itemName": "노바스크정5밀리그람", "score": 0.82 },
         { "ediCode": "...", "itemSeq": null, "itemName": "아모디핀정5밀리그람", "score": 0.79 }
@@ -576,14 +587,22 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
       "dosePerTime": 1,
       "timesPerDay": 1,
       "totalDays": 30,
-      "timing": "아침 식후"
+      "timing": "아침 식후",
+      "guidance": [],
+      "checkFields": []
     }
-  ]
+  ],
+  "notices": []
 }
 ```
 
 - `docType`: `prescription`(처방전) / `pill_bag`(약봉투) — 약봉투는 `diseaseCodes`가 빈 배열 → RG-05-E1로 이어짐
 - `matchStatus`: `auto`(자동 확정) / `needs_confirm`(후보 선택 필요) / `user_confirmed` / `unmatched`(끝내 못 찾음)
+- `itemName`: 약이 정해진 항목(`auto`, `user_confirmed`)만 약 이름이 있고, 나머지는 `null`
+- `suggestedBy`: `needs_confirm` 항목에서 후보를 어떻게 찾았는지 (`similar` 이름이 비슷한 약 / `llm` 모델이 고른 후보 / `null` 후보 없음). 다른 상태에서는 `null`
+- `guidance[]`: 약봉투에 적힌 복약 안내 문장 (개인정보는 가린 뒤 저장). 처방전이거나 없으면 빈 배열
+- `checkFields[]`: 값이 이상해서 사용자가 다시 확인해야 할 칸 이름 (`"1회량"`, `"하루 횟수"`, `"총 일수"`). 문제가 없거나 점검에서 뺀 약이면 빈 배열
+- `notices[]`: 읽는 중 만든 확인 안내 문장 (예: 약 줄 수가 맞지 않음). 없으면 빈 배열
 - `issuedDate`: 처방전은 처방 교부일, 약봉투는 조제일 (약봉투에는 교부일이 없음)
 - `ediCode` · `itemSeq`: 약이 정해진 항목과 후보는 둘 중 하나는 꼭 있음 (O-4와 같은 규칙). 급여목록에 없는 약(일반약 등)은 `itemSeq`만 있고 `ediCode`는 null (예시의 `itemSeq: null`은 값을 비워 둔 것)
 
