@@ -55,6 +55,7 @@ export const copy = {
     pick: '갤러리에서 선택',
     photos: (n: number, max: number) => `찍은 사진  ${n} / ${max}장`,
     clear: '모두 지우기',
+    removeOne: (n: number) => `${n}번째 사진 지우기`,
     empty: '여러 병원 처방전 · 약봉투를 최대 5장까지 한 번에 점검할 수 있어요.',
     sample: '샘플 처방전으로 해 보기',
     sameOnce: '같은 처방전은 한 번만 찍어 주세요.',

@@ -132,6 +132,16 @@ export default function Capture() {
                 ) : (
                   <Image accessibilityLabel={`${i + 1}번째 사진`} source={{ uri: u }} style={{ width: 96, height: 120, borderRadius: 10 }} />
                 )}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={copy.capture.removeOne(i + 1)}
+                  hitSlop={6}
+                  disabled={reading}
+                  onPress={() => setPhotos((p) => p.filter((_, k) => k !== i))}
+                  style={{ position: 'absolute', top: 4, right: 4, width: 26, height: 26, borderRadius: 13, backgroundColor: C.dim, alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 16, lineHeight: 18 }}>×</Text>
+                </Pressable>
                 <Text style={[T.small, { marginTop: 4 }]}>{i + 1}</Text>
               </View>
             ))}
