@@ -4,7 +4,7 @@
 """
 
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tortoise import fields, models
 
@@ -48,6 +48,9 @@ class OcrJob(models.Model):
     status = fields.CharEnumField(enum_type=OcrJobStatus, max_length=20, default=OcrJobStatus.QUEUED)
     file_count = fields.SmallIntField(description="한 번에 올린 사진 수 (최대 5)")
     error_code = fields.CharField(max_length=50, null=True, description="전체 실패 시 OCR_FAILED 등")
+    duplicates: Any = fields.JSONField(
+        null=True, description='이미 있는 처방전이라 새로 저장하지 않은 사진 [{"fileIndex": 2, "prescriptionId": 7}]'
+    )
     created_at = fields.DatetimeField(auto_now_add=True)
     finished_at = fields.DatetimeField(null=True)
 
@@ -67,7 +70,14 @@ class Prescription(models.Model):
     doc_type = fields.CharEnumField(enum_type=DocType, max_length=20)
     issued_date = fields.DateField(null=True, description="처방 교부일")
     hospital_name = fields.CharField(max_length=200, null=True)
-    ocr_raw_text = fields.TextField(null=True, description="OCR 원문 — 암호화 저장 예정 (원본 이미지는 저장 안 함)")
+    ocr_raw_text = fields.TextField(null=True, description="OCR 원문 — 저장하지 않음 (10/15 결정, 칸만 남겨 두고 비움)")
+    notices: Any = fields.JSONField(
+        null=True,
+        description="사진을 읽을 때 사용자가 확인해야 할 점 문장 목록 (줄 수 불일치 · 칸 순서 추정 · 날짜 이상 등). 없으면 null",
+    )
+    content_key = fields.CharField(
+        max_length=64, null=True, db_index=True, description="같은 처방전 판별용 해시 (병원 · 교부일 · 약 목록)"
+    )
     ocr_confidence = fields.DecimalField(max_digits=5, decimal_places=4, null=True)
     quality_flag = fields.CharEnumField(enum_type=QualityFlag, max_length=20, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
@@ -117,6 +127,15 @@ class PrescriptionItem(models.Model):
     times_per_day = fields.SmallIntField(null=True)
     total_days = fields.SmallIntField(null=True)
     timing = fields.CharField(max_length=50, null=True, description="아침 식후 등")
+    guidance: Any = fields.JSONField(
+        null=True,
+        description="약봉투 약 카드에 약국이 인쇄한 복약 안내 표시 · 문장 목록 (글자 확실도 · 마스킹을 거친 것만, 영수증 띠는 제외). 처방전은 null",
+    )
+    suggested_by = fields.CharField(
+        max_length=20,
+        null=True,
+        description='후보가 추천에서 왔을 때: similar(비슷한 이름) | llm. 화면이 "추천"임을 알림',
+    )
 
     class Meta:
         table = "prescription_items"
