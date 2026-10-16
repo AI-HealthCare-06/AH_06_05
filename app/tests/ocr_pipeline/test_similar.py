@@ -107,3 +107,20 @@ def test_pipeline_marks_the_row_as_needing_confirmation_and_flags_it():
     assert SIMILAR_FLAG in first.flags and first.suggested_by == "similar"
     assert all(r.suggested_by is None for r in res.rows[1:])
     assert all(SIMILAR_FLAG not in r.flags for r in res.rows[1:])  # 나머지 줄은 그대로
+
+
+def test_name_cut_inside_the_parenthesis_is_matched_by_brand_and_strength():
+    """약봉투에서 이름이 두 줄로 나뉘어 괄호 안이 잘려 읽힌 실제 사례 (10/16): 상표 글자 하나가 틀려도 후보로 올린다"""
+    products = [
+        ("1", "가스모틴정5밀리그람(모사프리드시트르산염이수화물)_(5.29mg/1정)"),
+        ("2", "가스모틴산제(모사프리드시트르산염)_(5.29mg/0.5g)"),
+        ("3", "펜크라정375밀리그램(아목시실린-클라불란산칼륨(2:1))_(1정)"),
+        ("4", "펜크라정625밀리그램(아목시실린-클라불란산칼륨(4:1))_(1정)"),
+    ]
+    mm = NameMatcher(products)
+    for cut, edi in (("가스므틴정5밀리그람(모", "1"), ("펜크티정375밀리그램(아", "3")):
+        assert mm.decide(cut).status == NOT_FOUND  # 규칙은 못 찾음
+        sug = mm.similar(cut)
+        assert sug is not None and sug.status == AMBIGUOUS and sug.candidates[0].edi_code == edi, cut
+    # 잘리지 않은 이름의 판단은 그대로, 다른 약의 잘린 이름은 추천하지 않음
+    assert mm.similar("전혀다른약정10밀리그램(가") is None

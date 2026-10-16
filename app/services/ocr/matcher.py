@@ -171,9 +171,20 @@ class NameMatcher:
             return None
         q = trigrams(unify(qb))
         top = heapq.nlargest(top_n, ((similarity(q, t), edi, nm) for edi, nm, t in self.prepare()))
+        if top[0][0] < limit and qb.count("(") > qb.count(")"):
+            # 약봉투는 이름이 두 줄로 나뉘어 "가스므틴정5밀리그람(모"처럼 괄호 안이 잘려 읽히는 경우가 있다 (10/16 실물 약봉투).
+            # 잘린 이름은 후보의 긴 성분 이름과 비교하면 점수가 낮아서, 괄호 앞(상표 + 함량)끼리만 비교한다
+            head = trigrams(unify(qb.split("(")[0]))
+            top = heapq.nlargest(
+                top_n, ((similarity(head, self._head_grams(nm)), edi, nm) for edi, nm, _ in self.prepare())
+            )
         if top[0][0] < limit:
             return None
         return Decision(AMBIGUOUS, round(top[0][0], 3), [Candidate(edi, nm, round(sc, 3)) for sc, edi, nm in top])
+
+    @staticmethod
+    def _head_grams(name: str) -> frozenset[str]:
+        return trigrams(unify(base_name(name).split("(")[0]))
 
     def decide(self, read_name: str, top_n: int = 3, siblings: bool = True) -> Decision:
         """siblings=False면 형제 약 확인을 건너뜀 (이미 사용자가 고르는 경로이거나, 사용자가 직접 이름을 친 검색)"""
