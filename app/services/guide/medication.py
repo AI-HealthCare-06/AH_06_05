@@ -88,6 +88,7 @@ def build(items: list[PrescriptionItem], stored: dict[str, dict[str, Any]] | Non
                 "purpose": base.get("purpose") or PURPOSE_FALLBACK,
                 "howToTake": how_to_take(it, d),  # type: ignore[arg-type]
                 "caution": base.get("caution"),
+                "cautions": base.get("cautions") or [],  # 문장별 목록 (caution은 이어 붙인 문자열) — 명세서 추가 제안
                 "source": base.get("source"),  # 확인 전 약은 출처 없음 (문구가 표에서 나온 게 아님)
             }
         )

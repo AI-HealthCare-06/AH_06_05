@@ -1,7 +1,9 @@
-"""약 안내문을 배치로 한꺼번에 만들어 drug_guides에 저장한다 (실행: python scripts/generate_drug_guides.py [--all])
+"""약 안내문을 배치로 한꺼번에 만들어 drug_guides에 저장한다 (실행: python scripts/generate_drug_guides.py [--all | --seed])
 
 기본은 아직 없는 약만 만든다. --all이면 표 기준으로 다시 만들고, 내용이 바뀐 약은 사람이 확인한 것도 draft로 되돌려 다시 확인받는다
 (내용이 같으면 확인 상태 그대로). 규칙 표(medication.CLASS_*)를 고친 뒤에는 --all로 돌린다.
+--seed는 허가정보 문장(app/services/guide/data/demo_guides.json, 데모 약)을 넣는다. 새 약은 draft로 들어가고, 급여목록에 없는 약은 건너뛴다.
+규칙 표 재생성(--all)은 이 문장들을 덮어쓰지 않는다.
 """
 
 import asyncio
@@ -16,14 +18,14 @@ from app.core.db.databases import TORTOISE_APP_MODELS, TORTOISE_ORM  # noqa: E40
 from app.services.guide import store  # noqa: E402
 
 
-async def main(only_missing: bool) -> None:
+async def main(only_missing: bool, seed: bool) -> None:
     await Tortoise.init(config=TORTOISE_ORM)
     Tortoise.init_models(TORTOISE_APP_MODELS, "models")
     try:
-        print(await store.generate_all(only_missing=only_missing))
+        print(await (store.load_seed() if seed else store.generate_all(only_missing=only_missing)))
     finally:
         await Tortoise.close_connections()
 
 
 if __name__ == "__main__":
-    asyncio.run(main(only_missing="--all" not in sys.argv))
+    asyncio.run(main(only_missing="--all" not in sys.argv, seed="--seed" in sys.argv))

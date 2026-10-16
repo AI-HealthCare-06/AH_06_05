@@ -1,6 +1,7 @@
 """R-1 ~ R-6 — 분석 시작 · 진행 상태 · 다시 시도 · 결과 · 경고 자세히 · 질환 직접 선택
 안전성 점검 DB는 시험용으로 작게 만든 sqlite를 씀 (표 모양은 실제 safety.sqlite와 같음)."""
 
+import json
 import sqlite3
 import tempfile
 from datetime import date, timedelta
@@ -473,3 +474,107 @@ class TestGuideUnits(TestCase):
     def test_every_picker_code_has_facts(self):
         for code in lifestyle.PICKABLE.values():
             assert lifestyle.is_supported(code), code
+
+
+class TestSeedGuides(AnalysisCase):
+    """허가정보 문장(seed) — 데모 약 17개를 drug_guides에 넣고, 약 하나씩 확인한 뒤에만 보여 준다"""
+
+    def seed_file(self, **changes):
+        """시험 약(641900040)용 seed 1건짜리 파일 — 실제 seed의 노바스크 항목을 바탕으로 함"""
+        entry = next(e for e in store.seed_entries() if e["label"].startswith("노바스크"))
+        entry = {**entry, "ediCode": "641900040", **changes}
+        path = Path(self._tmp.name) / "seed.json"
+        path.write_text(json.dumps({"guides": [entry]}, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    async def medication_items(self, client, headers, user):
+        rx = await self.prescription(user, ["641900040"], ("I10",))
+        aid = (await self.start(client, headers, rx)).json()["analysisId"]
+        r = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+        return r["medication"]["items"]
+
+    def test_real_seed_file_is_well_formed(self):
+        entries = store.seed_entries()
+        assert len(entries) == 17 and len({e["ediCode"] for e in entries}) == 17
+        for e in entries:
+            assert e["purpose"] and e["purpose"].endswith("약이에요") and e["purposeSources"], e["label"]
+            assert 1 <= len(e["cautions"]) <= 3, e["label"]
+            for c in e["cautions"]:
+                assert c["text"].endswith(".") and c["sources"], (e["label"], c["text"])
+                assert all(s["id"] and s["text"] for s in c["sources"]), (e["label"], c["text"])
+            assert e["permit"]["itemSeq"] and e["model"] and e["promptVer"]
+
+    def test_real_seed_urgent_wording_has_urgent_source(
+        self,
+    ):  # "바로 병원 · 즉시"는 근거 원문에 급하다는 말이 있을 때만
+        urgent = (
+            "즉시",
+            "즉각",
+            "치명",
+            "중증",
+            "심각",
+            "중대한",
+            "급격",
+            "급성",
+            "아낙필락시스",
+            "사망",
+            "응급",
+        )  # 샌드박스 검증 규칙과 같음
+        for e in store.seed_entries():
+            for c in e["cautions"]:
+                if "바로 병원" in c["text"] or "즉시" in c["text"]:
+                    assert any(u in s["text"] for s in c["sources"] for u in urgent), (e["label"], c["text"])
+
+    async def test_seed_is_draft_until_a_person_approves_each_drug(self):
+        path = self.seed_file()
+        r = await store.load_seed(path)
+        assert r == {"created": 1, "updated": 0, "reset": 0, "skipped": 0, "missing": []}
+        g = await DrugGuide.get(edi_code="641900040")
+        assert g.review_status == ReviewStatus.DRAFT and g.model_name == "gpt-4o-mini" and g.prompt_ver
+        assert any(e["kind"] == "drug_details" and e["use"] == "caution1" and e["text"] for e in g.evidence_ids)
+        async with self.client() as client:
+            headers, user = await self.auth(client, "s1@example.com")
+            it = (await self.medication_items(client, headers, user))[0]
+            assert it["caution"] is None and it["cautions"] == [] and it["source"] is None  # 확인 전에는 안 나감
+            assert await store.review_drugs(["641900040", "000000000"], ReviewStatus.APPROVED, "채연") == 1
+            await Analysis.all().delete()
+            it = (await self.medication_items(client, headers, user))[0]
+            assert it["purpose"] == "고혈압과 심장병에 쓰는 약이에요" and it["howToTake"].startswith("하루 2번")
+            assert it["cautions"] == [
+                "부종이 생기면 의사에게 알리세요.",
+                "자몽이나 자몽주스는 함께 드시는 것을 피하세요.",
+            ]
+            assert it["caution"] == "\n".join(it["cautions"])  # 명세서의 caution(문자열)은 문장을 줄바꿈으로 이은 것
+            assert "허가정보" in it["source"] and "허가일 2006-09-06" in it["source"]
+
+    async def test_load_seed_is_repeatable_and_resets_review_only_when_changed(self):
+        path = self.seed_file()
+        await store.load_seed(path)
+        await store.review_drugs(["641900040"], ReviewStatus.APPROVED, "채연")
+        assert (await store.load_seed(path))["skipped"] == 1
+        assert (await DrugGuide.get(edi_code="641900040")).review_status == ReviewStatus.APPROVED
+        path = self.seed_file(purpose="바뀐 쓰임")
+        assert (await store.load_seed(path)) == {"created": 0, "updated": 0, "reset": 1, "skipped": 0, "missing": []}
+        g = await DrugGuide.get(edi_code="641900040")
+        assert g.review_status == ReviewStatus.DRAFT and g.reviewed_by is None and g.content["purpose"] == "바뀐 쓰임"
+
+    async def test_drug_not_in_master_is_reported_not_inserted(self):
+        r = await store.load_seed(self.seed_file(ediCode="999999999"))
+        assert r["created"] == 0 and r["missing"] == ["999999999"]
+        assert not await DrugGuide.filter(edi_code="999999999").exists()
+
+    async def test_rule_table_regeneration_and_group_review_leave_seed_alone(self):
+        await store.load_seed(self.seed_file())
+        before = (await DrugGuide.get(edi_code="641900040")).content
+        n = len(PRODUCTS)
+        r = await store.generate_all(only_missing=False)
+        assert r == {"created": n - 1, "updated": 0, "reset": 0, "skipped": 1}
+        assert (await DrugGuide.get(edi_code="641900040")).content == before
+        gs = await store.groups()  # 묶음 확인에는 규칙 표 약만
+        assert sum(g["count"] for g in gs) == n - 1
+        for g in gs:
+            await store.review_group(g["key"], ReviewStatus.APPROVED, "채연")
+        assert (await DrugGuide.get(edi_code="641900040")).review_status == ReviewStatus.DRAFT
+        # 반대로 약 단위 확인은 규칙 표 약을 건드리지 않음
+        assert await store.review_drugs(["644300010"], ReviewStatus.APPROVED, "채연") == 0
+        assert [g["ediCode"] for g in await store.seed_guides()] == ["641900040"]
