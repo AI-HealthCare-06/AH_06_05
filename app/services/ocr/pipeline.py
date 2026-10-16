@@ -16,6 +16,7 @@ from app.services.ocr.mask_layout import join_masked
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NOT_FOUND, Decision, NameMatcher
 from app.services.ocr.meta import parse_meta
 from app.services.ocr.pouch import dispensed_date, parse_pouch
+from app.services.ocr.pouch_panel import panel_words, refine
 from app.services.ocr.table import parse_table
 
 SUGGESTED_SIMILAR = "similar"  # RowRead.suggested_by 값 (LLM 추천은 "llm")
@@ -25,6 +26,7 @@ SIMILAR_FLAG = (
 SIBLING_FLAG = (
     "이름이 비슷한 다른 약이 있어요"  # 글자 하나 차이의 다른 성분 약이 있어 사용자가 고름 (matcher.decide의 siblings)
 )
+PANEL_FLAG = "약품명 칸의 이름으로 바로잡았어요"  # 약봉투 영수증 칸 이름이 잘리거나 잘못 읽혀서, 오른쪽 "약품명" 칸의 같은 약 이름으로 바꿈 (pouch_panel)
 CUT_FLAG = "약 이름이 잘려 있어요"  # 약봉투 카드가 긴 이름을 "···"로 줄인 경우: 함량 등 뒷부분이 없어 자동으로 정하지 않고 사용자가 고름
 LOW_CONF_FLAG = (
     "약 이름 글자가 흐리게 읽혔어요"  # CLOVA가 이름 글자를 낮은 확신으로 읽음: 이름이 맞게 읽혔는지 사용자가 확인
@@ -157,19 +159,37 @@ def read(  # noqa: C901
     if table.headerless:
         out.meta_flags.append(HEADERLESS_FLAG)
 
+    panel = panel_words(pfields) if pouch else []
     for r in table.rows:
         dose, times, days = r.nums
         flags = [
             f"{label} 못 읽음" for label, v in (("1회량", dose), ("하루 횟수", times), ("총 일수", days)) if v is None
         ]
         flags += [f"{x} 범위 밖" for x in numeric.check(dose, times, days)]
-        decision = matcher.decide(r.name)
+        name = r.name
+        decision = matcher.decide(name)
+        fixed = False
+        if panel and (
+            decision.status != FOUND
+            or name.count("(") > name.count(")")
+            or r.cut
+            or (r.conf is not None and r.conf < LOW_CONF)
+        ):
+            # 영수증 칸 이름을 믿기 어려울 때만 오른쪽 "약품명" 칸의 이름으로 바꾼다 (이미 잘 찾은 이름은 그대로 둠)
+            if (better := refine(name, panel)) and better != name:
+                new = matcher.decide(better)
+                same = decision.status == FOUND and [c.edi_code for c in new.candidates[:1]] == [
+                    c.edi_code for c in decision.candidates[:1]
+                ]
+                name, decision, fixed = better, new, True
+                if not same:  # 이미 같은 약을 찾았으면 이름만 깨끗하게 바꾸고 표시는 붙이지 않는다
+                    flags.append(PANEL_FLAG)
         # 머리글 없는 목록은 숫자가 어느 칸인지 추정한 것이고 글자도 흐린 경우가 많아, 자동으로 정하지 않고 줄마다 사용자가 확인한다
         for unsure, flag in (
-            (r.cut, CUT_FLAG),
+            (r.cut and not fixed, CUT_FLAG),
             (r.unsure, UNSURE_FLAG),
             (r.nums_unsure, NUMS_FLAG),
-            (r.conf is not None and r.conf < LOW_CONF, LOW_CONF_FLAG),
+            (r.conf is not None and r.conf < LOW_CONF and not fixed, LOW_CONF_FLAG),
             (table.headerless, HEADERLESS_FLAG),
         ):
             if not unsure:
@@ -181,10 +201,10 @@ def read(  # noqa: C901
         if decision.sibling:
             flags.append(SIBLING_FLAG)
         suggested_by = None
-        if decision.status == NOT_FOUND and (similar := matcher.similar(r.name)) is not None:
+        if decision.status == NOT_FOUND and (similar := matcher.similar(name)) is not None:
             # 사용자가 고르는 후보로만 올린다 (자동 확정 아님). 저장할 때 match_score는 비운다 (suggested_by 참고)
             decision = similar
             flags.append(SIMILAR_FLAG)
             suggested_by = SUGGESTED_SIMILAR
-        out.rows.append(RowRead(r.name, decision, dose, times, days, flags, suggested_by, list(r.guide)))
+        out.rows.append(RowRead(name, decision, dose, times, days, flags, suggested_by, list(r.guide)))
     return out
