@@ -47,6 +47,8 @@ export default function Capture() {
       allowsMultipleSelection: true,
       selectionLimit: Math.max(left, 1),
       quality: 0.6,
+      // 아이폰 사진(HEIC)을 서버가 받는 JPEG로 바꿔서 가져옴 (서버는 JPG, PNG, PDF만 받음)
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
     });
     if (!r.canceled) add(r.assets.map((a) => a.uri));
   };
