@@ -84,6 +84,7 @@ Table ocr_jobs {
   status        varchar(20) [not null, note: 'v1.2 · queued / running / done / failed']
   file_count    smallint    [not null, note: '한 번에 올린 사진 수 (최대 5)']
   error_code    varchar(50) [note: '전체 실패 시 OCR_FAILED 등']
+  duplicates    jsonb       [note: 'v1.5 이미 있는 처방전이라 새로 저장하지 않은 사진 [{fileIndex, prescriptionId}] (10/14 중복 처방전 처리)']
   created_at    timestamp   [default: `now()`]
   finished_at   timestamp
 
@@ -98,7 +99,9 @@ Table prescriptions {
   doc_type       varchar(20) [not null, note: 'v1.0 · prescription(처방전) / pill_bag(약봉투). 약봉투는 질병코드 없음 → RG-05-E1']
   issued_date    date        [note: '처방 교부일 (약봉투는 조제일) — 약봉투에는 교부일이 없고, 조제일이 약을 받은 날']
   hospital_name  varchar(200)
-  ocr_raw_text   text        [note: 'OCR 원문 (원본 이미지는 저장하지 않음) · 암호화']
+  ocr_raw_text   text        [note: 'v1.5 OCR 원문은 저장하지 않음 (10/15 결정). 칸만 남겨 두고 비움 (원본 이미지도 저장하지 않음)']
+  notices        jsonb       [note: 'v1.5 사진을 읽을 때 사용자가 확인해야 할 점 문장 목록 (줄 수 불일치, 칸 순서 추정, 날짜 이상 등). 없으면 null']
+  content_key    varchar(64) [note: 'v1.5 같은 처방전 판별용 해시 (병원, 교부일, 약 목록). 인덱스']
   ocr_confidence decimal(5,4)
   quality_flag   varchar(20) [note: 'v1.0 · ok / low (OC-01-E1에서 "그래도 계속 진행" 시)']
   created_at     timestamp   [default: `now()`]
@@ -131,6 +134,8 @@ Table prescription_items {
   times_per_day   smallint
   total_days      smallint
   timing          varchar(50)   [note: '아침 식후 등']
+  guidance        jsonb         [note: 'v1.5 약봉투 약 카드에 약국이 인쇄한 복약 안내 문장 목록 (마스킹을 거친 것만, 영수증 띠는 제외). 처방전은 null']
+  suggested_by    varchar(20)   [note: 'v1.5 후보가 추천에서 왔을 때 similar(비슷한 이름) / llm. 화면이 "추천"임을 알림']
 
   Note: 'needs_confirm · unmatched가 남아 있으면 분석 시작 불가 (REQ-033). 1일 총량 = dose_per_time * times_per_day. 약이 정해졌으면(auto · user_confirmed) edi_code · item_seq 중 하나는 있음'
 }
@@ -219,6 +224,7 @@ Table analysis_warnings {
   notice_date   date
   daily_total   decimal(12,3) [note: '1일 최대용량 초과일 때만']
   max_daily     decimal(12,3)
+  detail        jsonb         [note: 'v1.5 약이 3개 이상인 경고의 전체 항목 번호, 성분, 근거 구분']
 
   Note: 'DB 조회로 결정적으로 산출. 0건이면 RG-02-E1'
 }
