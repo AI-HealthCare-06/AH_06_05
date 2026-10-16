@@ -1,6 +1,6 @@
 // 가짜 응답 데이터: OCR 흐름(O-1 ~ O-5)과 분석 흐름(R-1 ~ R-5). 모양은 API 명세서 v1.5 초안 그대로
 // 약 이름과 경고는 화면 확인용 예시예요. 실제 판정은 서버가 DUR 데이터로 함
-// EXPO_PUBLIC_MOCK_SCENARIO로 예외 화면을 불러올 수 있음: quality | notdoc | ocrfail | guidefail | pillbag
+// EXPO_PUBLIC_MOCK_SCENARIO로 예외 화면을 불러올 수 있음: quality | notdoc | ocrfail | guidefail | pillbag | duplicate | duplicate
 
 import { PICKABLE_DISEASES } from '@/features/rag/diseases';
 
@@ -19,6 +19,9 @@ type Item = {
   timesPerDay: number | null;
   totalDays: number | null;
   timing: string | null;
+  suggestedBy: 'similar' | 'llm' | null;
+  guidance: string[];
+  checkFields: string[];
 };
 type Rx = {
   id: number;
@@ -26,18 +29,23 @@ type Rx = {
   issuedDate: string;
   hospitalName: string;
   diseaseCodes: string[];
+  notices: string[];
   items: Item[];
 };
 
 const done = (id: number, raw: string, name: string, edi: string, times: number, days: number, timing: string): Item => ({
   id, rawName: raw, itemName: name, matchStatus: 'auto', ediCode: edi, itemSeq: null, candidates: [],
   dosePerTime: 1, timesPerDay: times, totalDays: days, timing,
+  suggestedBy: null,
+  guidance: SCENARIO === 'pillbag' ? ['아침 식후 30분에 드세요', '졸음이 올 수 있어요'] : [],
+  checkFields: [],
 });
 
 const freshRx = (): Rx[] => [
   {
     id: 101, docType: SCENARIO === 'pillbag' ? 'pill_bag' : 'prescription', issuedDate: '2026-09-20', hospitalName: '○○내과',
     diseaseCodes: SCENARIO === 'pillbag' ? [] : ['I10', 'E11', 'E78'],
+    notices: SCENARIO === 'pillbag' ? ['약 이름 줄 수와 복용 칸 줄 수가 달라 칸 순서를 추정했어요. 약과 복용법이 맞는지 확인해 주세요.'] : [],
     items: [
       done(1001, '노바스크정 5mg', '노바스크정5밀리그람', '073400360', 1, 30, '아침 식후'),
       {
@@ -48,13 +56,14 @@ const freshRx = (): Rx[] => [
           { ediCode: '651200020', itemSeq: null, itemName: '메티마졸정5밀리그램', score: 0.61 },
         ],
         dosePerTime: 1, timesPerDay: 2, totalDays: 30, timing: '아침 저녁 식후',
+        suggestedBy: 'similar', guidance: [], checkFields: [],
       },
       done(1003, '심바스타틴정 20mg', '심바스타틴정20밀리그램', '623006210', 1, 30, '저녁 식후'),
       done(1004, '아스피린정 100mg', '아스피린정100밀리그램', '642104440', 1, 30, '아침 식후'),
     ],
   },
   {
-    id: 102, docType: 'prescription', issuedDate: '2026-09-26', hospitalName: '△△의원', diseaseCodes: ['J20'],
+    id: 102, docType: 'prescription', issuedDate: '2026-09-26', hospitalName: '△△의원', diseaseCodes: ['J20'], notices: [],
     items: [
       done(1005, '암로디핀정 5mg', '암로디핀정5밀리그램', '649805060', 1, 7, '아침 식후'),
       done(1006, '클래리스로마이신정 250mg', '클래리스로마이신정250밀리그램', '649404570', 2, 7, '아침 저녁 식후'),
@@ -62,6 +71,7 @@ const freshRx = (): Rx[] => [
       {
         id: 1008, rawName: '○○연질캡슐', itemName: null, matchStatus: 'unmatched', ediCode: null, itemSeq: null,
         candidates: [], dosePerTime: 1, timesPerDay: 3, totalDays: 7, timing: '식후',
+        suggestedBy: null, guidance: [], checkFields: ['총 일수'],
       },
     ],
   },
@@ -97,12 +107,12 @@ export function startJob() {
 // O-5
 export function getJob() {
   const t = elapsed(jobStartedAt);
-  if (t < 700) return ok({ jobId: 9001, status: 'queued', prescriptionIds: [], failedFiles: [] });
-  if (t < 1800) return ok({ jobId: 9001, status: 'running', prescriptionIds: [], failedFiles: [] });
-  if (SCENARIO === 'quality') return ok({ jobId: 9001, status: 'done', prescriptionIds: [], failedFiles: [{ fileIndex: 1, code: 'IMAGE_QUALITY_LOW' }] });
-  if (SCENARIO === 'notdoc') return ok({ jobId: 9001, status: 'done', prescriptionIds: [], failedFiles: [{ fileIndex: 1, code: 'NOT_A_DOCUMENT' }] });
-  if (SCENARIO === 'ocrfail') return ok({ jobId: 9001, status: 'failed', prescriptionIds: [], failedFiles: [{ fileIndex: 1, code: 'OCR_FAILED' }] });
-  return ok({ jobId: 9001, status: 'done', prescriptionIds: rxs.map((r) => r.id), failedFiles: [] });
+  if (t < 700) return ok({ jobId: 9001, status: 'queued', prescriptionIds: [], failedFiles: [], duplicatedFiles: [] });
+  if (t < 1800) return ok({ jobId: 9001, status: 'running', prescriptionIds: [], failedFiles: [], duplicatedFiles: [] });
+  if (SCENARIO === 'quality') return ok({ jobId: 9001, status: 'done', prescriptionIds: [], failedFiles: [{ fileIndex: 1, code: 'IMAGE_QUALITY_LOW' }], duplicatedFiles: [] });
+  if (SCENARIO === 'notdoc') return ok({ jobId: 9001, status: 'done', prescriptionIds: [], failedFiles: [{ fileIndex: 1, code: 'NOT_A_DOCUMENT' }], duplicatedFiles: [] });
+  if (SCENARIO === 'ocrfail') return ok({ jobId: 9001, status: 'failed', prescriptionIds: [], failedFiles: [{ fileIndex: 1, code: 'OCR_FAILED' }], duplicatedFiles: [] });
+  return ok({ jobId: 9001, status: 'done', prescriptionIds: rxs.map((r) => r.id), failedFiles: [], duplicatedFiles: SCENARIO === 'duplicate' ? [{ fileIndex: 2, prescriptionId: 101 }] : [] });
 }
 
 // O-2
@@ -234,7 +244,7 @@ export function analysisResult() {
         itemId: i.id, ediCode: i.ediCode, itemName: i.itemName ?? i.rawName,
         category: '복약 안내 예시', purpose: '(허가정보를 바탕으로 AI가 쉬운 말로 쓰는 자리)',
         howToTake: `하루 ${i.timesPerDay}번, ${i.timing} ${i.dosePerTime}알 · ${i.totalDays}일`,
-        caution: '(허가정보에서 가져온 주의 문장 자리)', source: '식약처 의약품 허가정보',
+        caution: '(허가정보에서 가져온 주의 문장 자리)', cautions: ['(허가정보 문장을 쉬운 말로 쓴 첫째 주의)', '(둘째 주의)'], source: '식약처 의약품 허가정보',
       })),
     },
     lifestyle: {

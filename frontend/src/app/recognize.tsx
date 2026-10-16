@@ -25,7 +25,7 @@ const timing = (it: PrescriptionItem) =>
 // OC-02 인식 결과 확인 · 수정 (O-2 조회, O-3 수정, O-4 검색)
 export default function Recognize() {
   const router = useRouter();
-  const { prescriptionIds } = useFlow();
+  const { prescriptionIds, duplicates } = useFlow();
   const [list, setList] = useState<Prescription[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [pick, setPick] = useState<Record<number, string | null>>({});
@@ -75,6 +75,7 @@ export default function Recognize() {
   const blocking = items.map((v, k) => ({ ...v, k })).filter(({ it }) => it.matchStatus === 'needs_confirm' || it.matchStatus === 'unmatched');
   const usable = items.some(({ it }) => it.matchStatus !== 'excluded' && (it.ediCode || it.itemSeq));
   const codes = [...new Set(list.flatMap((x) => x.diseaseCodes))];
+  const notices = list.flatMap((x) => x.notices ?? []);
 
   return (
     <Screen
@@ -89,6 +90,20 @@ export default function Recognize() {
     >
       <Text style={[T.body, { color: C.text2 }]}>{r.intro}</Text>
       <Text style={[T.bodyM, { marginTop: 8 }]}>{r.summary(list.length, list.map((x) => x.hospitalName ?? '').filter(Boolean).join(', '))}</Text>
+
+      {duplicates.length > 0 && (
+        <Text style={[T.caption, { marginTop: 8 }]}>{r.duplicates(duplicates.map((n) => `${n}번째`).join(' · '))}</Text>
+      )}
+      {notices.length > 0 && (
+        <Card tone="caution" style={{ marginTop: 12, gap: 4 }}>
+          <Text style={T.label}>{r.noticesTitle}</Text>
+          {notices.map((n) => (
+            <Text key={n} style={T.caption}>
+              · {n}
+            </Text>
+          ))}
+        </Card>
+      )}
 
       <Card tone={codes.length ? 'info' : 'caution'} style={{ marginTop: 12, gap: 4 }}>
         <Text style={T.label}>{r.diseaseTitle}</Text>
@@ -124,6 +139,22 @@ export default function Recognize() {
                 <Chip label={label} tone={tone} />
               </View>
 
+              {it.matchStatus !== 'excluded' && (it.checkFields ?? []).length > 0 && (
+                <Text style={[T.caption, { color: C.danger, marginTop: 8 }]}>※ {r.checkFields(it.checkFields.join(', '))}</Text>
+              )}
+
+              {it.matchStatus !== 'excluded' && (it.guidance ?? []).length > 0 && (
+                <View style={{ marginTop: 8, gap: 2 }}>
+                  <Text style={T.label}>{r.guidanceTitle}</Text>
+                  {it.guidance.map((g) => (
+                    <Text key={g} style={T.caption}>
+                      · {g}
+                    </Text>
+                  ))}
+                  <Text style={T.small}>{r.guidanceNote}</Text>
+                </View>
+              )}
+
               {(it.matchStatus === 'auto' || it.matchStatus === 'user_confirmed') && (
                 <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setSearch({ rxId: rx.id, itemId: it.id })}>
                   <Text style={[T.bodyM, { color: C.p700, marginTop: 8 }]}>{r.edit}</Text>
@@ -132,7 +163,7 @@ export default function Recognize() {
 
               {it.matchStatus === 'needs_confirm' && (
                 <View style={{ marginTop: 12, gap: 8 }}>
-                  <Text style={T.caption}>{r.similar}</Text>
+                  <Text style={T.caption}>{it.suggestedBy === 'llm' ? r.suggestedLlm : r.similar}</Text>
                   {it.candidates.map((c) => {
                     const on = chosen === c.ediCode;
                     return (

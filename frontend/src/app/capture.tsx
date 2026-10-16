@@ -18,7 +18,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // OC-01 촬영 · 업로드, OC-01-E1 화질 낮음, OC-01-E2 카메라 권한, OC-01-E3 문서 아님, OC-02-E1 인식 실패
 export default function Capture() {
   const router = useRouter();
-  const { photos, setPhotos, setPrescriptionIds } = useFlow();
+  const { photos, setPhotos, setPrescriptionIds, setDuplicates } = useFlow();
   const [reading, setReading] = useState(false);
   const [tips, setTips] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -65,6 +65,7 @@ export default function Capture() {
         const job = await getOcrJob(jobId);
         if (job.status === 'queued' || job.status === 'running') continue;
         const bad = job.failedFiles[0];
+        setDuplicates((job.duplicatedFiles ?? []).map((d) => d.fileIndex));
         if (job.status === 'failed') return setProblem({ kind: 'ocrFailed' });
         if (bad && job.prescriptionIds.length === 0) {
           return setProblem({ kind: bad.code === 'NOT_A_DOCUMENT' ? 'notDocument' : 'quality', fileIndex: bad.fileIndex });

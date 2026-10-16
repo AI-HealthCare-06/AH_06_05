@@ -211,7 +211,19 @@ function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResu
           </View>
           <Field label={r.purpose} value={m.purpose} />
           <Field label={r.howTo} value={m.howToTake} />
-          <Field label={r.caution} value={m.caution} />
+          {m.cautions?.length ? (
+            <View style={{ gap: 2 }}>
+              <Text style={T.bodyM}>{r.caution}</Text>
+              {m.cautions.map((c) => (
+                <Text key={c} style={T.body}>
+                  · {c}
+                </Text>
+              ))}
+              <Text style={T.small}>{r.cautionsFoot}</Text>
+            </View>
+          ) : (
+            <Field label={r.caution} value={m.caution} />
+          )}
           {m.source && <Text style={T.caption}>{r.source(m.source)}</Text>}
           <Pressable accessibilityRole="button" onPress={onAsk} style={{ minHeight: 48, justifyContent: 'center' }}>
             <Text style={{ color: C.p700, fontWeight: '600', fontSize: 16 }}>{r.askDrug} {'>'}</Text>

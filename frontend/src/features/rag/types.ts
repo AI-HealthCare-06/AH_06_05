@@ -51,7 +51,8 @@ export type AnalysisResult = {
       category: string | null;
       purpose: string | null;
       howToTake: string | null;
-      caution: string | null;
+      caution: string | null; // cautions를 줄바꿈으로 이은 문자열 (명세서의 caution)
+      cautions: string[]; // 문장별 목록 (명세서에 추가 제안)
       source: string | null;
     }[];
   };
