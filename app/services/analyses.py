@@ -388,6 +388,9 @@ async def get_result(user: User, analysis_id: int) -> dict[str, Any]:
         for i in items
         if i.match_status not in USABLE
     ] + [{"rawName": base_name(i.drug.item_name), "reason": "not_oral"} for i in usable if i.drug.route != "내복"]
+    checked = len(usable) - sum(
+        1 for e in excluded if e["reason"] == "not_oral"
+    )  # 외용약은 점검에서 빠지므로 점검한 약 수에 넣지 않음
     med_id, med_status, med = await _guide_content(a, GuideSection.MEDICATION)
     life_id, life_status, life = await _guide_content(a, GuideSection.LIFESTYLE)
     counts = Counter(w.severity for w in rows)
@@ -398,7 +401,7 @@ async def get_result(user: User, analysis_id: int) -> dict[str, Any]:
         "summary": {
             "prescriptionCount": len(rxs),
             "hospitals": hospitals,
-            "drugCount": len(usable),
+            "drugCount": checked,
             "warningCounts": {k: counts.get(k, 0) for k in ("danger", "caution", "info")},
         },
         "excludedDrugs": excluded,

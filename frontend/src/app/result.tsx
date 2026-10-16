@@ -116,7 +116,15 @@ export default function Result() {
 // 점검에서 빠진 약은 숨기지 않고 맨 위에 보여 줌 (REQ-032)
 function Excluded({ data }: { data: AnalysisResult }) {
   if (data.excludedDrugs.length === 0) return null;
-  return <Text style={[T.caption, { color: C.warning, marginTop: 12 }]}>{r.excluded(data.excludedDrugs.map((e) => `"${e.rawName}"`).join(', '))}</Text>;
+  const names = (list: typeof data.excludedDrugs) => list.map((e) => `"${e.rawName}"`).join(', ');
+  const notOral = data.excludedDrugs.filter((e) => e.reason === 'not_oral');
+  const missing = data.excludedDrugs.filter((e) => e.reason !== 'not_oral');
+  return (
+    <>
+      {missing.length > 0 && <Text style={[T.caption, { color: C.warning, marginTop: 12 }]}>{r.excluded(names(missing))}</Text>}
+      {notOral.length > 0 && <Text style={[T.caption, { color: C.warning, marginTop: 12 }]}>{r.notOral(names(notOral))}</Text>}
+    </>
+  );
 }
 
 function Safety({ data, onDetail }: { data: AnalysisResult; onDetail: (id: number) => void }) {
@@ -234,9 +242,9 @@ function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResu
         <Card key={e.rawName} tone="caution" style={{ gap: 6 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
             <Text style={[T.subhead, { flex: 1 }]}>{e.rawName}</Text>
-            <Chip label={r.notFoundChip} tone="danger" />
+            <Chip label={e.reason === 'not_oral' ? r.notOralChip : r.notFoundChip} tone={e.reason === 'not_oral' ? 'neutral' : 'danger'} />
           </View>
-          <Text style={T.body}>{r.notFoundBody}</Text>
+          <Text style={T.body}>{e.reason === 'not_oral' ? r.notOralBody : r.notFoundBody}</Text>
         </Card>
       ))}
     </View>
