@@ -1,5 +1,6 @@
 """근거 검색 전체 흐름 시험. OpenAI는 같은 모양의 가짜로 바꿔서, 실제 DB(pgvector, pg_trgm)에서 돌린다"""
 
+import asyncio
 import json
 import tempfile
 from pathlib import Path
@@ -186,6 +187,30 @@ class SearchTest(TestCase):
         bad = await search("질문", [DRUG], [], llm=FakeLLM(a="ENOUGH", b="INSUFFICIENT", c="NONE"))
         assert bad.reason == "insufficient" and bad.evidence == []
         assert bad.verdicts is not None and bad.verdicts.passes == (True, False, False)
+
+    async def test_coverage_full_partial_none(self) -> None:
+        await loader.load_rows([row("D:1:S1", 1)])
+        full = await search("질문", [DRUG], [], llm=FakeLLM())
+        assert full.reason is None and full.coverage == "full"
+        partial = await search("질문", [DRUG], [], llm=FakeLLM(a="PARTIAL", b="PARTIAL", c="FULL"))
+        assert partial.reason is None and len(partial.evidence) == 1 and partial.coverage == "partial"
+        blocked = await search("질문", [DRUG], [], llm=FakeLLM(a="ENOUGH", b="INSUFFICIENT", c="NONE"))
+        assert blocked.reason == "insufficient" and blocked.coverage == "none"
+        no_code = await search("질문", [], [], llm=NoCallLLM())
+        assert no_code.reason == "no_code" and no_code.coverage == "none"
+
+    async def test_budget_sec_cuts_off_slow_search(self) -> None:
+        await loader.load_rows([row("D:1:S1", 1)])
+
+        class SlowLLM(FakeLLM):
+            async def complete(self, prompt: str) -> str:
+                await asyncio.sleep(0.5)
+                return await super().complete(prompt)
+
+        slow = await search("질문", [DRUG], [], llm=SlowLLM(), budget_sec=0.05)
+        assert slow.reason == "timeout" and slow.evidence == [] and slow.coverage == "none"
+        fast = await search("질문", [DRUG], [], llm=FakeLLM(), budget_sec=5)
+        assert fast.reason is None and len(fast.evidence) == 1
 
     async def test_risk_topic_blocked_without_two_full(self) -> None:
         await loader.load_rows([row("D:1:S1", 1)])

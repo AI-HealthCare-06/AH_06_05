@@ -77,6 +77,30 @@ def test_gives_up_after_max_attempts() -> None:
     assert calls == MAX_ATTEMPTS
 
 
+def test_attempts_and_timeout_can_be_set_per_client() -> None:
+    calls = 0
+    seen_timeout: list[Any] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    def factory(**kwargs: Any) -> httpx.AsyncClient:
+        seen_timeout.append(kwargs.get("timeout"))
+        return _RealClient(transport=httpx.MockTransport(handler), **kwargs)
+
+    with (
+        patch.object(config, "OPENAI_API_KEY", "sk-test"),
+        patch.object(llm_module.asyncio, "sleep", AsyncMock()),
+        patch.object(llm_module.httpx, "AsyncClient", factory),
+        pytest.raises(LLMError),
+    ):
+        run(OpenAIClient(timeout_sec=3.5, max_attempts=2).complete("질문"))
+    assert calls == 2 and seen_timeout == [3.5]
+    assert OpenAIClient().max_attempts == MAX_ATTEMPTS and OpenAIClient().timeout_sec == config.RAG_LLM_TIMEOUT_SEC
+
+
 def test_client_error_is_not_retried_and_hides_key() -> None:
     calls = 0
 

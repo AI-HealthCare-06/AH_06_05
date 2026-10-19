@@ -64,9 +64,8 @@ class Config(BaseSettings):
     OCR_LLM_FIX: bool = False
     OPENAI_API_KEY: str = ""
     OPENAI_CHAT_MODEL: str = "gpt-4o-mini"
-    OPENAI_EMBEDDING_MODEL: str = (
-        "text-embedding-3-small"  # 근거 검색 임베딩 (1536차원, 바꾸면 evidence_chunks 벡터를 새로 만들어야 함)
-    )
+    # 근거 검색 임베딩 (1536차원, 바꾸면 evidence_chunks 벡터를 새로 만들어야 함)
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     RAG_LLM_TIMEOUT_SEC: float = 30.0  # 근거 검색 한 번의 OpenAI 호출 제한 시간 (재작성, 고르기, 판정, 임베딩 각각)
     OCR_LLM_TIMEOUT_SEC: float = 10.0
     OCR_LLM_MAX_NAMES: int = 8  # 처방전 한 장당 LLM에 보내는 약 이름 최대 개수 (비용 상한)

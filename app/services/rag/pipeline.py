@@ -5,7 +5,15 @@
 
 돌려주는 `reason` (목록이 빌 때만): no_code(약도 질환도 없음), no_candidate(그 약과 질환의 조각이 없음),
 no_selection(고른 글이 없음), insufficient(판정 다수결 통과 못 함), risk_blocked(위험주제인데 완전 통과가 아님),
-llm_error(OpenAI 호출 실패, 안전 쪽으로 빈 목록). 챗봇은 reason이 있으면 no_evidence로 이어가면 된다.
+llm_error(OpenAI 호출 실패, 안전 쪽으로 빈 목록), timeout(`budget_sec`을 넘김, 안전 쪽으로 빈 목록).
+챗봇은 reason이 있으면 no_evidence로 이어가면 된다.
+
+시간 인자(모두 선택, 안 넣으면 지금 동작 그대로): `timeout_sec`은 OpenAI 호출 한 번의 제한 시간, `max_attempts`는 한 호출의
+다시 시도 포함 최대 횟수, `budget_sec`은 search() 전체 제한 시간이다. 단계가 차례로 이어져서 앞의 둘만으로는 전체 시간이 정해지지
+않으므로 챗봇 작업 제한(25초)에 맞추려면 `budget_sec`을 쓴다.
+
+돌려주는 `coverage` (챗봇이 답, 부분 답, 확인이 어렵다 중에 고르는 기준): full(완전), partial(부분), none(없음).
+판정 세 개(A, B, C) 중 둘 이상이 "충분" 쪽이면 full, 통과했지만 그렇지 않으면 partial, 통과 못 했거나 목록이 비면 none.
 """
 
 import asyncio
@@ -44,6 +52,13 @@ class SearchResult:
     rewritten: str | None = None
     verdicts: gate.Verdicts | None = None
     seconds: dict[str, float] = field(default_factory=dict)  # 단계별 걸린 시간 (Locust 측정용 기록)
+
+    @property
+    def coverage(self) -> str:
+        """full(완전) / partial(부분) / none(없음). 새 판정을 만드는 것이 아니라 이미 낸 판정 세 개를 하나로 줄인 것"""
+        if not self.evidence or self.verdicts is None:
+            return "none"
+        return "full" if sum(self.verdicts.fulls) >= 2 else "partial"
 
 
 _SOURCE = {"drug": "drug_permit", "fact": "lifestyle_fact", "cross": "cross_rule"}
@@ -155,14 +170,35 @@ async def judge(llm: LLM, question: str, info: str, evidence: list[Chunk]) -> ga
 
 
 async def search(
-    question: str, drug_codes: list[str], disease_codes: list[str], *, top_k: int = MAX_PICK, llm: LLM | None = None
+    question: str,
+    drug_codes: list[str],
+    disease_codes: list[str],
+    *,
+    top_k: int = MAX_PICK,
+    llm: LLM | None = None,
+    timeout_sec: float | None = None,
+    max_attempts: int | None = None,
+    budget_sec: float | None = None,
 ) -> SearchResult:
     """근거 검색 + 판정. 통과하면 evidence, 아니면 빈 목록과 reason. 약도 질환도 없으면 OpenAI를 부르지 않는다"""
+    llm = llm or OpenAIClient(timeout_sec, max_attempts)
+    if budget_sec is None:
+        return await _search(question, drug_codes, disease_codes, top_k=top_k, llm=llm)
+    try:
+        async with asyncio.timeout(budget_sec):
+            return await _search(question, drug_codes, disease_codes, top_k=top_k, llm=llm)
+    except TimeoutError:
+        logger.warning("근거 검색이 제한 시간 %s초를 넘김", budget_sec)
+        return SearchResult(reason="timeout")
+
+
+async def _search(
+    question: str, drug_codes: list[str], disease_codes: list[str], *, top_k: int, llm: LLM
+) -> SearchResult:
     drugs = list(dict.fromkeys(drug_codes))
     diseases = list(dict.fromkeys(disease_codes))
     if not drugs and not diseases:
         return SearchResult(reason="no_code")
-    llm = llm or OpenAIClient()
     result = SearchResult()
     clock = time.perf_counter()
 
