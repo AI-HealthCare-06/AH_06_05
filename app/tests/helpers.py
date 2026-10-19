@@ -11,9 +11,9 @@ def signup_payload(email: str, **overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "email": email,
         "password": PASSWORD,
-        "nickname": "홍길동",
         "birthYear": 1958,
         "sex": "M",
+        "health": {"smoking": "never", "drinking": "monthly"},
         "consents": {"terms": True, "privacy": True, "sensitiveHealth": True},
     }
     payload.update(overrides)

@@ -17,6 +17,7 @@ from tortoise.transactions import in_transaction
 
 from app.core import config
 from app.core.errors import AppError
+from app.dtos.users import HealthResponse
 from app.models.analysis import (
     Analysis,
     AnalysisDisease,
@@ -31,7 +32,7 @@ from app.models.analysis import (
 )
 from app.models.masters import Disease
 from app.models.ocr import MatchStatus, Prescription, PrescriptionDisease, PrescriptionItem
-from app.models.users import User
+from app.models.users import User, UserHealthProfile
 from app.services import safety
 from app.services.drug_names import base_name
 from app.services.guide import lifestyle, medication, store
@@ -120,8 +121,10 @@ async def create_analysis(user: User, prescription_ids: list[int]) -> Analysis:
         raise AppError(
             status.HTTP_409_CONFLICT, "ITEMS_NOT_CONFIRMED", "점검할 약이 없어요. 약을 한 개 이상 확인해 주세요."
         )
+    profile = await UserHealthProfile.get_or_none(user=user)
+    snapshot = HealthResponse.from_profile(profile).as_json() if profile else None  # 분석 시점 건강 정보 (#101)
     async with in_transaction():
-        analysis = await Analysis.create(user=user, user_birth_year=user.birth_year)
+        analysis = await Analysis.create(user=user, user_birth_year=user.birth_year, health_snapshot=snapshot)
         for rx in rx_list:
             await AnalysisPrescription.create(analysis=analysis, prescription=rx)
         codes = (

@@ -1,4 +1,4 @@
-# API 명세서 v1.5 초안 (R-4 약 번호와 복약 안내, 별명 제거, 5장 챗봇 정리가 바뀜, 나머지는 v1.4 그대로)
+# API 명세서 v1.5 초안 (R-4 약 번호와 복약 안내, 별명 제거, 2장 건강 정보, 5장 챗봇 정리가 바뀜, 나머지는 v1.4 그대로)
 
 **5팀 · 2026. 10. 7 · 작성 이형준 · 수정 김채연(PM)**
 
@@ -373,7 +373,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | HTTP | code | 화면 |
 |---|---|---|
 | 409 | `EMAIL_DUPLICATED` (`field: email`) | CM-02-E1 "이미 가입된 이메일이에요" |
-| 400 | `VALIDATION_ERROR` (`field: password` 등) | CM-02-E1 해당 칸 |
+| 400 | `VALIDATION_ERROR` (`field: password` 등) | CM-02-E1 해당 칸. 명세서에 없는 칸(예: 지운 `nickname`)을 보내도 이 에러 |
 | 400 | `CONSENT_REQUIRED` (`field: consents.sensitiveHealth`) | CM-02-E1 동의 누락 문구 |
 
 > 비밀번호 확인 칸 일치 여부는 프론트에서만 검사 (서버로 보내지 않음)

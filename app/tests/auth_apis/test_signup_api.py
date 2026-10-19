@@ -3,7 +3,7 @@ from starlette import status
 from tortoise.contrib.test import TestCase
 
 from app.main import app
-from app.models.users import ConsentType, User, UserConsent
+from app.models.users import ConsentType, User, UserConsent, UserHealthProfile
 from app.tests.helpers import signup_payload
 
 
@@ -16,7 +16,7 @@ class TestSignupAPI(TestCase):
         assert response.status_code == status.HTTP_201_CREATED
         body = response.json()
         assert set(body) == {"accessToken", "refreshToken", "user"}
-        assert body["user"] == {"id": body["user"]["id"], "nickname": "홍길동", "birthYear": 1958, "sex": "M"}
+        assert body["user"] == {"id": body["user"]["id"], "birthYear": 1958, "sex": "M"}
         assert any(h.startswith("refresh_token=") for h in response.headers.get_list("set-cookie"))
 
         user = await User.get(login_id="signup@example.com")
@@ -24,13 +24,37 @@ class TestSignupAPI(TestCase):
         consents = {c.consent_type: c.agreed for c in await UserConsent.filter(user=user)}
         assert consents == {ConsentType.TERMS: True, ConsentType.PRIVACY: True, ConsentType.SENSITIVE_HEALTH: True}
 
-    async def test_signup_nickname_optional(self):
-        payload = signup_payload("nonick@example.com")
-        del payload["nickname"]
+    async def test_signup_saves_health_profile(self):
+        """A-1: 가입 때 흡연, 음주를 받아 건강 정보 표에 저장. 나머지 칸은 내 정보에서 (#101)"""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/v1/auth/signup", json=payload)
+            response = await client.post(
+                "/api/v1/auth/signup",
+                json=signup_payload("health@example.com", health={"smoking": "past", "drinking": "unknown"}),
+            )
         assert response.status_code == status.HTTP_201_CREATED
-        assert response.json()["user"]["nickname"] is None
+        profile = await UserHealthProfile.get(user__login_id="health@example.com")
+        assert profile.smoking == "past" and profile.drinking == "unknown"
+        assert profile.diseases == [] and profile.upcoming_exams == []
+        assert profile.pregnant is None and profile.dialysis is None
+        assert profile.height_cm is None and profile.weight_kg is None
+
+    async def test_signup_requires_health_and_rejects_nickname(self):
+        """흡연, 음주는 필수. 별명은 받지 않음 (#96)"""
+        no_health = signup_payload("nohealth@example.com")
+        del no_health["health"]
+        cases = [
+            (no_health, "health"),
+            (signup_payload("smoke@example.com", health={"smoking": "yes", "drinking": "none"}), "health.smoking"),
+            (signup_payload("drink@example.com", health={"smoking": "never"}), "health.drinking"),
+            (signup_payload("nick@example.com", nickname="홍길동"), "nickname"),
+        ]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for payload, field in cases:
+                response = await client.post("/api/v1/auth/signup", json=payload)
+                assert response.status_code == status.HTTP_400_BAD_REQUEST, payload
+                error = response.json()["error"]
+                assert error["code"] == "VALIDATION_ERROR" and error["field"] == field, error
+        assert not await User.exists(login_id="nohealth@example.com")
 
     async def test_signup_duplicated_email(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
