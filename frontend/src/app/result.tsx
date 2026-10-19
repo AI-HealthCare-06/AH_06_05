@@ -1,11 +1,11 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 
 import { useChatLauncher } from '@/features/chatbot/launcher';
 import { useFlow } from '@/features/ocr/flow';
 import { PICKABLE_DISEASES } from '@/features/rag/diseases';
-import { getAnalysis, putDiseases, retryAnalysis } from '@/features/rag/api';
+import { getAnalysis, putDiseases, retryAnalysis, sendGuideFeedback } from '@/features/rag/api';
 import type { Action, AnalysisResult, Severity, Warning } from '@/features/rag/types';
 import { ApiError } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
@@ -247,7 +247,56 @@ function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResu
           <Text style={T.body}>{e.reason === 'not_oral' ? r.notOralBody : r.notFoundBody}</Text>
         </Card>
       ))}
+      {data.medication.guideId > 0 && <GuideFeedbackBox guideId={data.medication.guideId} />}
     </View>
+  );
+}
+
+// RG-04 안내문 피드백 (R-9). 다시 보내면 서버가 앞의 것을 덮어씀
+function GuideFeedbackBox({ guideId }: { guideId: number }) {
+  const [rating, setRating] = useState<1 | -1 | null>(null);
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const send = async () => {
+    if (rating === null) return;
+    try {
+      setBusy(true);
+      setErr(null);
+      await sendGuideFeedback(guideId, rating, comment.trim() || undefined);
+      setSent(true);
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (sent) {
+    return (
+      <Card tone="success">
+        <Text style={T.bodyM}>{r.feedbackThanks}</Text>
+      </Card>
+    );
+  }
+  return (
+    <Card style={{ gap: 4 }}>
+      <Text style={T.label}>{r.feedbackTitle}</Text>
+      <Radio on={rating === 1} label={r.feedbackYes} onPress={() => setRating(1)} />
+      <Radio on={rating === -1} label={r.feedbackNo} onPress={() => setRating(-1)} />
+      <TextInput
+        accessibilityLabel={r.feedbackComment}
+        placeholder={r.feedbackComment}
+        placeholderTextColor={C.text3}
+        value={comment}
+        onChangeText={setComment}
+        maxLength={500}
+        multiline
+        style={{ minHeight: 64, borderWidth: 1, borderColor: C.border, borderRadius: R.control, padding: 12, fontSize: 16, color: C.text }}
+      />
+      {err && <Text style={[T.caption, { color: C.danger }]}>※ {err}</Text>}
+      <Btn label={r.feedbackSend} disabled={rating === null || busy} onPress={send} style={{ marginTop: 8 }} />
+    </Card>
   );
 }
 

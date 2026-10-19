@@ -287,3 +287,39 @@ export function warningDetail(id: number) {
     actionAdvice: '약을 임의로 끊지 말고, 처방한 의사나 약사와 먼저 상의하세요.',
   });
 }
+
+// R-7 지난 기록 목록 (가짜 3건). cursor는 건너뛸 개수, size는 쪽 크기. 지운 기록은 다시 나오지 않음
+// 분석 중인 기록은 서버처럼 60초가 지나면 실패로 닫힘 (그 뒤에는 지울 수 있어서 기록 없음 화면까지 볼 수 있음)
+const MOCK_STARTED = Date.now();
+const deletedRecords = new Set<number>();
+
+function mockRecords() {
+  const stalled = Date.now() - MOCK_STARTED > 60_000;
+  return [
+    stalled
+      ? { analysisId: 5003, createdAt: '2026-10-16T10:00:00+09:00', status: 'failed', resultLabel: '분석 실패' }
+      : { analysisId: 5003, createdAt: '2026-10-16T10:00:00+09:00', status: 'running', resultLabel: '분석 중' },
+    {
+      analysisId: 5002, createdAt: '2026-10-10T09:00:00+09:00', status: 'done', hospitals: ['○○내과'],
+      drugCount: 5, diseaseNames: ['고혈압', '당뇨'], resultLabel: '확인 필요 2건',
+    },
+    { analysisId: 5001, createdAt: '2026-09-20T10:00:00+09:00', status: 'failed', resultLabel: '분석 실패' },
+  ].filter((r) => !deletedRecords.has(r.analysisId));
+}
+
+export function listAnalysesMock(cursor = 0, size = 20) {
+  const all = mockRecords();
+  const end = cursor + size;
+  return ok({ items: all.slice(cursor, end), nextCursor: end < all.length ? String(end) : null });
+}
+
+// R-8: 진행 중이면 409
+export function deleteAnalysisMock(id: number) {
+  const rec = mockRecords().find((r) => r.analysisId === id);
+  if (!rec) return { status: 404, body: { error: { code: 'NOT_FOUND', message: '찾을 수 없어요.' } } };
+  if (rec.status === 'running') {
+    return { status: 409, body: { error: { code: 'ANALYSIS_RUNNING', message: '분석이 끝난 뒤에 지울 수 있어요.' } } };
+  }
+  deletedRecords.add(id);
+  return { status: 204, body: null };
+}

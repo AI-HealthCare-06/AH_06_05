@@ -160,6 +160,9 @@ function routeFlow(method: Method, path: string, body: Record<string, unknown>):
   if (method === 'GET' && (m = route(/^\/prescriptions\/(\d+)$/))) return md.getRx(Number(m[1]));
   if (method === 'PATCH' && (m = route(/^\/prescriptions\/(\d+)\/items\/(\d+)$/))) return md.patchRxItem(Number(m[1]), Number(m[2]), body);
   if (method === 'GET' && p === '/drugs/search') return md.searchDrugs(url.searchParams.get('q') ?? '', Number(url.searchParams.get('size') ?? 5));
+  if (method === 'GET' && p === '/analyses') return md.listAnalysesMock(Number(url.searchParams.get('cursor') ?? 0) || 0, Number(url.searchParams.get('size') ?? 20));
+  if (method === 'DELETE' && (m = route(/^\/analyses\/(\d+)$/))) return md.deleteAnalysisMock(Number(m[1]));
+  if (method === 'POST' && route(/^\/guides\/\d+\/feedback$/)) return { status: 201, body: { feedbackId: 1 } };
   if (method === 'POST' && p === '/analyses') return md.startAnalysisMock();
   if (method === 'POST' && route(/^\/analyses\/\d+\/retry$/)) return md.startAnalysisMock(true);
   if (method === 'GET' && route(/^\/analyses\/\d+\/status$/)) return md.analysisStatus();

@@ -50,9 +50,16 @@ async def recognize(content: bytes, fmt: str, name: str) -> dict[str, Any]:
             )
         resp.raise_for_status()
         data = resp.json()
-        if data["images"][0].get("inferResult") != "SUCCESS":
-            raise ClovaError(f"inferResult={data['images'][0].get('inferResult')}")
-        data["images"][0].setdefault("fields", [])
+        # 여러 쪽 PDF는 쪽마다 한 칸이다. 첫 쪽이 실패해도 다른 쪽이 읽혔으면 그 쪽들은 살리고,
+        # 모든 칸이 실패했을 때만 오류로 본다. 실패한 칸은 글자 칸을 비워 read()가 다시 찍기로 처리하게 한다.
+        slots = data["images"]
+        if not any(img.get("inferResult") == "SUCCESS" for img in slots):
+            raise ClovaError(f"inferResult={slots[0].get('inferResult')}")
+        for img in slots:
+            if img.get("inferResult") != "SUCCESS":
+                img["fields"] = []
+            else:
+                img.setdefault("fields", [])
     except ClovaError:
         raise
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as e:

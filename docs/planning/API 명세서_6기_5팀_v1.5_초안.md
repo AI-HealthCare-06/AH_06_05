@@ -18,6 +18,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.4 | 2026-10-07 | 담당을 피처 단위로 다시 정함(화면부터 서버까지 한 사람이 맡음). 공통과 챗봇은 수인, OCR과 RAG는 채연, 실천과 보상은 담당 미정(챌린지는 뒤로 미룸). 성규님 조기 수료로 2인 체제 / 10/8: 챗봇 점검 결과 카드 칸 `safetyCard` 제안 (H-2, H-3, 수인 확인 필요) | 김채연 |
 | v1.5 초안 | 2026-10-12 | R-4 `medication.items[]`와 `lifestyle.medicationLinks[]`에 약 번호 `itemId` 추가 (챗봇 설계 메모 v0.9, PR #80의 요청 4번). 챗봇 5장 정리(수인 10/12 정리안): `safetyCard` 확정, H-1 `firstMessage`, H-2 `status`, H-3 `drugMatch`와 `safety` 칸, H-4 `createdAt`, H-8 오늘 대화 찾기 신규, 2단계 API 목록 | 채연 (챗봇은 수인 정리안 반영) |
 | v1.5 초안 추가 | 2026-10-16 | 별명(`nickname`) 제거 (A-1 · A-2 · U-1 · U-2, #96 · 10/14 팀 합의) / O-5 `duplicatedFiles`, O-2 `notices`, `itemName`, `suggestedBy`, `guidance`, `checkFields` 추가 / R-4 `summary.drugCount`는 점검한 약만 셈 / R-4 복약 안내: `purpose` 문구를 "~에 쓰는 약이에요"로, `cautions`(문장 배열) 추가, 사람이 확인한 안내문만 채움 (`drug_guides`) | 김채연 |
+| v1.5 초안 추가 | 2026-10-19 | R-7(지난 기록 목록), R-8(기록 삭제), R-9(안내문 피드백)을 서버에 구현하면서 세부 규칙을 적음: R-7 `size` 1~50, 잘못된 `cursor`는 400, R-8 진행 중이면 `409 ANALYSIS_RUNNING`, R-9 한 사람 한 안내문 하나(다시 보내면 덮어씀), 응답 `201` `{feedbackId}` / ERD `feedbacks`에 `unique (guide_id, user_id)` 제안 | 채연 |
 | v1.5 초안 추가 | 2026-10-19 | 건강 정보(#101): A-1 요청 `health`(흡연, 음주), U-1 응답과 U-2 요청 `health`, U-3과 U-5 삭제 목록에 건강 정보 / 1장 U-1 화면을 CM-05로(#96) | 이수인 |
 
 <details>
@@ -570,6 +571,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | HTTP | code | 화면 |
 |---|---|---|
 | 400 | `FILE_TOO_LARGE` · `FILE_TYPE_NOT_SUPPORTED` · `TOO_MANY_FILES` | OC-01 업로드 실패 안내 (바로 응답) |
+| 429 | `DAILY_LIMIT_EXCEEDED` (`detail`: `limit`, `used`) | 하루(한국 시간 자정부터) 올릴 수 있는 사진 수(`OCR_DAILY_FILE_LIMIT`, 기본 30장) 초과. 작업을 만들지 않아 OCR을 부르지 않음. 앱은 서버 문구를 그대로 보여 줌 |
 
 사진 품질 · 문서 여부 · 인식 실패는 O-5 결과의 `failedFiles[].code`로 알려줌
 
@@ -1007,6 +1009,9 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 - `status`: `running`(분석 중) / `done` / `failed`
 - `resultLabel`: 화면 라벨을 **서버가 만들어** 내려줌 — `확인 필요 N건` / `확인된 위험 없음` / `분석 중` / `분석 실패`
 - 빈 배열이면 CM-04-E2 · 홈은 CM-03-E1
+- `size`는 1~50(기본 20), 범위를 벗어나면 `400 VALIDATION_ERROR`. `cursor`는 앞 응답의 `nextCursor`를 그대로 넘기고, 읽을 수 없는 값이면 `400 VALIDATION_ERROR`(`field: cursor`). 마지막 쪽이면 `nextCursor`는 `null`
+- 분석 중(`running`)과 실패(`failed`) 항목에는 `analysisId`, `createdAt`, `status`, `resultLabel`만 있고, 병원, 약 수, 질환은 `done`일 때만 있음. 대기(`queued`)는 `running`으로 내려줌
+- `diseaseNames`는 생활습관 안내문에 쓴 질환 이름(예: 고혈압), 안내문이 없으면 질환 표의 이름. `drugCount`는 R-4 `summary.drugCount`와 같은 값(외용약 제외)
 
 ---
 
@@ -1015,6 +1020,9 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 화면 CM-04-E1 · 요구사항 REQ-081 · 응답 `204`
 
 분석 결과 · 경고 · 안내문 · 피드백 · 연결된 챗봇 대화 삭제.
+
+- 남의 분석이거나 없으면 `404`, 분석이 아직 진행 중(대기, 진행)이면 `409 ANALYSIS_RUNNING`(끝난 뒤에 지울 수 있음). 60초가 넘어 멈춘 분석은 실패로 닫히므로 지울 수 있음
+- 2026-10-19 구현 범위: 분석 결과, 경고, 안내문, 피드백과 이 분석에만 쓰인 처방전(약 포함) 삭제까지. 챗봇 대화와 실천 목표는 해당 표가 서버에 생길 때 이어서 처리
 
 **실천 목표 처리** (10/6 확정, REQ-081)
 - 이 분석에만 쓰인 처방전 · 처방 약도 같이 삭제 (다른 분석에도 쓰였으면 남김)
@@ -1030,7 +1038,11 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 ```json
 { "rating": 1, "comment": "글씨가 더 컸으면 좋겠어요" }
 ```
-`rating`: `1` 도움됐어요 / `-1` 도움이 안 됐어요 · `comment` 선택 · 응답 `201`
+`rating`: `1` 도움됐어요 / `-1` 도움이 안 됐어요, `comment` 선택(최대 500자, 앞뒤 공백을 지우고 비면 저장하지 않음), 응답 `201` `{ "feedbackId": 1 }`
+
+- 한 사람이 안내문 하나에 하나만 남김: 다시 보내면 앞의 것을 덮어쓰고 같은 `feedbackId`를 돌려줌 (ERD `feedbacks`에 `unique (guide_id, user_id)`)
+- 남의 안내문이거나 없으면 `404`, `rating`이 1 또는 -1이 아니면 `400 VALIDATION_ERROR`
+- 안내문 ID(`guideId`)는 R-4의 `medication.guideId` 또는 `lifestyle.guideId`. 화면은 RG-04(복약 안내) 탭에 붙임
 
 ---
 

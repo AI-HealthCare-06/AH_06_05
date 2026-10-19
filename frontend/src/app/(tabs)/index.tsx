@@ -4,12 +4,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TopNav } from '@/features/common/nav';
 import { useFlow } from '@/features/ocr/flow';
+import { RecentRecord } from '@/features/rag/recentRecord';
 import { copy } from '@/shared/copy';
 import { C, L, S, T } from '@/shared/theme';
 import { Disclaimer } from '@/shared/ui';
 import { CameraIcon } from '@/shared/ui/icons';
 
-// CM-03-E1 처음 홈 (뼈대) — 처방 이력 · 재방문 홈(CM-03)은 API 붙일 때
+// CM-03-E1 처음 홈 (뼈대) + CM-03 최근 기록 카드(기록이 있을 때만 보임). 실천 카드(P-3)는 API 붙일 때
 export default function Home() {
   const ins = useSafeAreaInsets();
   const router = useRouter();
@@ -35,6 +36,7 @@ export default function Home() {
             <Text style={st.captureText}>{copy.home.capture}</Text>
           </Pressable>
         </View>
+        <RecentRecord />
         <Text style={[T.caption, { marginTop: S.section }]}>{copy.preparing}</Text>
         <Disclaimer />
       </ScrollView>

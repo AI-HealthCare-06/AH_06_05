@@ -1,5 +1,5 @@
 # mypy: disable-error-code=union-attr
-"""피처 2 RAG 분석 서비스 (API R-1 ~ R-6)
+"""피처 2 RAG 분석 서비스 (API R-1 ~ R-9)
 
 분석 한 번 = ① 약 정보 확인 → ② 안전성 점검(DB 조회만, AI 없음) → ③ 안내문 작성(정해진 자료로만, AI 없음) 순서로
 FastAPI 백그라운드 작업에서 돌린다. 단계마다 current_step을 갱신해 R-2가 진행 상태를 보여 주고,
@@ -7,6 +7,8 @@ FastAPI 백그라운드 작업에서 돌린다. 단계마다 current_step을 갱
 """
 
 import asyncio
+import base64
+import json
 import logging
 from collections import Counter
 from datetime import date, datetime, timedelta
@@ -27,6 +29,7 @@ from app.models.analysis import (
     AnalysisWarning,
     DiseaseOrigin,
     Guide,
+    GuideFeedback,
     GuideSection,
     GuideStatus,
 )
@@ -375,6 +378,11 @@ async def _lifestyle_view(a: Analysis, content: dict[str, Any] | None) -> dict[s
     return {**body, "diseases": [{**d, "origin": origin.get(d["code"], "prescription")} for d in body["diseases"]]}
 
 
+def _checked_count(items: list[PrescriptionItem]) -> int:
+    """점검한 약 수 — 확인이 끝난 약에서 외용약(점검에서 빠짐)을 뺀 수"""
+    return sum(1 for i in items if i.match_status in USABLE and i.drug and i.drug.route == "내복")
+
+
 async def get_result(user: User, analysis_id: int) -> dict[str, Any]:
     a = await _expire_if_stuck(await _get(user, analysis_id))
     partial = a.status == AnalysisStatus.FAILED and a.failed_step == AnalysisStep.GUIDE_GENERATION
@@ -391,9 +399,7 @@ async def get_result(user: User, analysis_id: int) -> dict[str, Any]:
         for i in items
         if i.match_status not in USABLE
     ] + [{"rawName": base_name(i.drug.item_name), "reason": "not_oral"} for i in usable if i.drug.route != "내복"]
-    checked = len(usable) - sum(
-        1 for e in excluded if e["reason"] == "not_oral"
-    )  # 외용약은 점검에서 빠지므로 점검한 약 수에 넣지 않음
+    checked = _checked_count(items)
     med_id, med_status, med = await _guide_content(a, GuideSection.MEDICATION)
     life_id, life_status, life = await _guide_content(a, GuideSection.LIFESTYLE)
     counts = Counter(w.severity for w in rows)
@@ -480,3 +486,110 @@ async def put_diseases(user: User, analysis_id: int, codes: list[str]) -> dict[s
             defaults={"status": GuideStatus.DONE, "content": content},
         )
     return await _lifestyle_view(a, content)
+
+
+# ── R-7 지난 기록 목록 ────────────────────────────────────────────────────────────────────────
+LIST_DEFAULT_SIZE = 20
+LIST_MAX_SIZE = 50
+RESULT_LABELS = {"running": "분석 중", "failed": "분석 실패", "clean": "확인된 위험 없음"}
+
+
+def _encode_cursor(analysis_id: int) -> str:
+    return (
+        base64.urlsafe_b64encode(json.dumps({"id": analysis_id}, separators=(",", ":")).encode()).decode().rstrip("=")
+    )
+
+
+def _decode_cursor(cursor: str) -> int:
+    try:
+        return int(json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))["id"])
+    except (ValueError, KeyError, TypeError) as e:
+        raise AppError(
+            status.HTTP_400_BAD_REQUEST, "VALIDATION_ERROR", "다음 목록을 불러오지 못했어요.", field="cursor"
+        ) from e
+
+
+def _list_status(a: Analysis) -> str:
+    if a.status == AnalysisStatus.DONE:
+        return "done"
+    return "failed" if a.status == AnalysisStatus.FAILED else "running"
+
+
+async def list_analyses(user: User, cursor: str | None, size: int) -> dict[str, Any]:
+    """최신순으로 size개. 다음 쪽이 있으면 nextCursor를 줌 (분석 ID 기준이라 새 기록이 생겨도 밀리지 않음)"""
+    size = max(1, min(size, LIST_MAX_SIZE))
+    query = Analysis.filter(user=user)
+    if cursor:
+        query = query.filter(id__lt=_decode_cursor(cursor))
+    rows = await query.order_by("-id").limit(size + 1)
+    has_more = len(rows) > size
+    rows = [await _expire_if_stuck(a) for a in rows[:size]]
+    done_ids = [a.id for a in rows if a.status == AnalysisStatus.DONE]
+
+    rx_by_analysis: dict[int, list[int]] = {}
+    for analysis_id, rx_id in await AnalysisPrescription.filter(analysis_id__in=done_ids).values_list(
+        "analysis_id", "prescription_id"
+    ):
+        rx_by_analysis.setdefault(analysis_id, []).append(rx_id)
+    all_rx = [r for ids in rx_by_analysis.values() for r in ids]
+    hospital_of = dict(await Prescription.filter(id__in=all_rx).values_list("id", "hospital_name"))
+    items_by_rx: dict[int, list[PrescriptionItem]] = {}
+    for it in await PrescriptionItem.filter(prescription_id__in=all_rx).prefetch_related("drug"):
+        items_by_rx.setdefault(it.prescription_id, []).append(it)  # type: ignore[attr-defined]
+    warning_counts: Counter[int] = Counter(
+        await AnalysisWarning.filter(analysis_id__in=done_ids).values_list("analysis_id", flat=True)  # type: ignore[arg-type]
+    )
+    names: dict[int, list[str]] = {}
+    for g in await Guide.filter(analysis_id__in=done_ids, section=GuideSection.LIFESTYLE, status=GuideStatus.DONE):
+        names[g.analysis_id] = [d["name"] for d in (g.content or {}).get("diseases", [])]  # type: ignore[attr-defined]
+    fallback_ids = [i for i in done_ids if not names.get(i)]
+    for analysis_id, name in await AnalysisDisease.filter(analysis_id__in=fallback_ids).values_list(
+        "analysis_id", "disease__name_kr"
+    ):
+        names.setdefault(analysis_id, []).append(name)
+
+    items = []
+    for a in rows:
+        row: dict[str, Any] = {"analysisId": a.id, "createdAt": a.created_at.isoformat(), "status": _list_status(a)}
+        if a.status == AnalysisStatus.DONE:
+            rx_ids = rx_by_analysis.get(a.id, [])
+            n = warning_counts.get(a.id, 0)
+            row["hospitals"] = list(dict.fromkeys(hospital_of[r] for r in rx_ids if hospital_of.get(r)))
+            row["drugCount"] = _checked_count([it for r in rx_ids for it in items_by_rx.get(r, [])])
+            row["diseaseNames"] = names.get(a.id, [])
+            row["resultLabel"] = f"확인 필요 {n}건" if n else RESULT_LABELS["clean"]
+        else:
+            row["resultLabel"] = RESULT_LABELS[row["status"]]
+        items.append(row)
+    return {"items": items, "nextCursor": _encode_cursor(rows[-1].id) if has_more and rows else None}
+
+
+# ── R-8 기록 삭제 ─────────────────────────────────────────────────────────────────────────────
+async def delete_analysis(user: User, analysis_id: int) -> None:
+    """분석 결과 · 경고 · 안내문 · 피드백을 지우고, 이 분석에만 쓰인 처방전(약 포함)도 같이 지움 (다른 분석에도 쓰였으면 남김).
+    챗봇 대화와 실천 목표는 아직 서버에 없어서 여기서 다루지 않음 (생기면 이어서 처리)"""
+    a = await _expire_if_stuck(await _get(user, analysis_id))
+    if a.status in (AnalysisStatus.QUEUED, AnalysisStatus.RUNNING):
+        raise AppError(
+            status.HTTP_409_CONFLICT, "ANALYSIS_RUNNING", "분석이 끝난 뒤에 지울 수 있어요. 잠시 후 다시 해 주세요."
+        )
+    async with in_transaction():
+        rx_ids = list(await AnalysisPrescription.filter(analysis=a).values_list("prescription_id", flat=True))
+        await Analysis.filter(id=a.id).delete()  # 경고 · 안내문 · 피드백 · 연결 표는 DB가 같이 지움 (ON DELETE CASCADE)
+        still_used = set(
+            await AnalysisPrescription.filter(prescription_id__in=rx_ids).values_list("prescription_id", flat=True)
+        )
+        only_here = [r for r in rx_ids if r not in still_used]
+        if only_here:
+            await Prescription.filter(id__in=only_here, user=user).delete()
+
+
+# ── R-9 안내문 피드백 ─────────────────────────────────────────────────────────────────────────
+async def save_feedback(user: User, guide_id: int, rating: int, comment: str | None) -> int:
+    """한 사람이 안내문 하나에 하나만 남김 — 다시 보내면 앞의 것을 덮어씀"""
+    guide = await Guide.get_or_none(id=guide_id, analysis__user_id=user.id)
+    if guide is None:
+        raise AppError(status.HTTP_404_NOT_FOUND, "NOT_FOUND")
+    text = (comment or "").strip() or None
+    fb, _ = await GuideFeedback.update_or_create(guide=guide, user=user, defaults={"rating": rating, "comment": text})
+    return fb.id
