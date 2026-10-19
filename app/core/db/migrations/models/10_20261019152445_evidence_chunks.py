@@ -1,3 +1,6 @@
+# 예외: 맨 위의 CREATE EXTENSION 두 줄(vector, pg_trgm)은 aerich가 만들어 주지 않아 손으로 넣었다.
+# 모델만으로는 확장 기능이 생기지 않아서 없으면 아래 표의 벡터 칸을 만들 수 없다. 이 파일을 다시 만들 때는 두 줄을 꼭 다시 넣을 것.
+# 이유와 안내는 AGENTS.md "겪어 본 함정".
 from tortoise import BaseDBAsyncClient
 
 RUN_IN_TRANSACTION = True

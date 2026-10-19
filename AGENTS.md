@@ -87,6 +87,8 @@ uv run pre-commit run --all-files                             # 전체 파일 �
 - 시험할 때 `PGDATABASE=postgres`가 없으면 "database root does not exist"가 나옴
 - 컨테이너 안 실행은 `uv run --no-sync` (없으면 켤 때마다 개발용 패키지를 다시 설치함)
 - Expo는 SDK마다 API가 바뀜. `frontend/package.json`의 `expo`(57)에 맞는 문서를 볼 것
+- `evidence_chunks` 마이그레이션(10번)은 맨 위 `CREATE EXTENSION vector`, `pg_trgm` 두 줄을 손으로 넣은 예외임. aerich가 확장 기능은 만들지 않기 때문이고, 이 파일을 다시 만들면 두 줄도 다시 넣어야 함
+- 로컬 DB 컨테이너가 예전 `postgres:16` 이미지이면 시험이 `extension "vector" is not available`로 멈춤. `docker-compose.yml`의 `pgvector/pgvector:pg16-trixie` 이미지로 `docker compose up -d --no-deps postgres`를 실행해 다시 만들 것 (수인 님 로컬에서 데이터가 남은 채 해결됨)
 - Windows는 `.env`가 링크가 아니라 복사본이라서 `envs/.local.env`를 고칠 때마다 다시 복사해야 함
 
 ## 브랜치, 커밋, PR
@@ -105,3 +107,4 @@ uv run pre-commit run --all-files                             # 전체 파일 �
 | 2026-10-07 | 첫 버전 | 이수인, 김채연 |
 | 2026-10-08 | 수인 의견 반영: 참여기업 이름, 줄 길이 120자, 칸반 카드, 지표 기록 줄을 뺌(칸반 카드는 `docs/CONVENTIONS.md`로). 줄표와 가운뎃점 예외에 스킬 파일을 추가. 설정 읽는 방법을 실제 코드(`from app.core import config`)에 맞게 고침 | 김채연 |
 | 2026-10-12 | 출처 번호와 출처 정리 파일 링크를 뺌(출처 정리는 노션에 둠). pre-commit 명령 추가. 생활습관 출처 표현을 팩트표 v0.12에 맞춤, 의료 표현 목록에 #61 표시 | 이수인 |
+| 2026-10-19 | 시험 명령에 `REDIS_HOST=localhost`를 붙임(`.env`의 `redis`는 docker 안에서만 읽힘). 겪어 본 함정에 `evidence_chunks` 마이그레이션의 `CREATE EXTENSION` 예외와 pgvector 이미지 안내를 추가 (#107) | 김채연 |
