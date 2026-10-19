@@ -1,4 +1,6 @@
-"""분석 요청 · 응답 모양 — API 명세서 4장 (R-1 ~ R-6). 결과 본문(R-4 · R-5 · R-6)은 서비스가 만든 dict를 그대로 내려줌"""
+"""분석 요청 · 응답 모양 — API 명세서 4장 (R-1 ~ R-9). 결과 본문(R-4 · R-5 · R-6)은 서비스가 만든 dict를 그대로 내려줌"""
+
+from typing import Literal
 
 from pydantic import Field
 
@@ -18,3 +20,14 @@ class DiseasesRequest(CamelModel):
     """빈 배열 = 해당 없음 · 모르겠어요"""
 
     disease_codes: list[str] = Field(max_length=10)
+
+
+class GuideFeedbackRequest(CamelModel):
+    """1 = 도움됐어요 / -1 = 도움이 안 됐어요"""
+
+    rating: Literal[1, -1]
+    comment: str | None = Field(default=None, max_length=500)
+
+
+class GuideFeedbackResponse(CamelModel):
+    feedback_id: int

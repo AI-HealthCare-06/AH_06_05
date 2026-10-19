@@ -1,4 +1,4 @@
-"""피처 2 RAG 분석 (ERD v1.5 분석 영역, API R-1 ~ R-6)
+"""피처 2 RAG 분석 (ERD v1.5 분석 영역, API R-1 ~ R-9)
 
 한 번의 분석 = 처방전 여러 장(최대 5장)을 합쳐서 점검 + 안내문 2개(복약 · 생활습관).
 """
@@ -186,3 +186,22 @@ class DrugGuide(models.Model):
 
     class Meta:
         table = "drug_guides"
+
+
+class GuideFeedback(models.Model):
+    """안내문 피드백 (R-9) — 한 사람이 안내문 하나에 하나만 남기고, 다시 보내면 덮어씀. 안내문이 지워지면 같이 지워짐"""
+
+    id = fields.BigIntField(primary_key=True)
+    guide: fields.ForeignKeyRelation[Guide] = fields.ForeignKeyField(
+        "models.Guide", related_name="feedbacks", on_delete=fields.CASCADE
+    )
+    user: fields.ForeignKeyRelation["User"] = fields.ForeignKeyField(
+        "models.User", related_name="guide_feedbacks", on_delete=fields.CASCADE
+    )
+    rating = fields.SmallIntField(description="1 = 도움됐어요 / -1 = 도움 안 됐어요")
+    comment = fields.TextField(null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "feedbacks"
+        unique_together = (("guide", "user"),)

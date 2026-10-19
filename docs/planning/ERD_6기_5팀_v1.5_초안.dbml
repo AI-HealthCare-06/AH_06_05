@@ -260,9 +260,13 @@ Table feedbacks {
   id          bigint   [pk, increment]
   guide_id    bigint   [ref: > guides.id, not null]
   user_id     bigint   [ref: > users.id, not null]
-  rating      smallint [note: '1 = 도움됐어요 / -1 = 도움 안 됐어요']
+  rating      smallint [not null, note: '1 = 도움됐어요 / -1 = 도움 안 됐어요']
   comment     text
   created_at  timestamp [default: `now()`]
+
+  indexes {
+    (guide_id, user_id) [unique, note: '한 사람이 안내문 하나에 하나만 (다시 보내면 덮어씀, 10/19 서버 구현)']
+  }
 }
 
 
@@ -661,11 +665,45 @@ Table lifestyle_source_links {
 
 
 // ─────────────────────────────────────────────────────────────────────
+// 9. RAG 근거 조각  (챗봇 근거 검색. 약 코드나 질환 코드로 먼저 좁힌 안에서 pgvector와 pg_trgm으로 찾음)
+// ─────────────────────────────────────────────────────────────────────
+
+Table evidence_chunks {
+  id              bigint [pk, increment]
+  chunk_id        varchar(150) [unique, not null, note: '출처 번호. 약 허가문서는 D:<약코드>:S12 모양, 팩트표는 F:..., 교차 규칙은 X:... 챗봇이 돌려받는 sentenceId']
+  kind            varchar(10) [not null, note: 'drug(약 허가문서 문장) / fact(생활습관 팩트표) / cross(질환이 겹칠 때 규칙)']
+  drug_code       varchar(9) [note: 'drug_products.edi_code (kind = drug)']
+  disease_code    varchar(10) [note: '팩트표 질환 id (kind = fact, 예: HTN)']
+  section         char(1) [note: 'E 효능효과 / S 주의사항 / P 용법용량 (kind = drug)']
+  group_key       varchar(200) [not null, note: '같은 소항목 묶음. 고른 조각의 같은 소항목 문장을 함께 보냄(최대 8개)']
+  seq             int [not null, note: '같은 약, 같은 구분 안에서의 순서']
+  source_order    int [not null, note: '시험에서 쓴 조각 순서. 후보 목록 순서를 같게 하려고 보존']
+  heading         varchar(300) [note: '큰제목 > 소항목']
+  content         text [not null, note: '근거 글 원문']
+  search_text     text [not null, note: '글자 조각 검색용 (heading + content)']
+  embed_text      text [not null, note: '임베딩에 넣은 글 (약 이름 + 구분 + 경로 + 본문)']
+  drug_name       varchar(300)
+  source_ids      jsonb [note: '이 조각이 합친 허가정보 문장 번호들']
+  embedding       "vector(1536)" [note: 'pgvector. text-embedding-3-small']
+  embedding_model varchar(50) [note: '벡터를 만든 모델. 바꾸면 새로 만들어야 함']
+  created_at      timestamptz [not null]
+
+  indexes {
+    drug_code
+    disease_code
+    group_key
+  }
+
+  Note: 'v1.5 초안. RAG 근거 검색용. 마이그레이션 10번에서 vector, pg_trgm 확장과 함께 만듦. 벡터 인덱스(HNSW)는 범위를 좁힌 안이 평균 수백 개라 걸지 않음. 적재는 scripts/rag/load_evidence_chunks.py'
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // 인덱스 메모 (구현 시)
 //   drug_products(item_name_norm)   — 약품명 매칭
 //   drug_products(ingr_code)        — 성분 조회
 //   dur_interaction(ingr_code_a, ingr_code_b) — 복합 PK, 조합 조회
 //   dup_ingredient(dur_ingr_code)   — 동일성분 그룹 조회
 //   dup_efficacy(check_code)        — 효능군 중복 조회
+//   evidence_chunks(drug_code), (disease_code), (group_key): 근거 범위 좁히기와 소항목 묶음
 //   analyses(user_id, created_at)   — 지난 기록 목록 (job_id는 v1.0에서 삭제 · id로 폴링)
 // ─────────────────────────────────────────────────────────────────────

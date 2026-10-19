@@ -17,6 +17,7 @@ function RootStack({ signedIn }: { signedIn: boolean }) {
         <Stack.Screen name="analyzing" options={{ gestureEnabled: false }} />
         <Stack.Screen name="result" options={{ gestureEnabled: false }} />
         <Stack.Screen name="warning" />
+        <Stack.Screen name="history" />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="login" />
