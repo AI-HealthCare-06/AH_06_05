@@ -20,6 +20,11 @@
 // [v1.5 초안 추가, 2026-10-16, 채연] users.nickname 삭제(홈 인사말을 뺌, 10/14 팀 합의, 이슈 #96). 새 표 drug_guides(약 단위 복약 안내문 사전 저장,
 //   사람이 확인한 것만 분석에 씀). users에 user_health_profiles는 키와 몸무게 결정 뒤에 넣어요.
 //
+// [v1.5 초안 추가, 2026-10-19, 수인] 새 표 user_health_profiles(users와 1:1, 이슈 #101). 받을 항목과 받는 곳은 10/14 회의 3번(채연 안)과 결과, 10/14 디코 답대로.
+//   음주와 흡연 값은 국민건강영양조사 문항(BD1_11 최근 1년 음주 빈도, BS3_1 현재 흡연 여부)에 "잘 모르겠어요"를 더함 (10/19 수인, 채연 안의 "빈도 구간"을 따름. 채연 확인 필요).
+//   동의(sensitive_health) 철회와 탈퇴 때 줄째 지움. 탈퇴(U-3)는 users 행을 남기므로 이 표는 따로 지워야 함.
+//   analyses.health_snapshot 추가(분석 시점 건강 정보, 10/14 채연 안).
+//
 // [v1.4, 2026-10-08, 채연] 팩트표 v0.12 반영. lifestyle_guides에 group_type(위험 신호, 교차 규칙을 같은 표에 담음),
 //   requires_clinician, goal_eligible, applies_when, show_when_unknown, condition, user_message 추가. lifestyle_guide_actions에 kind(fact 또는
 //   safety_notice), scope, use_in_answer 추가하고 source_id는 비워도 되게 바꿈(출처는 새 표 lifestyle_source_links로). 새 표
@@ -71,6 +76,22 @@ Table user_consents {
 
   indexes { (user_id, consent_type) [unique] }
   Note: 'v1.0 신규 · CM-02 가입 동의, CM-05 동의 내역'
+}
+
+Table user_health_profiles {
+  user_id        bigint       [pk, ref: - users.id, note: 'users와 1:1. 가입 때 함께 만듦']
+  smoking        varchar(20)  [not null, note: 'daily / sometimes / past / never / unknown. 국민건강영양조사 BS3_1에 "잘 모르겠어요"를 더함. 가입 때 필수']
+  drinking       varchar(20)  [not null, note: 'none / lt_monthly / monthly / 2_4_monthly / 2_3_weekly / 4plus_weekly / unknown. 국민건강영양조사 BD1_11에 "잘 모르겠어요"를 더함. 가입 때 필수']
+  diseases       jsonb        [not null, default: '[]', note: '생활습관 질환 lifestyle_diseases.id 목록(HTN, DM2, DLP, CKD, IHD, STROKE, AF, COPD, OP, OA. 10/14 회의 3번 채연 안). 내 정보에서 선택. 분석에 쓸 때는 팩트표의 kcd로 이음. 분석은 처방전에 질병분류기호가 없을 때만 이 값으로 채우고(RG-05-E1을 미리 채움, 출처 profile), 있으면 처방전 것만 씀. 챗봇은 둘 다 고정 정보로 씀 (10/19 수인 제안, 채연 확인 필요)']
+  pregnant       varchar(10)  [note: 'yes / no. 여성만 내 정보에서 선택. 성별을 M으로 바꾸면 비움. 비어 있으면 임신 금기 점검을 건너뛰고 결과에 알림 (10/14 디코)']
+  dialysis       varchar(10)  [note: 'yes / no / unknown. 팩트표 applies_when: dialysis (10/8 디코 채연 제안, 10/19 받기로 함)']
+  height_cm      smallint     [note: '내 정보에서 선택 (10/14 디코)']
+  weight_kg      numeric(4,1) [note: '내 정보에서 선택 (10/14 디코)']
+  upcoming_exams jsonb        [not null, default: '[]', note: '[{ name, date }] 예정 검사. name은 50자 이내, date는 YYYY-MM-DD. 내 정보에서 선택 (10/14 회의 3번)']
+  created_at     timestamp    [default: `now()`]
+  updated_at     timestamp
+
+  Note: 'v1.5 신규. 민감정보(sensitive_health 동의 범위). 동의 철회(U-5), 탈퇴(U-3) 때 줄째 삭제. 화면 CM-02, CM-05, CM-06'
 }
 
 
@@ -189,6 +210,7 @@ Table analyses {
   error_code             varchar(50) [note: 'GUIDE_GENERATION_FAILED / SAFETY_CHECK_FAILED / TIMEOUT']
   retry_count            smallint    [default: 0, note: 'v1.0 · 3회 초과 시 재시도 막음 (REQ-055)']
   user_birth_year        smallint    [note: '분석 시점 출생연도 스냅샷 — 정보 수정해도 지난 결과는 그대로 (CM-06)']
+  health_snapshot        jsonb       [note: 'v1.5. 분석 시점 건강 정보(user_health_profiles) 스냅샷. 정보를 고쳐도 지난 결과는 그대로 (10/14 회의 3번 채연 안, 이슈 #101)']
   started_at             timestamp
   finished_at            timestamp
   created_at             timestamp   [default: `now()`]
