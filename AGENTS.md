@@ -26,8 +26,8 @@
 uv sync --all-groups                                          # 패키지 설치 (app, dev 묶음)
 docker compose up --build -d                                  # postgres, redis, fastapi, ai-worker, nginx (API 문서는 http://localhost/api/docs)
 docker compose exec fastapi uv run --no-sync aerich upgrade   # 마이그레이션 적용
-DB_HOST=localhost PGDATABASE=postgres uv run pytest app/tests/auth_apis -q   # 시험 하나 (먼저 이것)
-DB_HOST=localhost PGDATABASE=postgres uv run pytest app       # 전체 시험
+DB_HOST=localhost REDIS_HOST=localhost PGDATABASE=postgres uv run pytest app/tests/auth_apis -q   # 시험 하나 (먼저 이것)
+DB_HOST=localhost REDIS_HOST=localhost PGDATABASE=postgres uv run pytest app       # 전체 시험
 bash scripts/ci/code_fommatting.sh                            # ruff 고치기, 검사, 포맷 (파일 이름 철자 그대로, 실행 권한이 없어 bash로 실행)
 bash scripts/ci/run_test.sh                                   # CI와 같은 방식의 시험 (DB 컨테이너가 떠 있어야 함)
 uv run --with openpyxl python scripts/data/load_masters.py    # 약과 질병 목록 넣기 (data/raw/hira 필요)
