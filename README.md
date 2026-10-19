@@ -78,7 +78,7 @@ OZ코딩스쿨 **AI 헬스케어 캠프 6기** 파이널 프로젝트 · **5팀*
 | 구분 | 사용 |
 |---|---|
 | Backend | FastAPI, Tortoise ORM |
-| 비동기 작업 | Redis + arq (10/2 메모리 측정: arq 워커 약 31MB, Celery 약 49MB) |
+| 비동기 작업 | 목표는 Redis + arq (10/2 메모리 측정: arq 워커 약 31MB, Celery 약 49MB). 지금 OCR과 분석은 FastAPI `BackgroundTasks`로 돌림 (SYSTEM_DESIGN.md 2장) |
 | Frontend | Expo (React Native) — `frontend/` 폴더 |
 | DB | PostgreSQL 16 + pgvector |
 | AI | OpenAI API (LangChain 없이 직접 호출), CLOVA OCR |
