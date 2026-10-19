@@ -209,7 +209,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 | 위치 | 현행 (As-Is) | 개정 (To-Be) |
 |---|---|---|
-| 2. 회원 / A-1 요청 | (없음) | `health: { smoking, drinking }` 필수. 값은 국민건강영양조사 문항(BS3_1, BD1_11)에 `unknown`("잘 모르겠어요")을 더함 (10/14 회의 3번, 10/19 수인, 채연 확인 필요) |
+| 2. 회원 / A-1 요청 | (없음) | `health: { smoking, drinking }` 필수. 값은 국민건강영양조사 문항(BS3_1, BD1_11)에 `unknown`("잘 모르겠어요")을 더함 (10/14 회의 3번, 10/19 수인) |
 | 2. 회원 / U-1 응답 | (없음) | `health: { smoking, drinking, diseases, pregnant, dialysis, heightCm, weightKg, upcomingExams }` 추가 |
 | 2. 회원 / U-2 요청 | `{ birthYear, sex }` | `health` 안에서 바꿀 칸만 보냄. `diseases`는 생활습관 질환 id(`lifestyle_diseases.id`), `pregnant`는 여성만, `sex`를 `M`으로 바꾸면 `pregnant`를 비움 |
 | 2. 회원 / U-3 삭제 | 처방전 ~ 동의 기록 | 건강 정보 추가 |
@@ -502,7 +502,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | 400 | `VALIDATION_ERROR` | `email`을 보내면 거절 (수정 불가 항목). 위 `health` 규칙에 맞지 않으면 그 칸을 `field`로 (예: `health.pregnant`) |
 
 > 출생연도, 성별, 건강 정보가 바뀌면 **다음 분석부터** 반영. 지난 결과는 다시 계산하지 않음
-> 분석은 처방전에 질병분류기호가 없을 때만 `health.diseases`로 채움(출처 `profile`). 있으면 처방전 것만 씀 (10/19 수인 제안, 채연 확인 필요)
+> 분석은 처방전 질환과 `health.diseases`를 합쳐 씀. 질환 기준으로 중복을 빼고(한 질환에 코드가 여러 개라 코드가 달라도 같은 질환이면 하나) 대표 질병분류기호로 바꿔 넣으며 출처는 `profile`, RG-05-E1을 미리 채움(사용자가 빼거나 더할 수 있음) (10/19 채연 제안으로 확인됨, 구현은 #105 다음 PR에서 수인, 리뷰 채연)
 
 ---
 
