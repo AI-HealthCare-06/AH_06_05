@@ -1,13 +1,14 @@
 """O-1 ~ O-5 — 업로드 · 작업 상태 · 인식 결과 · 수정 · 약 이름 검색 (CLOVA는 저장해 둔 가짜 처방전 결과로 대신함)"""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from httpx import ASGITransport, AsyncClient
 from starlette import status
 from tortoise.contrib.test import TestCase
 
+from app.core import config
 from app.main import app
 from app.models.masters import Disease, DrugProduct
 from app.models.ocr import MatchStatus, OcrJob, Prescription, PrescriptionItem, PrescriptionItemCandidate
@@ -58,6 +59,11 @@ async def seed_masters() -> None:
 class OcrApiCase(TestCase):
     async def asyncSetUp(self):
         await super().asyncSetUp()
+        # 내 컴퓨터 .env에 CLOVA 키가 있어도 진짜 CLOVA를 부르지 않게 비워 둠 (저장해 둔 가짜 처방전으로만 돌림)
+        for name in ("CLOVA_OCR_INVOKE_URL", "CLOVA_OCR_SECRET_KEY"):
+            patcher = patch.object(config, name, "")
+            patcher.start()
+            self.addCleanup(patcher.stop)
         await seed_masters()
 
     async def asyncTearDown(self):
@@ -115,6 +121,34 @@ class TestUploadAndJob(OcrApiCase):
             job = (await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)).json()
         assert job["status"] == "done" and len(job["prescriptionIds"]) == 2
         assert job["prescriptionIds"] == sorted(job["prescriptionIds"])
+
+    async def test_daily_limit_blocks_before_ocr_and_resets_at_midnight(self):
+        calls = []
+
+        async def fake(content, fmt, name):
+            calls.append(name)
+            return json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+
+        async with self.client() as client:
+            headers = await self.auth(client, "o-limit@example.com")
+            with patch.object(config, "OCR_DAILY_FILE_LIMIT", 3), patch.object(clova, "recognize", fake):
+                assert (await self.upload(client, headers, n=2)).status_code == status.HTTP_202_ACCEPTED
+                blocked = await self.upload(client, headers, n=2)  # 2 + 2 > 3
+                assert blocked.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                err = blocked.json()["error"]
+                assert err["code"] == "DAILY_LIMIT_EXCEEDED" and err["detail"] == {"limit": 3, "used": 2}
+                assert (await self.upload(client, headers, n=1)).status_code == status.HTTP_202_ACCEPTED  # 2 + 1 = 3
+                me = await User.get(login_id="o-limit@example.com")
+                assert await OcrJob.filter(user_id=me.id).count() == 2  # 막힌 요청은 작업이 없음
+                other = await self.auth(client, "o-other@example.com")  # 다른 사용자는 따로 셈
+                assert (await self.upload(client, other, n=3)).status_code == status.HTTP_202_ACCEPTED
+                # 어제 올린 것으로 바뀌면 다시 올릴 수 있음
+                await OcrJob.filter(user_id=me.id).update(created_at=datetime.now(UTC) - timedelta(days=1))
+                assert (await self.upload(client, headers, n=3)).status_code == status.HTTP_202_ACCEPTED
+            assert len(calls) == 2 + 1 + 3 + 3  # 막힌 요청(2장)은 OCR을 부르지 않음
+            with patch.object(config, "OCR_DAILY_FILE_LIMIT", 0):  # 0이면 끔
+                for _ in range(3):
+                    assert (await self.upload(client, headers, n=5)).status_code == status.HTTP_202_ACCEPTED
 
     async def test_validation_errors_are_400_with_file_index(self):
         async with self.client() as client:
