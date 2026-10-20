@@ -20,6 +20,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.5 초안 추가 | 2026-10-16 | 별명(`nickname`) 제거 (A-1 · A-2 · U-1 · U-2, #96 · 10/14 팀 합의) / O-5 `duplicatedFiles`, O-2 `notices`, `itemName`, `suggestedBy`, `guidance`, `checkFields` 추가 / R-4 `summary.drugCount`는 점검한 약만 셈 / R-4 복약 안내: `purpose` 문구를 "~에 쓰는 약이에요"로, `cautions`(문장 배열) 추가, 사람이 확인한 안내문만 채움 (`drug_guides`) | 김채연 |
 | v1.5 초안 추가 | 2026-10-19 | R-7(지난 기록 목록), R-8(기록 삭제), R-9(안내문 피드백)을 서버에 구현하면서 세부 규칙을 적음: R-7 `size` 1~50, 잘못된 `cursor`는 400, R-8 진행 중이면 `409 ANALYSIS_RUNNING`, R-9 한 사람 한 안내문 하나(다시 보내면 덮어씀), 응답 `201` `{feedbackId}` / ERD `feedbacks`에 `unique (guide_id, user_id)` 제안 | 채연 |
 | v1.5 초안 추가 | 2026-10-19 | 건강 정보(#101): A-1 요청 `health`(흡연, 음주), U-1 응답과 U-2 요청 `health`, U-3과 U-5 삭제 목록에 건강 정보 / 1장 U-1 화면을 CM-05로(#96) | 이수인 |
+| v1.5 초안 추가 | 2026-10-20 | R-4 `lifestyle.diseases[].origin`에 `profile`(내 정보 질환) 추가. 분석 질환은 처방전 질환과 내 정보 질환을 합쳐 씀 (#101, 10/19 합의) | 이수인 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -216,6 +217,15 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | 2. 회원 / U-5 삭제 | 처방전 ~ 챗봇 대화 | 건강 정보 추가 |
 | 1. 전체 목록 / U-1 화면 | CM-03 · CM-05 | CM-05 (홈 인사말을 빼서, 2장 U-1과 맞춤. #96) |
 | 머리말 / 작성 기준 (ERD) | ERD v1.5 초안 | `user_health_profiles`, `analyses.health_snapshot` 추가 반영 (ERD 변경 이력 참고) |
+
+</details>
+
+<details>
+<summary><b>v1.5 초안 추가</b> 2026-10-20 분석 질환에 내 정보 질환 (수인) 세부 1건</summary>
+
+| 위치 | 현행 (As-Is) | 개정 (To-Be) |
+|---|---|---|
+| 4. RAG / R-4 `lifestyle.diseases[].origin` | `prescription` / `user` | `prescription` / `profile` / `user`. 분석을 시작할 때 처방전 질환 뒤에 내 정보 질환을 대표 질병분류기호로 넣고, 처방전에 같은 질환이 있으면 코드가 달라도 뺌 (#101, 10/19 합의) |
 
 </details>
 
@@ -913,7 +923,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | `medication.items[].caution` · `cautions` | `cautions`는 문장별 배열(최대 3개, 없으면 빈 배열), `caution`은 그 문장을 줄바꿈으로 이은 문자열. 각 문장은 허가정보 원문 문장을 근거로 쓰고 근거 번호와 원문을 `drug_guides.evidence_ids`에 저장 — **`cautions`는 명세서에 추가 제안 (수인 확인)** | RG-04 약 카드 |
 | `medication.items[].purpose` | "~에 쓰는 약이에요" 꼴. 의료 표현 목록(#61)의 "효과를 약속하는 말"을 피해 "혈압을 낮춰요" 같은 표현은 쓰지 않음 | RG-04 약 카드 |
 | `medication.items[].itemId`, `lifestyle.medicationLinks[].itemId` | (v1.5 초안) 처방 약 항목 번호(`prescription_items.id`). 약 화면에서 챗봇을 열 때 `context.id`로 쓰고, 생활습관의 약 연결 줄을 약 카드와 번호로 이음 | RG-04, RG-05, CB-01 |
-| `lifestyle.diseases[].origin` | `prescription`(처방전 코드) / `user`(RG-05-E1에서 직접 선택) | RG-05 |
+| `lifestyle.diseases[].origin` | `prescription`(처방전 코드) / `profile`(내 정보 질환, 대표 질병분류기호로 바꿔 넣음) / `user`(RG-05-E1에서 직접 선택) | RG-05 |
 | `lifestyle.diseases` 빈 배열 | 질병분류기호 없음 (약봉투 등) → **RG-05-E1** | RG-05-E1 |
 | `lifestyle.sections[].conflict` | 질환끼리 권고가 부딪힐 때 `{ "message": "...", "label": "의료진 상담 필요" }` (REQ-062) | RG-05 |
 | `lifestyle.sections[].actions[].sourceIds`와 `lifestyle.sources[]` | (v1.4) 문장 하나에 출처가 2개 이상일 수 있어 `sourceId`를 `sourceIds` 목록으로 바꿈. 기관, 문서명, 판, 발행일, URL (REQ-060). 예시 값은 형식만 보여주는 자리표시 | RG-05 출처 |

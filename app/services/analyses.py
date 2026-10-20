@@ -137,7 +137,18 @@ async def create_analysis(user: User, prescription_ids: list[int]) -> Analysis:
         )
         for code in dict.fromkeys(codes):
             await AnalysisDisease.create(analysis=analysis, disease_id=code, origin=DiseaseOrigin.PRESCRIPTION)
+        for code in await _profile_codes(list(codes), profile.diseases if profile else []):
+            await AnalysisDisease.create(analysis=analysis, disease_id=code, origin=DiseaseOrigin.PROFILE)
     return analysis
+
+
+async def _profile_codes(rx_codes: list[str], profile_ids: list[str]) -> list[str]:
+    """내 정보 질환 id → 대표 질병분류기호. 처방전에 같은 질환이 있으면 코드가 달라도 뺌 (10/19 합의, #101)"""
+    seen = {d["id"] for c in rx_codes if (d := lifestyle.disease_of(c))}
+    wanted = [lifestyle.PICKABLE[i] for i in dict.fromkeys(profile_ids) if i in lifestyle.PICKABLE and i not in seen]
+    # 질병 목록(마스터)에 없는 코드는 넣을 수 없어 뺌
+    known = set(await Disease.filter(code__in=wanted).values_list("code", flat=True)) if wanted else set()
+    return [c for c in wanted if c in known]
 
 
 # ── 백그라운드 실행 ───────────────────────────────────────────────────────────────────────────

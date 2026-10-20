@@ -194,6 +194,8 @@ export const copy = {
     foundDiseases: '확인한 질환',
     diseaseFrom: '처방전의 질병분류기호로 확인했어요',
     diseaseFromUser: '직접 고른 질환이에요',
+    diseaseFromProfile: '내 정보에 넣은 질환이에요',
+    diseaseFromBoth: '처방전과 내 정보로 확인했어요',
     withDrugs: '약과 함께',
     withDrugsTitle: '드시는 약 때문에 조심할 것',
     clinician: '의료진 확인',
