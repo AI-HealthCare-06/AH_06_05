@@ -24,6 +24,7 @@
 //   음주와 흡연 값은 국민건강영양조사 문항(BD1_11 최근 1년 음주 빈도, BS3_1 현재 흡연 여부)에 "잘 모르겠어요"를 더함 (10/19 수인, 채연 안의 "빈도 구간"을 따름).
 //   동의(sensitive_health) 철회와 탈퇴 때 줄째 지움. 탈퇴(U-3)는 users 행을 남기므로 이 표는 따로 지워야 함.
 //   analyses.health_snapshot 추가(분석 시점 건강 정보, 10/14 채연 안).
+//   [10/20 추가] analysis_diseases.origin에 profile 추가(분석 질환은 처방전 질환과 내 정보 질환을 합쳐 씀, 10/19 합의).
 //
 // [v1.4, 2026-10-08, 채연] 팩트표 v0.12 반영. lifestyle_guides에 group_type(위험 신호, 교차 규칙을 같은 표에 담음),
 //   requires_clinician, goal_eligible, applies_when, show_when_unknown, condition, user_message 추가. lifestyle_guide_actions에 kind(fact 또는
@@ -228,7 +229,7 @@ Table analysis_prescriptions {
 Table analysis_diseases {
   analysis_id  bigint      [pk, ref: > analyses.id]
   disease_code varchar(10) [pk, ref: > diseases.code]
-  origin       varchar(20) [not null, note: 'prescription(처방전 코드) / user(RG-05-E1에서 직접 선택)']
+  origin       varchar(20) [not null, note: 'prescription(처방전 코드) / profile(내 정보 질환, 대표 질병분류기호로 바꿔 넣음. 처방전에 같은 질환이 있으면 넣지 않음, 10/19 합의, #101) / user(RG-05-E1에서 직접 선택)']
 
   Note: 'v1.0 신규 · 생활습관 가이드 조회 기준'
 }
