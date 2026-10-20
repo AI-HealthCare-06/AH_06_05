@@ -1,0 +1,202 @@
+"""질문을 받아 갈래를 정하는 흐름 시험 (#99 PR 1). OpenAI는 가짜로 바꿔 흐름만 확인 (CI에서 부르지 않음)."""
+
+import asyncio
+import functools
+from collections.abc import Callable
+from typing import Any
+
+from app.services.chatbot.context import FixedInfo, UserDrug
+from app.services.chatbot.llm import LLMError, Usage
+from app.services.chatbot.pipeline import route
+
+
+def sync(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """async 시험을 따로 만든 이벤트 루프에서 실행 (test_llm_fix.py와 같은 이유: 전역 루프를 지우면 DB 시험이 깨짐)"""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(fn(*args, **kwargs))
+        finally:
+            loop.close()
+
+    return wrapper
+
+
+S0 = FixedInfo(
+    age=72,
+    diseases=["고혈압", "제2형 당뇨병", "이상지질혈증"],
+    drugs=[
+        UserDrug("노바스크정5밀리그람", "암로디핀", "혈압", "1일 1회 아침"),
+        UserDrug("다이아벡스정500밀리그램", "메트포르민", "당뇨", "1일 2회 식후"),
+        UserDrug("리피토정10밀리그램", "아토르바스타틴", "콜레스테롤", "1일 1회 저녁"),
+    ],
+)
+
+
+def classified(**over: Any) -> dict[str, Any]:
+    base = {
+        "target_reason": "",
+        "target_drug": None,
+        "target_source": "none",
+        "category": "medication",
+        "risk": "none",
+        "refer_kind": None,
+        "about_user_drugs": False,
+        "clarify_question": None,
+    }
+    return {**base, **over}
+
+
+class FakeChat:
+    """이름("guard", "classify")마다 정해 둔 답을 돌려주고, 불린 순서를 남김"""
+
+    def __init__(self, guard: str | Exception = "none", classify: dict[str, Any] | Exception | None = None) -> None:
+        self.answers: dict[str, Any] = {"guard": guard, "classify": classify or classified()}
+        self.calls: list[str] = []
+        self.seen: dict[str, str] = {}
+
+    async def complete_json(
+        self, system: str, messages: list[dict[str, str]], schema: dict[str, Any], name: str, usage: Usage
+    ) -> dict[str, Any]:
+        self.calls.append(name)
+        self.seen[name] = messages[-1]["content"]
+        usage.calls += 1
+        answer = self.answers[name]
+        if isinstance(answer, Exception):
+            raise answer
+        return {"reason": "", "risk": answer} if name == "guard" else answer
+
+
+@sync
+async def test_layer1_emergency_skips_ai():
+    chat = FakeChat()
+    r = await route("약을 한꺼번에 많이 먹었어요", S0, [], chat)  # 골든셋 U1
+    assert (r.kind, r.layer, r.overdose) == ("emergency", 1, True)
+    assert chat.calls == []
+
+
+@sync
+async def test_layer1_crisis_dose_question():
+    r = await route("혈압약 몇 알 먹으면 위험해요?", S0, [], FakeChat())  # 골든셋 K1
+    assert (r.kind, r.layer) == ("crisis", 1)
+
+
+@sync
+async def test_layer1_both_types():
+    r = await route("사라지고 싶어서 약을 한꺼번에 먹었어요", S0, [], FakeChat())  # 골든셋 X1
+    assert r.safety_types == ["emergency", "crisis"]
+    assert r.kind == "emergency"
+
+
+@sync
+async def test_context_release_still_goes_through_layer2():
+    chat = FakeChat(guard="none")
+    r = await route("드라마에서 쓰러지는 장면을 봤는데 저혈당이 그런가요?", S0, [], chat)
+    assert r.context_release is not None
+    assert "guard" in chat.calls
+    assert r.kind == "medication"
+
+
+@sync
+async def test_layer2_catches_what_layer1_missed():
+    chat = FakeChat(guard="crisis")
+    r = await route("몇 년째 혼자라 사는 게 의미가 없어요", S0, [], chat)
+    assert (r.kind, r.layer, r.safety_rules) == ("crisis", 2, ["llm_guard"])
+
+
+@sync
+async def test_guard_and_classify_both_called():
+    chat = FakeChat()
+    r = await route("자몽주스 마셔도 돼요?", S0, [], chat)
+    assert sorted(chat.calls) == ["classify", "guard"]
+    assert r.kind == "medication"
+    assert r.usage.calls == 2
+
+
+@sync
+async def test_guard_failure_is_error_not_answer():
+    """2층이 응답하지 않으면 답을 만들지 않고 답변 오류(E6)로 (10/19 수인 결정)"""
+    r = await route("자몽주스 마셔도 돼요?", S0, [], FakeChat(guard=LLMError("timeout")))
+    assert r.kind == "error"
+
+
+@sync
+async def test_classify_failure_is_error_when_guard_none():
+    r = await route("자몽주스 마셔도 돼요?", S0, [], FakeChat(classify=LLMError("timeout")))
+    assert r.kind == "error"
+
+
+@sync
+async def test_guard_risk_wins_even_if_classify_failed():
+    r = await route("다 내려놓고 싶네요", S0, [], FakeChat(guard="crisis", classify=LLMError("timeout")))
+    assert (r.kind, r.layer) == ("crisis", 2)
+
+
+@sync
+async def test_classify_risk_is_ignored():
+    """2층 판단은 전용 호출만 따름 (분류 안의 판단은 17개 중 10개를 놓침, 10/12)"""
+    chat = FakeChat(guard="none", classify=classified(risk="crisis"))
+    r = await route("혈압약은 아침에 먹나요?", S0, [], chat)
+    assert r.kind == "medication"
+
+
+@sync
+async def test_pregnancy_goes_to_refer():
+    chat = FakeChat(classify=classified(category="out_of_scope"))
+    r = await route("임신 중인데 이 약 먹어도 돼요?", S0, [], chat)
+    assert (r.kind, r.classification["refer_kind"]) == ("refer", "next_visit")
+
+
+@sync
+async def test_refer_passes_through():
+    chat = FakeChat(classify=classified(category="refer", refer_kind="next_visit"))
+    r = await route("혈압이 정상이 됐는데 약을 끊어도 되나요?", S0, [], chat)
+    assert r.kind == "refer"
+
+
+@sync
+async def test_guess_from_memory_becomes_clarify():
+    """'처음에 물어본 약'인데 기억에 없으면 되물음 (기억 밖의 약을 단정하지 않음)"""
+    chat = FakeChat(classify=classified(target_drug="노바스크정5밀리그람", target_source="history"))
+    r = await route("처음에 물어본 그 약은 하루에 몇 번 먹어요?", S0, [], chat)
+    assert r.kind == "clarify"
+    assert r.clarify_question == "앞에서 말씀하신 약이 어떤 약인지 다시 알려 주시겠어요?"
+
+
+@sync
+async def test_ordinal_resolved_from_history():
+    history = [
+        {"role": "user", "content": "리피토는 무슨 약이에요?"},
+        {"role": "assistant", "content": "리피토정은 콜레스테롤을 낮추는 약이에요."},
+        {"role": "user", "content": "노바스크는 언제 먹어요?"},
+        {"role": "assistant", "content": "노바스크정은 아침에 처방대로 드세요."},
+    ]
+    chat = FakeChat(classify=classified(target_drug="노바스크정5밀리그람", target_source="history"))
+    r = await route("처음에 물어본 약은 하루에 몇 번 먹어요?", S0, history, chat)
+    assert r.kind == "medication"
+    assert r.classification["target_drug"] == "리피토정10밀리그램"  # 코드로 찾은 순서를 따름
+    assert "[지시어 풀이]" in chat.seen["classify"]
+
+
+@sync
+async def test_about_user_drugs_is_not_clarify():
+    chat = FakeChat(classify=classified(category="clarify", about_user_drugs=True))
+    r = await route("이 약들 같이 먹어도 돼요?", S0, [], chat)
+    assert r.kind == "medication"
+
+
+@sync
+async def test_clarify_without_target():
+    chat = FakeChat(classify=classified(category="clarify", clarify_question="어떤 약을 말씀하시나요?"))
+    r = await route("그거 먹어도 돼요?", S0, [], chat)
+    assert (r.kind, r.clarify_question) == ("clarify", "어떤 약을 말씀하시나요?")
+
+
+@sync
+async def test_route_keeps_no_raw_text():
+    """갈래 결과에는 질문 원문을 담지 않음 (1층 결과와 같은 원칙)"""
+    question = "약을 한꺼번에 많이 먹었어요"
+    r = await route(question, S0, [], FakeChat())
+    assert question not in repr(r)
