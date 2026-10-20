@@ -1,0 +1,237 @@
+"""1층 가드레일: 긴급(emergency), 자해(crisis) 표현을 AI 없이 규칙으로 잡음.
+
+설계 메모 7-2 항목에서 시작해 10/15 정교화 (멘토님: 사용 모델보다 1층을 훨씬 정교하게)
+- 비교 전에 띄어쓰기, 문장부호를 없애고, 흔한 오타와 떨어진 자모를 맞춤
+- 주어와 서술어 사이에 "너무, 좀, 갑자기" 같은 말이 몇 글자 끼어도 잡음
+- 강한 표현은 하나만 나와도 잡고, 혼자서는 약한 신호는 두 가지가 함께 나올 때 잡음 (조합 규칙)
+- 이미 먹은 경우(과거, 완료형)는 emergency 과다 복용, 먹을 양을 묻는 경우(가정, 질문형)는 crisis
+- 두 범주에 동시에 걸리면 둘 다 돌려줌
+- 놓치지 않는 쪽 우선 (오탐 허용). 정상인데 걸린 문장은 문맥 파악(context_check)이 풂
+- 규칙은 시험 문장 100개, 2층 비교 27개, 설계 메모 범주로만 만듦. 따로 둔 문장은 로컬 실험에서 채점에만 씀
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from app.services.chatbot import safety_lexicon
+
+# 정규식은 모두 normalize를 거친 문장(공백, 문장부호 없음)에 씀
+_G = r"\S{0,4}?"  # 주어와 서술어 사이에 끼는 말
+
+# ── 응급 (emergency): 강한 표현, 하나만 나와도 잡음 ──
+EMERGENCY_RULES: list[tuple[str, str]] = [
+    # 가슴, 숨은 개념 사전(③)이 맡음. 10/16 규칙표 판단으로 겹친 규칙을 합침 ("흉통"만 여기 둠)
+    ("chest", r"흉통"),
+    # 의식 저하, 쓰러짐, 경련, 깨워도 안 깸
+    (
+        "consciousness",
+        r"의식(이|을)?\S{0,2}(없|잃|흐려|흐릿|가물|희미)|정신(을|이)?(잃|흐릿|가물)|쓰러(졌|지|져|질)|기절|경련|발작|"
+        r"(흔들어도|깨워도|불러도|부르면|불러봐도)\S{0,6}(안깨|못깨|대답|반응)|반응(이|도)?(하나도|전혀|통)?없(어|네|다|음|는데|고)|"
+        r"(몸|팔다리)(이)?\S{0,4}(굳|뻣뻣)\S{0,10}(떨|경련)|(떨|경련)\S{0,8}(몸|팔다리)(이)?\S{0,2}(굳|뻣뻣)|대답(을|도)?(잘)?(못|안)하|"
+        r"(눈)?앞이(캄캄|깜깜|하얘|하얗|까매|노래)|거품(을)?물|눈(을)?뒤집",
+    ),
+    # 뇌졸중 신호: 한쪽 마비, 말이 어눌, 입이나 얼굴 처짐
+    (
+        "stroke",
+        r"(팔|다리|얼굴)(이|가)?(마비|저려서안움직)|마비(가|됐|되|왔)|"
+        r"(한쪽|반쪽|왼쪽|오른쪽|갑자기)\S{0,8}(팔|다리|팔다리|얼굴|입)\S{0,6}(힘이(하나도|전혀)?없|안움직|감각이없|처지|처졌|돌아갔|비뚤)|"
+        r"(말|말씀|발음)(이|을|도|가)\S{0,6}(어눌|꼬여|꼬이|엉키|엉켜|이상하게하|안나와|안나오|잘안돼|잘안되|못하겠)|발음(이)?(꼬|새)|"
+        r"(한|하나|왼|오른)쪽\S{0,6}(힘이(안|없)|안써|안움직|마비)|(왼쪽|한쪽|오른쪽)(팔|다리|팔다리)(이|가)?\S{0,2}저리|"
+        r"(입|얼굴)(이|가)?\S{0,2}(처졌|처지|돌아갔|비뚤)",
+    ),
+    # 심한 출혈, 검거나 피 섞인 변
+    # 검은 변만으로는 응급이 아님 (철분제, 위장약으로도 생김, 10/15 수인 판단). 어지러움 등과 함께일 때 조합 규칙으로 잡음
+    (
+        "bleeding",
+        r"피(가)?(안멈|멈추지않|많이나)|출혈(이)?(심|많|안멈)|피를토|토혈|혈변|피(가)?섞인(변|대변)|"
+        r"(코피|피)(가)?\S{0,8}(안멈|멈추지않|멈추질않|안그쳐)|출혈(이)?\S{0,4}(나|심|많|안멈|멈추)|"
+        r"토\S{0,6}피(가)?(나|섞)|피\S{0,4}토했|(손목|팔목)\S{0,3}(그었|그어|긋|베었)",
+    ),
+    # 저혈당이 지금 온 것 같음 ("저혈당이 오면 어떻게 해요"처럼 미리 묻는 말은 제외)
+    ("hypoglycemia", r"저혈당\S{0,4}(같아|같은데|온것같|왔|인것같|증상같)|당(이)?떨어(졌|진것같|진거같)"),
+    # 붓는 알레르기 (발목, 손목의 붓기는 제외), 목이 조이거나 답답함
+    (
+        "allergy",
+        r"(입술|얼굴|혀|눈두덩|목구멍|(?<![발손])목)(이|가|도)?\S{0,4}(부어|부었|붓|퉁퉁|부풀)|(?<![발손])목(이|구멍이)?\S{0,2}(조여|조이|답답|막혀)",
+    ),
+]
+
+# ── 응급 조합: 혼자서는 약한 신호, 두 가지가 함께 나오면 잡음 ──
+_WEAK: dict[str, str] = {
+    "sweat": r"식은땀|땀이\S{0,2}(나|흘러|줄줄|비오듯)",
+    "tremor": r"(손|몸|온몸)(이|가)?\S{0,3}(떨리|떨려)",
+    "dizzy": r"어지러|어지럽|어질어질|핑돌|휘청|비틀",
+    "dazed": r"정신(이)?(없|멍)|멍해",
+    "drowsy": r"졸려|졸리|주무|잠만|못일어",
+    "head_hit": r"머리(를|가|에)?\S{0,4}(부딪|박|다쳤)",
+    "hypo": r"저혈당",
+    "anticoag": r"와파린|아스피린|항응고",
+    "palpitation": r"(심장|가슴)(이)?\S{0,4}(두근|빨리뛰|빠르게뛰|막뛰|미친듯|쿵쾅|벌렁|뛴|뛰어)",
+    "weakness": r"힘이(없|빠|안들어)|기운이(없|빠)",
+    "hives": r"두드러기",
+    "black_stool": r"검은변|(변|대변)(이|을|색이)?\S{0,4}(까맣|까매|검게|검어|검은색|까만색|시커멓|짙은검)|(까만|검은|검은색|까만색)(변|대변)",
+    "vomit_blood": r"피(를)?토|토\S{0,6}피|구토",
+    "unknown_amount": r"(몇번|얼마나|몇알)(을|를)?(드셨|먹었|먹은)는지(모르|모름)",
+}
+_COMBOS: list[tuple[str, set[str]]] = [
+    ("hypoglycemia", {"sweat", "tremor"}),
+    ("hypoglycemia", {"tremor", "dazed"}),
+    ("hypoglycemia", {"hypo", "dazed"}),
+    ("hypoglycemia", {"hypo", "tremor"}),
+    ("faint", {"sweat", "dizzy"}),
+    ("faint", {"sweat", "dazed"}),
+    ("head_injury", {"head_hit", "drowsy"}),
+    ("head_injury", {"head_hit", "anticoag"}),
+    ("palpitation", {"palpitation", "dizzy"}),
+    ("palpitation", {"palpitation", "sweat"}),
+    ("anaphylaxis", {"hives", "dizzy"}),
+    ("hypoglycemia", {"tremor", "weakness"}),
+    ("faint", {"dizzy", "weakness"}),
+    ("gi_bleeding", {"black_stool", "dizzy"}),
+    ("gi_bleeding", {"black_stool", "weakness"}),
+    ("gi_bleeding", {"black_stool", "sweat"}),
+    ("gi_bleeding", {"black_stool", "vomit_blood"}),
+    ("gi_bleeding", {"black_stool", "anticoag"}),
+    ("unknown_dose", {"unknown_amount", "drowsy"}),
+]
+
+# ── 과다 복용, 잘못 복용 (이미 먹음) → emergency, overdose = True ──
+OVERDOSE_DONE = (
+    r"과다복용(을)?했|과다복용해버|많이(먹었|먹어버렸|드셨|삼켰|마셨)|"
+    r"(한꺼번에|한번에)(많이|다)?(먹었|먹어버렸|삼켰|드셨)|"
+    r"한(통|병|봉지)(을|를)?(다|전부|통째로)?(먹었|마셨|삼켰|드셨|먹어버렸)|"
+    r"다먹어버렸|통째로먹었|잘못(먹었|드셨|먹어서|먹은)|남의약(을)?\S{0,4}(먹었|먹어버|잘못|드셨|썼|복용)|여러번(먹었|드셨|먹어버|먹은것같|먹은거같)|(오늘|아침에|이번에|벌써|또)\S{0,6}(두|세|네)번(먹었|드셨|복용했|먹은것같|복용한것같)|너무많이(먹은|먹었|드신)(듯|것같|거같)|어른약(을)?\S{0,6}(애|아이|아기|애기|딸|아들|손주|손녀|손자)(가|이)?\S{0,4}(먹|삼)|(애|아이|아기|애기|손주|손녀|손자)(가|이)\S{0,4}어른약\S{0,4}(먹|삼)|(두번|세번)(먹은것같|먹은거같)|"
+    r"두번먹었(?!는지)|두번이나|(세|네|다섯)번이나(먹었|드셨)|두배(로)?(먹었|드셨)|"
+    r"(알|개|봉지)(을|를)?(다|전부)(먹었|삼켰)|"  # "두 알 먹었어요"는 보통 복용
+    r"(아이|애기|아기|손주|손자|손녀)\S{0,12}(삼켰|삼킨|집어먹|몇알먹|다마셨|먹은것같|먹은거같)|"
+    r"(아이|애기|아기|손주|손자|손녀)\S{0,4}(제|내|할머니|할아버지|어른|엄마|아빠|남의)\S{0,8}(약|수면제|혈압약|당뇨약)\S{0,6}(먹|삼)|"
+    r"한(줌|움큼|주먹)\S{0,2}(먹|삼켰|털어)|(또|다시|한번더)먹어버|"
+    r"(인슐린|주사)\S{0,8}(두번|또|다시|한번더)(맞|놓)"
+)
+
+# ── 자해, 자살 (crisis) ──
+CRISIS_RULES: list[tuple[str, str]] = [
+    # 10/16: 애매한 마음 표현(삶의 무의미, 절망, 힘듦)은 1층에서 빼고 2층이 문맥으로 판단함.
+    #   1층에는 지표로 분명한 위기만: C-SSRS 1, 2번(죽기를 바람, 삶을 끝내려는 생각), 자기비하와 짐, 주변 정리, 유서, 수단
+    (
+        "self_harm",
+        r"죽고싶|죽고만싶|죽어버리|죽을래|사라지고싶|없어지고싶|살기싫|살고싶지않|자살|자해|목숨(을)?끊|"
+        r"끝내고싶|유서|"
+        r"(내가|제가)(가면|죽으면|사라지면)\S{0,8}(편해|짐|낫)|짐(만|이)?(되|돼|된)|"
+        r"없어져도(되|아무도)|(내가|제가|나|저)\S{0,2}없어도(아무도|모를)|"
+        r"영원히(잠들|쉬|자고|요$)|(쉬고싶|자고싶|잠들고싶)\S{0,6}영원히|"
+        r"눈(을)?안떴으면|다정리하고\S{0,4}떠나|세상을떠나|"
+        r"(끝났으면|끝나버렸으면|사라졌으면|없어졌으면|죽었으면|안깼으면|깨지않았으면|안깨어났으면)(좋겠|해|한다)|"
+        r"(나|내가|제가|저)\S{0,2}없으면\S{0,8}(잘살|편해|편할|나을|행복)|(나|내가|제가|저)\S{0,2}없어도\S{0,4}(괜찮|될|되겠)|"
+        r"(내가|제가)\S{0,2}없어지면\S{0,6}(편해|나을|낫)|"
+        r"없는게\S{0,2}(더)?(나을|낫)|세상(을)?떠나는게\S{0,2}(나을|낫)|끝내버리고싶|죽(음|는게)(이)?\S{0,4}(낫|나을|편할|편하)|"
+        r"(다|모두)?(내려놓고|포기하고)\S{0,10}(죽고|끝내)|"
+        r"(편하게|조용히|아프지않게)\S{0,3}(갈수|가는|죽는|죽을|떠날)",
+    ),
+    # 먹을 양을 묻는 가정, 질문형, 약을 모음
+    (
+        "dose_question",
+        r"(몇알|몇개|몇통|몇병|얼마나)(을|를|이)?(먹으면|먹어야|먹을때|삼키면|이면)\S{0,8}(죽|위험|어떻게|큰일|깨지않|안깨)|"
+        r"(몇알|몇개|몇통|몇병|여러알)(이|부터|면|넘으면|이상)?\S{0,6}(위험|치명|죽|중독|큰일)|"
+        r"(세|네|다섯|여섯|열|스무|여러|\d+)(알|개|통)(을|를)?\S{0,2}(먹으면|삼키면|복용하면)\S{0,4}(죽|큰일|위험|어떻게되|어떻게돼)|"
+        r"(한꺼번에|한번에|다|많이)(먹으면|먹어도|삼키면)\S{0,6}(죽|어떻게|어떡|어쩌|어캐|위험|큰일|편해|편하게|안깨)|털어(넣|먹)으면|"  # 10/16: 결과 말이 붙을 때만 ("먹으면 안 되는 약"은 제외)
+        r"과다복용(하면|을하면|시)|치사량|몇알부터(위험|죽)|"
+        r"(안깨는|깨지않는)약|(약|진통제|수면제)\S{0,6}(모으|모아|모았)|모아(둔|두고|놨)\S{0,6}(약|진통제|수면제)",
+    ),
+]
+
+# ── 맞춤법 맞추기: (찾을 것, 바꿀 것). 공백을 없앤 뒤 차례로 씀 ──
+_FIXES: list[tuple[str, str]] = [
+    (r"(해|파|져|어|워|싶|세)여", r"\1요"),  # 끝말 "~여"
+    (r"(하|죽|살|먹|싶|가)구", r"\1고"),  # "~구"
+    (r"시퍼|십퍼|싶퍼", "싶어"),
+    (r"머거써|먹어써|머것", "먹었어"),
+    (r"머거", "먹어"),
+    (r"너므", "너무"),
+    (r"주거(버리)", r"죽어\1"),
+    (r"십지", "싶지"),
+    (r"십어", "싶어"),
+    (r"(살기)실", r"\1싫"),
+    (r"먹엇", "먹었"),
+    (r"해여", "해요"),
+    (r"힘드러", "힘들어"),
+    (r"것같애", "것같아"),
+    (r"한꺼버네", "한꺼번에"),
+]
+
+_PUNCT = re.compile(r"[\s\.,!?~…'\"`·\-—()\[\]{}:;/ㅠㅜㅎㅋ^]+")
+
+# 받침 없는 글자 뒤에 떨어진 자음 하나("아ㄴ")를 받침으로 붙임
+_JONG = "ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ"
+
+
+def _join_jamo(s: str) -> str:
+    out: list[str] = []
+    for ch in s:
+        if out and ch in _JONG:
+            code = ord(out[-1]) - 0xAC00
+            if 0 <= code < 11172 and code % 28 == 0:
+                out[-1] = chr(ord(out[-1]) + _JONG.index(ch) + 1)
+                continue
+        out.append(ch)
+    return "".join(out)
+
+
+def normalize(text: str) -> str:
+    """띄어쓰기, 문장부호를 없애고 흔한 오타를 맞춤."""
+    s = _PUNCT.sub("", text)
+    s = re.sub(r"ㅈㅅ(하|할|생각)", r"자살\1", s)  # 초성 줄임말 (ㅈㅅ만 쓰면 "죄송"일 수 있어 뒤 말까지 봄)
+    s = _join_jamo(s)
+    for pattern, repl in _FIXES:
+        s = re.sub(pattern, repl, s)
+    return s
+
+
+# 개념 사전을 짝지어 만든 규칙 (safety_lexicon.py)
+_LEX_EMERGENCY = safety_lexicon.emergency_patterns()
+_LEX_CRISIS = safety_lexicon.crisis_patterns()
+_LEX_OVERDOSE = safety_lexicon.overdose_patterns()
+
+
+@dataclass
+class SafetyResult:
+    types: list[str] = field(default_factory=list)  # "emergency", "crisis" (동시 해당이면 둘 다)
+    overdose: bool = False  # True면 [지금은 증상이 없어요] 칩을 보여 주지 않음
+    rules: list[str] = field(default_factory=list)  # 걸린 규칙 이름 (원문은 담지 않음)
+
+    @property
+    def hit(self) -> bool:
+        return bool(self.types)
+
+
+def check(text: str) -> SafetyResult:
+    """질문 하나를 검사함. 한 범주에 걸려도 다른 범주 검사를 멈추지 않음."""
+    s = normalize(text)
+    result = SafetyResult()
+
+    for name, pattern in EMERGENCY_RULES + _LEX_EMERGENCY:
+        if re.search(pattern, s) and name not in result.rules:
+            result.rules.append(name)
+    weak = {name for name, pattern in _WEAK.items() if re.search(pattern, s)}
+    for name, need in _COMBOS:
+        if need <= weak and name not in result.rules:
+            result.rules.append(name)
+    if re.search(OVERDOSE_DONE, s) or any(re.search(p, s) for p in _LEX_OVERDOSE):
+        result.rules.append("overdose")
+        result.overdose = True
+    if "poison" in result.rules:
+        result.overdose = True  # 독성 물질을 마신 경우도 [지금은 증상이 없어요] 칩을 보여 주지 않음
+    if result.rules:
+        result.types.append("emergency")
+
+    crisis_hits = list(dict.fromkeys(name for name, pattern in CRISIS_RULES + _LEX_CRISIS if re.search(pattern, s)))
+    # "한꺼번에 먹었어요"처럼 이미 먹은 문장은 dose_question(가정형)으로 보지 않음
+    if result.overdose and crisis_hits == ["dose_question"]:
+        crisis_hits = []
+    if crisis_hits:
+        result.types.append("crisis")
+        result.rules.extend(crisis_hits)
+
+    return result
