@@ -43,6 +43,8 @@ async def classify(message: str, client: ChatClient, usage: Usage) -> dict[str, 
     )
     if result.get("category") not in CATEGORIES:
         raise LLMError("bad_category")
+    if any(k not in result for k in CLASSIFY_SCHEMA["required"]):
+        raise LLMError("missing_field")  # 칸이 빠지면 KeyError 대신 답변 오류(E6)로
     return result
 
 

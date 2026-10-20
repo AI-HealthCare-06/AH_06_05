@@ -107,6 +107,15 @@ async def test_layer2_catches_what_layer1_missed():
 
 
 @sync
+async def test_layer2_emergency_hides_no_symptom_chip():
+    """2층은 과다 복용인지 알려 주지 않으므로 2층 응급은 [지금은 증상이 없어요]를 늘 숨김 (#108 리뷰 1, 10/20 수인 결정)"""
+    r = await route("아까부터 좀 이상해요", S0, [], FakeChat(guard="emergency"))
+    assert (r.kind, r.layer, r.overdose) == ("emergency", 2, True)
+    r = await route("아까부터 좀 이상해요", S0, [], FakeChat(guard="crisis"))
+    assert (r.kind, r.layer, r.overdose) == ("crisis", 2, False)
+
+
+@sync
 async def test_guard_and_classify_both_called():
     chat = FakeChat()
     r = await route("자몽주스 마셔도 돼요?", S0, [], chat)
@@ -125,6 +134,15 @@ async def test_guard_failure_is_error_not_answer():
 @sync
 async def test_classify_failure_is_error_when_guard_none():
     r = await route("자몽주스 마셔도 돼요?", S0, [], FakeChat(classify=LLMError("timeout")))
+    assert r.kind == "error"
+
+
+@sync
+async def test_classify_missing_field_is_error():
+    """분류 결과에 필요한 칸이 빠지면 KeyError가 아니라 답변 오류(E6)로 (#108 리뷰 2)"""
+    broken = classified()
+    del broken["target_source"]
+    r = await route("자몽주스 마셔도 돼요?", S0, [], FakeChat(classify=broken))
     assert r.kind == "error"
 
 
@@ -178,6 +196,19 @@ async def test_ordinal_resolved_from_history():
     assert r.kind == "medication"
     assert r.classification["target_drug"] == "리피토정10밀리그램"  # 코드로 찾은 순서를 따름
     assert "[지시어 풀이]" in chat.seen["classify"]
+
+
+@sync
+async def test_turn_numbers_with_unanswered_question_in_history():
+    """앞 차례 답이 없어 기록이 홀수 개여도 차례 번호가 밀리지 않음 (#108 리뷰 3)"""
+    history = []
+    for i in range(1, 6):
+        history.append({"role": "user", "content": f"질문{i}"})
+        if i < 5:
+            history.append({"role": "assistant", "content": f"답{i}"})
+    chat = FakeChat()
+    await route("자몽주스 마셔도 돼요?", S0, history, chat)
+    assert "2. 사용자: 질문2" in chat.seen["classify"] and "5. 사용자: 질문5" in chat.seen["classify"]
 
 
 @sync
