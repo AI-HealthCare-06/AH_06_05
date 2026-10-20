@@ -59,7 +59,7 @@ export type AnalysisResult = {
   lifestyle: {
     guideId: number;
     status: 'done' | 'failed';
-    diseases: { code: string; name: string; origin: 'prescription' | 'user' }[];
+    diseases: { code: string; name: string; origin: 'prescription' | 'profile' | 'user' }[];
     medicationLinks: { itemId: number; itemName: string; requiresClinician: boolean; actions: Action[] }[];
     sections: {
       diseaseCode: string;

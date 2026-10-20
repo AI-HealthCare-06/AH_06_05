@@ -360,6 +360,38 @@ class TestDiseases(AnalysisCase):
             assert res.status_code == 200 and res.json()["sections"] == [] and res.json()["diseases"] == []
 
 
+class TestProfileDiseases(AnalysisCase):
+    """분석 질환 = 처방전 질환 + 내 정보 질환. 질환 기준으로 중복을 빼고 대표 코드로, 출처는 profile (#101, 10/19)"""
+
+    async def start_with_profile(self, email: str, diseases: list[str], rx_diseases: tuple[str, ...]) -> dict:
+        async with self.client() as client:
+            headers, user = await self.auth(client, email)
+            await client.patch("/api/v1/users/me", json={"health": {"diseases": diseases}}, headers=headers)
+            rx = await self.prescription(user, ["641900040"], rx_diseases)
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            return (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()["lifestyle"]
+
+    async def test_profile_diseases_are_added_after_prescription(self):
+        life = await self.start_with_profile("p1@example.com", ["HTN", "DM2"], ("I10",))
+        assert [(d["code"], d["origin"]) for d in life["diseases"]] == [("I10", "prescription"), ("E11", "profile")]
+        assert {s["diseaseCode"] for s in life["sections"]} == {"I10", "E11"}
+
+    async def test_same_disease_with_other_code_keeps_prescription(self):
+        await Disease.create(code="I11", name_kr="고혈압성 심장병")
+        life = await self.start_with_profile("p2@example.com", ["HTN"], ("I11",))
+        assert [(d["code"], d["origin"]) for d in life["diseases"]] == [("I11", "prescription")]
+
+    async def test_profile_only_gives_lifestyle_without_prescription_codes(self):
+        life = await self.start_with_profile("p3@example.com", ["CKD"], ())
+        assert [(d["code"], d["origin"]) for d in life["diseases"]] == [("N18", "profile")]
+        assert life["sections"] and all(s["diseaseCode"] == "N18" for s in life["sections"])
+
+    async def test_code_missing_from_master_is_skipped(self):
+        # E78(이상지질혈증)은 시험용 질병 목록에 없음 → 분석은 그대로 되고 그 질환만 빠짐
+        life = await self.start_with_profile("p4@example.com", ["DLP", "DM2"], ())
+        assert [(d["code"], d["origin"]) for d in life["diseases"]] == [("E11", "profile")]
+
+
 class TestStoredGuides(AnalysisCase):
     """안내문 사전 저장 — 분석 때는 drug_guides를 조회해서 붙인다"""
 

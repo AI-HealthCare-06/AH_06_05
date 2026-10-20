@@ -341,13 +341,21 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
     );
   }
   const fromUser = life.diseases.every((d) => d.origin === 'user');
+  // 분석 질환은 처방전 질환과 내 정보 질환을 합쳐 씀 (#101)
+  const rxCodes = life.diseases.filter((d) => d.origin === 'prescription').map((d) => d.code);
+  const hasProfile = life.diseases.some((d) => d.origin === 'profile');
+  const fromText = fromUser
+    ? r.diseaseFromUser
+    : rxCodes.length === 0
+      ? r.diseaseFromProfile
+      : `${hasProfile ? r.diseaseFromBoth : r.diseaseFrom} (${rxCodes.join(', ')})`;
   const nameOf = (code: string) => life.diseases.find((d) => d.code === code)?.name ?? code;
   return (
     <View style={{ marginTop: 12, gap: 12 }}>
       <Card style={{ gap: 4 }}>
         <Text style={T.small}>{r.foundDiseases}</Text>
         <Text style={T.subhead}>{life.diseases.map((d) => d.name).join(' · ')}</Text>
-        <Text style={T.caption}>{fromUser ? r.diseaseFromUser : `${r.diseaseFrom} (${life.diseases.map((d) => d.code).join(', ')})`}</Text>
+        <Text style={T.caption}>{fromText}</Text>
       </Card>
       {life.sections.some((s) => s.conflict) &&
         life.sections.filter((s) => s.conflict).map((s, i) => (

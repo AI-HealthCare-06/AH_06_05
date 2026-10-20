@@ -29,6 +29,7 @@ class AnalysisStep(StrEnum):
 
 class DiseaseOrigin(StrEnum):
     PRESCRIPTION = "prescription"  # 처방전의 질병분류기호
+    PROFILE = "profile"  # 내 정보 질환 (대표 질병분류기호로 바꿔 넣음)
     USER = "user"  # RG-05-E1에서 직접 고름
 
 
