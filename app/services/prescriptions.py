@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import Any
 
 from starlette import status
+from tortoise.functions import Sum
 from tortoise.transactions import in_transaction
 
 from app.core import config
@@ -150,7 +151,25 @@ async def create_job(user: User, blobs: list[Blob]) -> OcrJob:
         raise AppError(
             status.HTTP_403_FORBIDDEN, "CONSENT_REQUIRED", "건강 정보 사용에 동의해야 처방전을 올릴 수 있어요."
         )
+    await _check_daily_limit(user, len(blobs))
     return await OcrJob.create(user=user, status=OcrJobStatus.QUEUED, file_count=len(blobs))
+
+
+async def _check_daily_limit(user: User, new_files: int) -> None:
+    """하루(한국 시간 자정부터) 올린 사진 수가 상한을 넘으면 429. 막힌 요청은 작업을 만들지 않아 CLOVA를 부르지 않음"""
+    limit = config.OCR_DAILY_FILE_LIMIT
+    if limit <= 0:
+        return
+    midnight = datetime.now(config.TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = await OcrJob.filter(user=user, created_at__gte=midnight).annotate(total=Sum("file_count")).values("total")
+    used = int(rows[0]["total"] or 0) if rows else 0
+    if used + new_files > limit:
+        raise AppError(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "DAILY_LIMIT_EXCEEDED",
+            f"하루에 사진을 {limit}장까지 읽을 수 있어요. 내일 다시 올려 주세요.",
+            detail={"limit": limit, "used": used},
+        )
 
 
 # ── OCR 작업 실행 ─────────────────────────────────────────────────────────────────────────────

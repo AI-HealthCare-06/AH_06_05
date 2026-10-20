@@ -1,4 +1,4 @@
-// 분석 응답 모양 (API 명세서 v1.5 초안 4장 R-1 ~ R-6)
+// 분석 응답 모양 (API 명세서 v1.5 초안 4장 R-1 ~ R-9)
 export type StepState = 'pending' | 'running' | 'done' | 'failed';
 export type AnalysisStatus = 'queued' | 'running' | 'done' | 'failed';
 
@@ -85,3 +85,16 @@ export type WarningDetail = {
   judgedBy: 'database';
   actionAdvice: string;
 };
+
+// R-7 지난 기록 목록. 끝난 분석(done)에만 병원, 약 수, 질환이 있고 진행 중 또는 실패는 상태 라벨만 있음
+export type AnalysisListItem = {
+  analysisId: number;
+  createdAt: string;
+  status: 'running' | 'done' | 'failed';
+  resultLabel: string; // 서버가 만든 화면 라벨 ("확인 필요 N건" 등)
+  hospitals?: string[];
+  drugCount?: number;
+  diseaseNames?: string[];
+};
+
+export type AnalysisList = { items: AnalysisListItem[]; nextCursor: string | null };

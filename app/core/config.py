@@ -48,6 +48,10 @@ class Config(BaseSettings):
     # 근거: 10/13 시험 사진에서 못 읽힌 흐린 사진 11, 흐려도 읽힌 사진 232, 정상 사진 940 이상 (docs/design/ocr_precheck.md)
     OCR_MIN_SHARPNESS: float = 100.0
 
+    # 사용자 한 명이 하루(한국 시간 자정부터)에 올릴 수 있는 사진 수 (0이면 끔). 처방전이 아닌 사진을 OCR 호출 전에 가려내는 것이
+    # 어려워서(docs/design/ocr_precheck.md 시도 결과) CLOVA 호출 비용을 막는 안전장치로 둠
+    OCR_DAILY_FILE_LIMIT: int = 30
+
     # OCR 약 이름 "비슷한 이름 추천" 기준 (자모 3글자 조각 유사도, 0이면 끔). 낮추면 더 많이 추천하지만 엉뚱한 약도 늘어남
     OCR_SIMILAR_MIN: float = 0.70
 
@@ -60,6 +64,9 @@ class Config(BaseSettings):
     OCR_LLM_FIX: bool = False
     OPENAI_API_KEY: str = ""
     OPENAI_CHAT_MODEL: str = "gpt-4o-mini"
+    # 근거 검색 임베딩 (1536차원, 바꾸면 evidence_chunks 벡터를 새로 만들어야 함)
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    RAG_LLM_TIMEOUT_SEC: float = 30.0  # 근거 검색 한 번의 OpenAI 호출 제한 시간 (재작성, 고르기, 판정, 임베딩 각각)
     OCR_LLM_TIMEOUT_SEC: float = 10.0
     OCR_LLM_MAX_NAMES: int = 8  # 처방전 한 장당 LLM에 보내는 약 이름 최대 개수 (비용 상한)
 

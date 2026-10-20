@@ -10,6 +10,7 @@ TORTOISE_APP_MODELS = [
     "app.models.masters",
     "app.models.ocr",
     "app.models.analysis",
+    "app.models.rag",
 ]
 
 TORTOISE_ORM = {

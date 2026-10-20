@@ -27,7 +27,7 @@ class TestLoginAPI(TestCase):
         assert response.status_code == status.HTTP_200_OK
         body = response.json()
         assert set(body) == {"accessToken", "refreshToken", "user"}
-        assert body["user"]["nickname"] == "홍길동"
+        assert set(body["user"]) == {"id", "birthYear", "sex"}  # 별명 없음(#96), 건강 정보는 U-1에서만
         assert AccessToken(body["accessToken"]).payload["type"] == "access"
         assert RefreshToken(body["refreshToken"]).payload["type"] == "refresh"
         assert any(h.startswith("refresh_token=") for h in response.headers.get_list("set-cookie"))

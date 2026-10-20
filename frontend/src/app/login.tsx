@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -14,13 +15,13 @@ function toMmss(ms: number) {
 
 // CM-01 로그인, CM-01-E1 로그인 실패, CM-01-E2 로그인 잠김 (프로토타입 Login 화면, API 명세서 A-2)
 export default function Login() {
+  const router = useRouter();
   const { login, notice } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [failures, setFailures] = useState(0); // 서버가 알려 준 틀린 횟수 (E1)
   const [failMessage, setFailMessage] = useState<string | null>(null); // 횟수 없이 받은 실패 문구
   const [error, setError] = useState<string | null>(null); // 연결 오류 등 나머지
-  const [signupNotice, setSignupNotice] = useState(false);
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
@@ -135,12 +136,10 @@ export default function Login() {
           {error && <Text style={st.danger}>※ {error}</Text>}
           <View style={st.signupRow}>
             <Text style={T.body}>{copy.login.noAccount}</Text>
-            {/* CM-02 회원가입은 다음 작업. 그 전에는 준비 중 안내만 */}
-            <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setSignupNotice(true)}>
+            <Pressable accessibilityRole="button" hitSlop={8} onPress={() => router.push('/signup')}>
               <Text style={[T.bodyM, { color: C.p700 }]}>{copy.login.signup}</Text>
             </Pressable>
           </View>
-          {signupNotice && <Text style={[T.caption, { textAlign: 'center' }]}>{copy.preparing}</Text>}
         </View>
       )}
     </Screen>
