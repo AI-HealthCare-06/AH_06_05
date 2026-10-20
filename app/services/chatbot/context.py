@@ -18,6 +18,7 @@ class UserDrug:
     ingredient: str
     purpose: str  # 쓰임 (예: 혈압)
     how: str  # 처방대로 먹는 법 (예: 1일 1회 아침)
+    code: str = ""  # 약 코드 (근거 검색 범위, 급여목록 ediCode 또는 품목기준코드)
 
 
 @dataclass
@@ -26,6 +27,8 @@ class FixedInfo:
 
     age: int | None
     diseases: list[str] = field(default_factory=list)  # 질환 이름 (예: 고혈압)
+    # 근거 검색 범위의 질환 (팩트표 질환 id, 예: HTN). 처방전 질환과 내 정보 질환을 합친 것 (#101, 10/20)
+    disease_ids: list[str] = field(default_factory=list)
     drugs: list[UserDrug] = field(default_factory=list)
 
 
