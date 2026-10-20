@@ -5,6 +5,7 @@
 - 문맥 파악이 풀었거나 1층에 걸리지 않으면 2층을 늘 거침
 - 2층이 응답하지 않으면 답을 만들지 않고 답변 오류(error, 화면 E6). 1층만으로 답하면 2층에 넘긴 애매한 위기 표현을 아무도 못 잡음 (10/19 수인 결정)
 - 2층이 위험이라고 하면 분류가 실패했어도 안내를 보여 줌
+- 2층은 과다 복용인지 알려 주지 않으므로 2층 응급은 [지금은 증상이 없어요] 칩을 늘 숨김 (#108 리뷰, 10/20 수인 결정)
 
 PR 2에서 더할 것: 약 이름 검색으로 되묻기, 제품 이름을 모르는 약("두통약") 되묻기, 허가정보로 음식 질문 보정, 근거 모으기, 답 만들기, 정리
 결과에는 질문 원문을 담지 않는다 (설계 메모 7-2).
@@ -54,7 +55,8 @@ async def route(
         return _safety(rule.types, 1, rule.rules, rule.overdose)
 
     past = recent(history)
-    first_turn = len(history) // 2 - len(past) // 2 + 1
+    # 앞 차례 답이 없어 기록이 홀수 개여도 번호가 밀리지 않게 질문 수로 셈
+    first_turn = sum(m["role"] == "user" for m in history[: len(history) - len(past)]) + 1
     resolved = resolve_ordinal(question, history, info.drugs)
     message = classify_message(question, info, past, first_turn, summary, resolved)
 
@@ -73,7 +75,7 @@ async def route(
             raise risk
         return Route(kind="error", context_release=release, usage=usage)
     if risk in ("emergency", "crisis"):
-        return _safety([risk], 2, ["llm_guard"], context_release=release, usage=usage)
+        return _safety([risk], 2, ["llm_guard"], risk == "emergency", context_release=release, usage=usage)
     if isinstance(cls, BaseException):
         if not isinstance(cls, LLMError):
             raise cls
