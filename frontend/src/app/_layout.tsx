@@ -18,9 +18,11 @@ function RootStack({ signedIn }: { signedIn: boolean }) {
         <Stack.Screen name="result" options={{ gestureEnabled: false }} />
         <Stack.Screen name="warning" />
         <Stack.Screen name="history" />
+        <Stack.Screen name="me-edit" />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="login" />
+        <Stack.Screen name="signup" />
       </Stack.Protected>
     </Stack>
   );

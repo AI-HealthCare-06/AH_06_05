@@ -65,6 +65,7 @@ class Analysis(models.Model):
     )
     retry_count = fields.SmallIntField(default=0, description="3회 초과 시 재시도 막음 (REQ-055)")
     user_birth_year = fields.SmallIntField(null=True, description="분석 시점 출생연도 스냅샷")
+    health_snapshot = fields.JSONField(null=True, description="분석 시점 건강 정보 스냅샷 (U-1 health 모양)")
     started_at = fields.DatetimeField(null=True)
     finished_at = fields.DatetimeField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)

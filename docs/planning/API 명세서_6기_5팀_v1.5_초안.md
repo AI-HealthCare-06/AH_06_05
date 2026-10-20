@@ -1,4 +1,4 @@
-# API 명세서 v1.5 초안 (R-4 약 번호와 복약 안내, 별명 제거, 5장 챗봇 정리가 바뀜, 나머지는 v1.4 그대로)
+# API 명세서 v1.5 초안 (R-4 약 번호와 복약 안내, 별명 제거, 2장 건강 정보, 5장 챗봇 정리가 바뀜, 나머지는 v1.4 그대로)
 
 **5팀 · 2026. 10. 7 · 작성 이형준 · 수정 김채연(PM)**
 
@@ -19,6 +19,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.5 초안 | 2026-10-12 | R-4 `medication.items[]`와 `lifestyle.medicationLinks[]`에 약 번호 `itemId` 추가 (챗봇 설계 메모 v0.9, PR #80의 요청 4번). 챗봇 5장 정리(수인 10/12 정리안): `safetyCard` 확정, H-1 `firstMessage`, H-2 `status`, H-3 `drugMatch`와 `safety` 칸, H-4 `createdAt`, H-8 오늘 대화 찾기 신규, 2단계 API 목록 | 채연 (챗봇은 수인 정리안 반영) |
 | v1.5 초안 추가 | 2026-10-16 | 별명(`nickname`) 제거 (A-1 · A-2 · U-1 · U-2, #96 · 10/14 팀 합의) / O-5 `duplicatedFiles`, O-2 `notices`, `itemName`, `suggestedBy`, `guidance`, `checkFields` 추가 / R-4 `summary.drugCount`는 점검한 약만 셈 / R-4 복약 안내: `purpose` 문구를 "~에 쓰는 약이에요"로, `cautions`(문장 배열) 추가, 사람이 확인한 안내문만 채움 (`drug_guides`) | 김채연 |
 | v1.5 초안 추가 | 2026-10-19 | R-7(지난 기록 목록), R-8(기록 삭제), R-9(안내문 피드백)을 서버에 구현하면서 세부 규칙을 적음: R-7 `size` 1~50, 잘못된 `cursor`는 400, R-8 진행 중이면 `409 ANALYSIS_RUNNING`, R-9 한 사람 한 안내문 하나(다시 보내면 덮어씀), 응답 `201` `{feedbackId}` / ERD `feedbacks`에 `unique (guide_id, user_id)` 제안 | 채연 |
+| v1.5 초안 추가 | 2026-10-19 | 건강 정보(#101): A-1 요청 `health`(흡연, 음주), U-1 응답과 U-2 요청 `health`, U-3과 U-5 삭제 목록에 건강 정보 / 1장 U-1 화면을 CM-05로(#96) | 이수인 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -203,6 +204,21 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 </details>
 
+<details>
+<summary><b>v1.5 초안 추가</b> 2026-10-19 건강 정보 (수인) 세부 7건</summary>
+
+| 위치 | 현행 (As-Is) | 개정 (To-Be) |
+|---|---|---|
+| 2. 회원 / A-1 요청 | (없음) | `health: { smoking, drinking }` 필수. 값은 국민건강영양조사 문항(BS3_1, BD1_11)에 `unknown`("잘 모르겠어요")을 더함 (10/14 회의 3번, 10/19 수인) |
+| 2. 회원 / U-1 응답 | (없음) | `health: { smoking, drinking, diseases, pregnant, dialysis, heightCm, weightKg, upcomingExams }` 추가 |
+| 2. 회원 / U-2 요청 | `{ birthYear, sex }` | `health` 안에서 바꿀 칸만 보냄. `diseases`는 생활습관 질환 id(`lifestyle_diseases.id`), `pregnant`는 여성만, `sex`를 `M`으로 바꾸면 `pregnant`를 비움 |
+| 2. 회원 / U-3 삭제 | 처방전 ~ 동의 기록 | 건강 정보 추가 |
+| 2. 회원 / U-5 삭제 | 처방전 ~ 챗봇 대화 | 건강 정보 추가 |
+| 1. 전체 목록 / U-1 화면 | CM-03 · CM-05 | CM-05 (홈 인사말을 빼서, 2장 U-1과 맞춤. #96) |
+| 머리말 / 작성 기준 (ERD) | ERD v1.5 초안 | `user_health_profiles`, `analyses.health_snapshot` 추가 반영 (ERD 변경 이력 참고) |
+
+</details>
+
 ---
 
 > Figma 통합 와이어프레임(50개 화면, 화면 번호표 v0.6) 요구사항 정의서 v1.5 ERD v1.3 기준입니다. (53개는 10/6 오전 결정이었고, 그날 오후 CB-05가 음성에서 받아쓰기로 바뀌면서 50개로 다시 바뀌었어요. main의 v1.3과 맞췄어요)
@@ -267,7 +283,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | A-2 | POST | `/auth/login` | 로그인 | CM-01 · CM-01-E1 · CM-01-E2 | 수인 | ✅ |
 | ~~A-3~~ | ~~POST~~ | ~~`/auth/logout`~~ | 로그아웃 — **10/6 결정으로 넣지 않음** | - | 수인 | - |
 | A-4 | POST | `/auth/token/refresh` | 출입증 다시 받기 | (화면 없음 · 모든 화면 공통) | 수인 | ✅ |
-| U-1 | GET | `/users/me` | 내 정보 조회 | CM-03 · CM-05 | 수인 | ✅ |
+| U-1 | GET | `/users/me` | 내 정보 조회 | CM-05 | 수인 | ✅ |
 | U-2 | PATCH | `/users/me` | 내 정보 수정 | CM-06 | 수인 | ✅ |
 | U-3 | DELETE | `/users/me` | 회원 탈퇴 | CM-07 | 수인 | ✅ |
 | U-4 | GET | `/users/me/consents` | 동의 내역 조회 | CM-05 | 수인 | ✅ |
@@ -316,6 +332,8 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 화면 CM-02 · CM-02-E1 · 요구사항 REQ-001, REQ-005 · 인증 불필요
 
+> 건강 정보(`health`)는 민감정보 동의(`sensitiveHealth`) 범위예요. 가입 때는 흡연과 음주만 받고, 나머지는 내 정보(U-2)에서 받아요 (10/14 회의). A-1, A-2 응답의 `user`에는 건강 정보를 넣지 않아요
+
 **요청**
 ```json
 {
@@ -323,6 +341,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
   "password": "abcd1234",
   "birthYear": 1958,
   "sex": "M",
+  "health": { "smoking": "never", "drinking": "monthly" },
   "consents": {
     "terms": true,
     "privacy": true,
@@ -337,6 +356,8 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | password | ✅ | 영문 + 숫자 포함 8자 이상 |
 | birthYear | ✅ | 1900 ~ 올해. 노인주의 · 연령금기 판정에 사용 |
 | sex | ✅ | `M` / `F` |
+| health.smoking | ✅ | `daily` 매일 / `sometimes` 가끔 / `past` 예전에 피웠지만 지금은 안 피움 / `never` 피운 적 없음 / `unknown` 잘 모르겠어요 (국민건강영양조사 BS3_1) |
+| health.drinking | ✅ | `none` 최근 1년간 안 마심 / `lt_monthly` 월 1회 미만 / `monthly` 월 1회 정도 / `2_4_monthly` 월 2~4회 / `2_3_weekly` 주 2~3회 / `4plus_weekly` 주 4회 이상 / `unknown` 잘 모르겠어요 (국민건강영양조사 BD1_11) |
 | consents.* | ✅ | 세 개 모두 `true`여야 가입 가능 |
 
 **응답 `201`** — 가입과 동시에 로그인 처리 (A-2 로그인 응답과 같은 모양)
@@ -353,7 +374,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | HTTP | code | 화면 |
 |---|---|---|
 | 409 | `EMAIL_DUPLICATED` (`field: email`) | CM-02-E1 "이미 가입된 이메일이에요" |
-| 400 | `VALIDATION_ERROR` (`field: password` 등) | CM-02-E1 해당 칸 |
+| 400 | `VALIDATION_ERROR` (`field: password` 등) | CM-02-E1 해당 칸. 명세서에 없는 칸(예: 지운 `nickname`)을 보내도 이 에러 |
 | 400 | `CONSENT_REQUIRED` (`field: consents.sensitiveHealth`) | CM-02-E1 동의 누락 문구 |
 
 > 비밀번호 확인 칸 일치 여부는 프론트에서만 검사 (서버로 보내지 않음)
@@ -439,7 +460,17 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
   "email": "hong@email.com",
   "birthYear": 1958,
   "sex": "M",
-  "createdAt": "2026-09-20T10:00:00+09:00"
+  "createdAt": "2026-09-20T10:00:00+09:00",
+  "health": {
+    "smoking": "never",
+    "drinking": "monthly",
+    "diseases": ["HTN", "DM2"],
+    "pregnant": null,
+    "dialysis": null,
+    "heightCm": 165,
+    "weightKg": 62.5,
+    "upcomingExams": [{ "name": "조영 CT", "date": "2026-10-27" }]
+  }
 }
 ```
 
@@ -451,16 +482,27 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 **요청**
 ```json
-{ "birthYear": 1958, "sex": "M" }
+{ "birthYear": 1958, "sex": "M", "health": { "dialysis": "no", "upcomingExams": [] } }
 ```
+- `health` 안에서도 바꿀 칸만 보냄. 목록 칸(`diseases`, `upcomingExams`)은 보낸 목록으로 통째로 바꿈
+
+| 필드 | 규칙 |
+|---|---|
+| health.smoking, health.drinking | A-1과 같음 |
+| health.diseases | 생활습관 질환 id(`HTN` `DM2` `DLP` `CKD` `IHD` `STROKE` `AF` `COPD` `OP` `OA`, `lifestyle_diseases.id`) 중에서 (10/14 회의 3번 채연 안) |
+| health.pregnant | `yes` / `no` / `null`. `sex`가 `F`일 때만. `sex`를 `M`으로 바꾸면 저장된 값을 비움 |
+| health.dialysis | `yes` / `no` / `unknown` / `null` |
+| health.heightCm, health.weightKg | 0보다 큰 수. 키는 정수, 몸무게는 소수 한 자리까지 |
+| health.upcomingExams[] | `name` 50자 이내, `date`는 `YYYY-MM-DD` |
 
 **응답 `200`** — U-1과 같은 형식
 
 | HTTP | code | 설명 |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | `email`을 보내면 거절 (수정 불가 항목) |
+| 400 | `VALIDATION_ERROR` | `email`을 보내면 거절 (수정 불가 항목). 위 `health` 규칙에 맞지 않으면 그 칸을 `field`로 (예: `health.pregnant`) |
 
-> 출생연도 · 성별이 바뀌면 **다음 분석부터** 반영. 지난 결과는 다시 계산하지 않음
+> 출생연도, 성별, 건강 정보가 바뀌면 **다음 분석부터** 반영. 지난 결과는 다시 계산하지 않음
+> 분석은 처방전 질환과 `health.diseases`를 합쳐 씀. 질환 기준으로 중복을 빼고(한 질환에 코드가 여러 개라 코드가 달라도 같은 질환이면 하나) 대표 질병분류기호로 바꿔 넣으며 출처는 `profile`, RG-05-E1을 미리 채움(사용자가 빼거나 더할 수 있음) (10/19 채연 제안으로 확인됨, 구현은 #105 다음 PR에서 수인, 리뷰 채연)
 
 ---
 
@@ -477,7 +519,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 | 삭제 | 남김 |
 |---|---|
-| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 · 실천 목표 · 실천 기록 · 포인트 · 동의 기록 | `users` 행의 `id` · `deleted_at` (탈퇴 처리 확인용) |
+| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 · 실천 목표 · 실천 기록 · 포인트 · 동의 기록, 건강 정보 | `users` 행의 `id` · `deleted_at` (탈퇴 처리 확인용) |
 
 | HTTP | code | 설명 |
 |---|---|---|
@@ -508,7 +550,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 | 삭제 | 남김 |
 |---|---|
-| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 (건강 정보가 들어 있을 수 있음) | 실천 목표(`status = ended`로 종료, 추천 연결 `recommendation_id`는 비움 — 질환 라벨 `reason_label`은 추천과 함께 삭제) · 실천 기록 · 포인트 · 동의 기록(철회 시각 포함) |
+| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 (건강 정보가 들어 있을 수 있음), 건강 정보(`user_health_profiles`) | 실천 목표(`status = ended`로 종료, 추천 연결 `recommendation_id`는 비움 — 질환 라벨 `reason_label`은 추천과 함께 삭제) · 실천 기록 · 포인트 · 동의 기록(철회 시각 포함) |
 
 ---
 

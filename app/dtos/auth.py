@@ -2,11 +2,11 @@
 
 from typing import Annotated
 
-from pydantic import AfterValidator, EmailStr, Field
+from pydantic import AfterValidator, ConfigDict, EmailStr, Field
 
 from app.core.validators import validate_birth_year, validate_password
 from app.dtos.base import CamelModel
-from app.models.users import Sex
+from app.models.users import Drinking, Sex, Smoking
 
 
 class SignUpConsents(CamelModel):
@@ -17,12 +17,25 @@ class SignUpConsents(CamelModel):
     sensitive_health: bool
 
 
+class SignUpHealth(CamelModel):
+    """가입 때 받는 건강 정보 (흡연, 음주만, 10/14 회의). 나머지는 내 정보(U-2)에서"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    smoking: Smoking
+    drinking: Drinking
+
+
 class SignUpRequest(CamelModel):
+    """별명은 받지 않음 (#96). 없는 칸을 보내면 VALIDATION_ERROR"""
+
+    model_config = ConfigDict(extra="forbid")
+
     email: Annotated[EmailStr, Field(max_length=100)]
     password: Annotated[str, AfterValidator(validate_password)]
-    nickname: Annotated[str | None, Field(None, max_length=50)]
     birth_year: Annotated[int, AfterValidator(validate_birth_year)]
     sex: Sex
+    health: SignUpHealth
     consents: SignUpConsents
 
 
@@ -32,8 +45,9 @@ class LoginRequest(CamelModel):
 
 
 class UserSummary(CamelModel):
+    """건강 정보는 넣지 않음 (로그인 때마다 민감정보를 보내지 않음). 건강 정보는 U-1"""
+
     id: int
-    nickname: str | None
     birth_year: int
     sex: Sex
 

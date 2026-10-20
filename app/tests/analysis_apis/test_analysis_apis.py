@@ -157,6 +157,18 @@ class TestStartAndResult(AnalysisCase):
             assert ids and all(i in ids for s in life["sections"] for a in s["actions"] for i in a["sourceIds"])
             assert life["warningSigns"]
 
+    async def test_health_snapshot_is_kept_when_profile_changes(self):
+        """분석 시점 건강 정보를 남김. 내 정보를 고쳐도 지난 분석은 그대로 (ERD analyses.health_snapshot, #101)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "snap@example.com")
+            rx = await self.prescription(user, ["645600020"], ("I10",))
+            res = await self.start(client, headers, rx)
+            aid = res.json()["analysisId"]
+            await client.patch("/api/v1/users/me", json={"health": {"smoking": "daily"}}, headers=headers)
+        snap = (await Analysis.get(id=aid)).health_snapshot
+        assert snap is not None and snap["smoking"] == "never" and snap["drinking"] == "monthly"
+        assert snap["diseases"] == [] and snap["upcomingExams"] == []
+
     async def test_warning_detail_r5(self):
         async with self.client() as client:
             headers, user = await self.auth(client, "r5@example.com")

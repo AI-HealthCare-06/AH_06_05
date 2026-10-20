@@ -60,9 +60,10 @@ class AuthService:
         return await self.user_repo.create_user_with_consents(
             email=email,
             password_hash=hash_password(data.password),
-            nickname=data.nickname,
             birth_year=data.birth_year,
             sex=data.sex,
+            smoking=data.health.smoking,
+            drinking=data.health.drinking,
             consents=consents,
         )
 
