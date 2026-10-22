@@ -1017,7 +1017,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 ```
 
 - `status`: `running`(분석 중) / `done` / `failed`
-- `resultLabel`: 화면 라벨을 **서버가 만들어** 내려줌 — `확인 필요 N건` / `확인된 위험 없음` / `분석 중` / `분석 실패`
+- `resultLabel`: 화면 라벨을 **서버가 만들어** 내려줌 — `확인 필요 N건` / `걸린 항목 없음` / `분석 중` / `분석 실패`
 - 빈 배열이면 CM-04-E2 · 홈은 CM-03-E1
 - `size`는 1~50(기본 20), 범위를 벗어나면 `400 VALIDATION_ERROR`. `cursor`는 앞 응답의 `nextCursor`를 그대로 넘기고, 읽을 수 없는 값이면 `400 VALIDATION_ERROR`(`field: cursor`). 마지막 쪽이면 `nextCursor`는 `null`
 - 분석 중(`running`)과 실패(`failed`) 항목에는 `analysisId`, `createdAt`, `status`, `resultLabel`만 있고, 병원, 약 수, 질환은 `done`일 때만 있음. 대기(`queued`)는 `running`으로 내려줌

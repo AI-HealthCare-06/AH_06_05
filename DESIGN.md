@@ -189,7 +189,7 @@ components:
 - **상태 색**: 늘 글자 라벨과 함께
   - Danger (#DC2626, 배경 #FEF2F2): 같이 먹으면 안 됨, 긴급 안내, 삭제
   - Warning (#B45309, 배경 #FFFBEB): 주의, 확인 필요
-  - Success (#047857, 배경 #ECFDF5): 확인된 위험 없음, 완료
+  - Success (#047857, 배경 #ECFDF5): 걸린 항목 없음, 완료
   - Info (#1D4ED8, 배경 #EFF6FF): 안내, 참고
 
 ## Typography
