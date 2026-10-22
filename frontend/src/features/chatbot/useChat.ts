@@ -101,7 +101,8 @@ export function useChat(params: ChatParams) {
       }),
     );
     for (const a of list) {
-      if (a.answerType === 'crisis' && a.status === 'done') {
+      // 긴급과 자해가 함께면 answerType은 emergency라서 safety.types로 봄 (서버 chats.py와 같은 기준)
+      if (a.safety?.types.includes('crisis') && a.status === 'done') {
         setSafetyUntil((u) => Math.max(u ?? 0, nextKstMidnight())); // 서버도 같은 시각을 기록 (명세서 H-8)
       }
     }
