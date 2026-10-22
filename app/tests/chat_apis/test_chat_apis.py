@@ -167,6 +167,16 @@ class TestSessions(ChatCase):
         assert s.analysis_id is None
 
 
+def test_sources_map_fact_ids_by_lifestyle_order():
+    """팩트표 번호를 생활습관 항목 순서로 이음. 범위 밖, 모르는 질환, 질환 겹침(X)은 확인 전이라 뺌. 같은 출처는 한 번만"""
+    ids = ["F:HTN:1", "F:HTN:2", "F:HTN:99", "F:NONE:1", "F:HTN:0", "X:1", "D:1:S1", "D:2:S3"]
+    assert chats._sources(ids) == [
+        {"title": "질병관리청 국가건강정보포털"},
+        {"title": "대한고혈압학회 진료지침"},
+        {"title": "식약처 의약품 허가정보"},
+    ]
+
+
 class TestAsk(ChatCase):
     async def test_202_then_answer_appears_in_messages(self):
         async with self.client() as client:
@@ -181,8 +191,12 @@ class TestAsk(ChatCase):
         assert q["role"] == "user" and q["content"] == "메트포르민은 밥 먹고 먹어야 하나요?" and q["status"] == "done"
         assert a["id"] == mid and a["role"] == "assistant" and a["status"] == "done"
         assert a["answerType"] == "normal" and a["replyTo"] == q["id"] and a["content"]
-        # 허가정보만 이름을 붙이고, 팩트표 출처는 근거 번호 모양을 확인하기 전까지 뺌 (10/22)
-        assert a["sources"] == [{"title": "식약처 의약품 허가정보"}]
+        # 팩트표 F:<질환>:<번호>는 lifestyle_facts.json 생활습관 항목 순서(1부터)로 보고 그 항목의 출처를 붙임 (10/22 수인 결정)
+        assert a["sources"] == [
+            {"title": "식약처 의약품 허가정보"},
+            {"title": "질병관리청 국가건강정보포털"},
+            {"title": "대한고혈압학회 진료지침"},
+        ]
         assert "model" not in a and "latencyMs" not in a
         row = await ChatMessage.get(id=mid)
         assert row.model == config.OPENAI_CHAT_MODEL and (row.prompt_tokens, row.completion_tokens) == (120, 40)

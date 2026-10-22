@@ -37,8 +37,7 @@ repo = ChatRepository()
 ANSWER_TIMEOUT_SEC = JOB_LIMIT_SEC
 STALE_SEC = 30  # 만드는 중으로 이보다 오래된 답 줄은 다시 시도 때 지우고 새로 만듦 (명세서 H-3)
 USABLE = (MatchStatus.AUTO, MatchStatus.USER_CONFIRMED)
-# 근거 번호 앞글자 → 출처 이름. 팩트표(F), 질환 겹침(X)은 근거 번호 모양을 채연과 확인한 뒤 넣음 (10/22)
-SOURCE_TITLES = {"D": "식약처 의약품 허가정보"}
+DRUG_SOURCE = "식약처 의약품 허가정보"  # 근거 번호 D:<약코드>:S12 (허가정보 문장)
 
 
 def _now() -> datetime:
@@ -173,9 +172,24 @@ async def run_pipeline(
     return await pipeline.answer(question, info, history, make_client(), emergency_dismissed=emergency_dismissed)
 
 
+def _fact_sources(sentence_id: str) -> list[str]:
+    """F:<질환 id>:<번호>는 lifestyle_facts.json의 그 질환 생활습관 항목 순서(1부터)로 봄 (10/22 수인 결정, 채연 확인 전).
+    출처 글은 R-4 생활습관과 같게 " / "로 나눔. 번호가 범위 밖이면 출처를 붙이지 않음"""
+    _, disease_id, n = (sentence_id.split(":") + ["", ""])[:3]
+    d = next((x for x in lifestyle.facts()["diseases"] if x["id"] == disease_id), None)
+    if d is None or not n.isdigit() or not 1 <= int(n) <= len(d["lifestyle"]):
+        return []
+    return [p.strip() for p in (d["lifestyle"][int(n) - 1].get("source") or "").split(" / ") if p.strip()]
+
+
 def _sources(ids: list[str]) -> list[dict[str, str]]:
-    titles = dict.fromkeys(SOURCE_TITLES[p] for i in ids if (p := i.split(":")[0]) in SOURCE_TITLES)
-    return [{"title": t} for t in titles]
+    """근거 번호 → 출처 이름. 질환 겹침(X)은 번호 매기는 법을 확인하기 전이라 뺌.
+    팩트표의 생활습관 밖 조각(목표 지표, 약 연결, 위험 신호)이 같은 F 모양이면 구분하지 못함 (채연 확인 전)"""
+    titles: list[str] = []
+    for i in ids:
+        kind = i.split(":")[0]
+        titles += [DRUG_SOURCE] if kind == "D" else _fact_sources(i) if kind == "F" else []
+    return [{"title": t} for t in dict.fromkeys(titles)]
 
 
 def _history(rows: list[ChatMessage]) -> list[dict[str, str]]:
