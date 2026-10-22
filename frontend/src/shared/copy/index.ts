@@ -304,7 +304,7 @@ export const copy = {
     danger119: '지금 위험하다면 119',
     safetyLine: '힘들 때 109 · 24시간',
     restoredQuestion: '(이전에 긴급 안내를 보여 드린 질문이에요)',
-    error: ['답변을 만들지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'],
+    error: ['답변을 만들지 못했어요. 잠시 뒤 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'], // 와이어프레임 E6 (10/20)
     errorTooMany: ['잠시 후 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'],
     contextTitle: '분석 결과를 알고 있어요',
     contextSummary: (day: string, daysAgo: number, drugs: number, warnings: number) =>
