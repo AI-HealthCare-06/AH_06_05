@@ -231,3 +231,29 @@ async def test_route_keeps_no_raw_text():
     question = "약을 한꺼번에 많이 먹었어요"
     r = await route(question, S0, [], FakeChat())
     assert question not in repr(r)
+
+
+@sync
+async def test_dismissed_skips_layer1_emergency_only():
+    """[지금은 증상이 없어요] 뒤 다시 보낸 질문은 응급 규칙을 건너뛰고 2층과 분류로 감 (명세서 H-3 emergencyDismissed, 10/22)"""
+    chat = FakeChat(guard="none")
+    r = await route("약 먹고 나서 가슴이 조여요", S0, [], chat, emergency_dismissed=True)
+    assert r.kind == "medication"
+    assert sorted(chat.calls) == ["classify", "guard"]
+
+
+@sync
+async def test_dismissed_skips_layer2_emergency():
+    r = await route("아까부터 좀 이상해요", S0, [], FakeChat(guard="emergency"), emergency_dismissed=True)
+    assert r.kind == "medication"
+
+
+@sync
+async def test_dismissed_keeps_crisis_checks():
+    """자해 검사는 건너뛰지 않음 (설계 메모 3-3, 4-6)"""
+    r = await route("죽고 싶어요", S0, [], FakeChat(), emergency_dismissed=True)
+    assert (r.kind, r.layer) == ("crisis", 1)
+    r = await route("아까부터 좀 이상해요", S0, [], FakeChat(guard="crisis"), emergency_dismissed=True)
+    assert (r.kind, r.layer) == ("crisis", 2)
+    r = await route("사라지고 싶어서 약을 한꺼번에 먹었어요", S0, [], FakeChat(), emergency_dismissed=True)
+    assert (r.kind, r.safety_types) == ("crisis", ["crisis"])
