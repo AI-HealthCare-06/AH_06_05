@@ -1,6 +1,6 @@
 # 챗봇(CB) 프론트 설계 메모
 
-5팀, 피처 3 챗봇, 작성 이수인, 2026-10-20, 초안 v0.13
+5팀, 피처 3 챗봇, 작성 이수인, 2026-10-22, 초안 v0.14
 
 > 기준 자료: Figma `05 챗봇 (수인)` 변경 이력 v0.9, `00 톤앤매너 가이드` / 저장소 `main` (34f4bb7, 9/29 13:30): 요구사항 v1.4, API v1.2, ERD v1.2, 화면 번호 통합표 v0.4, 2회차 멘토링 사전 보고 / 회의용 프로토타입 `gh-pages` (774490d, 9/29 10:32)
 > 기준 자료 점검일 9/29: Figma 챗봇 페이지는 9/28 이후 변경 없음. `main`은 9/29에 2회차 멘토링 사전 보고와 요구사항 v1.4, API v1.2, 화면 번호 통합표 v0.4(RW-01 제외 반영)가 올라옴: 챗봇 요구사항(REQ-070~079), API 5장은 그대로이고, 통합표에 챗봇 화면 6개가 추가됨 (8 항목) (0 결정 사항, 9 항목)
@@ -22,6 +22,7 @@
 | v0.11 | 2026-10-19 | 2 | `guard.py` "Jev 비교 뒤 확정", `llm.py`, `pipeline.py` 없음 | `guard.py`는 gpt-4o-mini(#81)로 확정, 2층이 응답하지 않으면 답을 만들지 않고 답변 오류(E6)로 (10/19 수인 결정). `llm.py`(OpenAI 호출), `pipeline.py`(흐름) 추가 (#99) | 이수인 |
 | v0.12 | 2026-10-20 | 한눈에, 1, 3-3, 4-6, 7-2, 7-8 | 칩을 숨기는 경우: 과다 복용, 잘못 복용 규칙에 걸렸을 때, E4와 E5 동시 해당 | 2층(LLM)이 잡은 응급도 칩을 숨김. 2층은 과다 복용인지 알려 주지 않아서, 1층이 놓친 과다 복용에 칩이 뜨는 것을 막음. 과다 복용이 아닌 2층 응급에도 칩이 없어 119와 응급실 안내만 보임 (#108 리뷰, 10/20 수인 결정) | 이수인 |
 | v0.13 | 2026-10-20 | 2, 7-12 | `lifestyle.py`로 팩트표 조회, ⑥은 코드로 먼저 찾고 못 찾으면 pgvector, `evidence.py` 없음, 근거를 못 찾으면 갈래와 상관없이 no_evidence | 생활습관 근거도 RAG 담당 `rag.search` 하나로 받음(팩트표 조각 포함)이라 `lifestyle.py`는 만들지 않음. `evidence.py`(근거 모으기), `answer.py`(답 만들기와 정리) 추가. 근거 검색 예산은 25초에서 지금까지 걸린 시간과 답 만들기 한 번(15초)을 뺀 만큼. 다시 만들기는 #99 PR 2-2. refer 갈래에서 근거를 못 찾으면 상담 안내 문구만 (10/20 수인 결정) | 이수인 |
+| v0.14 | 2026-10-22 | 3-3, 7-1 | `SendResponse`에 답 전체(`answerType`, `content`, `sources`, `safety`, `drugMatch` 등), `onDone`이 `SendResponse`를 받음 | `SendResponse`는 `{ messageId }`(만드는 중인 답 줄 번호)만. 답은 H-2 `Message`로 받고 `safety`를 `Message`로 옮김. `drugMatch`는 지금 코드에서 만들지 않아 만들 때 저장 방법을 정함(확정 전). `onDone`은 완성된 답 줄(`Message`)을 받음 (API 명세서 v1.5 초안 H-3 10/22, #100) | 이수인 |
 
 > 작성 과정: 저장소에 올리기 전 초안 v0.1(범위, API, 화면 명세) → v0.2(대화 기록, 대화 나누는 규칙) → v0.3(프로토타입 비교, 전체 흐름, 개발자 관점 점검 반영, 첨부 사진 처리 구체화)
 
@@ -349,14 +350,16 @@ type Message = {
   sources?: { title: string; basedOn?: string }[];
   createdAt: string;                            // ISO 8601, +09:00
   // 다시 들어왔을 때(H-2) 칩, 카드를 그대로 다시 그리기 위한 값
-  clarify?: Clarify;                            // E3 재질문 칩 (아래 응답과 같은 형식)
+  clarify?: Clarify;                            // E3 재질문 칩. answerType = clarify 일 때 (아래 Clarify 형식)
   suggestions?: string[];                       // E2 후속 질문
   attachments?: { type: "image" | "file"; name: string; previewUrl: string | null }[];  // CB-04. H-2에서는 서버가 보관 중이면 미리보기 주소, 보관하지 않으면 null → "사진 1장" 표시만 (9 항목 보관 기준)
-  action?: { type: "open_analysis" };           // 응답과 같음: 다시 들어왔을 때 버튼을 다시 그림
-  imageResult?: "prescription" | "drug" | "unreadable";  // 응답과 같음
+  action?: { type: "open_analysis" };           // 처방전, 약봉투 사진 → 답변 아래 [처방전 · 약봉투 분석하러 가기] 버튼 (4-9 항목). 다시 들어왔을 때도 버튼을 다시 그림
+  imageResult?: "prescription" | "drug" | "unreadable";  // 사진에 대한 판별 결과: 사진 안내(처방전, 읽지 못함)를 일반 답변과 구분 (피드백 여부 등, 4-3, 4-9 항목)
   safetyEvent?: SafetyInfo;                     // 앱에서 감지한 E4, E5 (원문 없이 카드만 다시 그림, 4-6 항목)
   contextCard?: { analysisId: number; context?: { type: "warning" | "drug"; id: number } };  // 1단계: 대화 중간에 붙은 분석 맥락 카드 (3-5 항목)
   safetyCard?: { analysisId: number; warningIds: number[] };  // v0.9: 안전성 점검 결과 카드. answerType은 normal, 카드가 없는 답은 칸 생략 (0-1 항목 12)
+  safety?: SafetyInfo;                          // v0.14: 서버 2차 감지 결과. answerType이 emergency, crisis일 때 (H-3 응답에서 옮김, 4-6 항목)
+  drugMatch?: { status: "matched" | "candidates" | "not_found"; items: { ediCode: string | null; itemSeq: string | null; itemName: string }[] };  // v0.14: H-3 응답에서 옮김. 지금 코드에서 만들지 않아 만들 때 저장 방법을 정함 (확정 전)
 };
 
 // 화면 전용 상태 (서버에 저장하지 않음)
@@ -374,19 +377,9 @@ type SendRequest = {
   replyTo?: number;                             // 서버 2층이 감지해 원문이 저장된 E4에서 재개할 때(#99에서 정함): 이미 저장된 질문 번호. 1층이 감지한 질문은 원문이 없어 쓰지 않음. 질문을 새로 저장하지 않고 그 질문에 일반 답을 새로 닮 (4-6 항목)
 };
 
-// 응답
+// 응답 (v0.14: 202로 만드는 중인 답 줄 번호만 받고, 답은 H-2 Message로 받음. API 명세서 v1.5 초안 H-3, #100)
 type SendResponse = {
-  messageId: number;
-  answerType: AnswerType;                       // 3-1 항목
-  content: string;
-  sources: { title: string; basedOn?: string }[];   // basedOn: "2026-09 기준" (정책 ⑥)
-  clarify?: Clarify;                            // answerType = clarify 일 때
-  suggestions?: string[];                       // 이어서 물어볼 질문 (E2)
-  action?: { type: "open_analysis" };           // 처방전, 약봉투 사진 → 답변 아래 [처방전 · 약봉투 분석하러 가기] 버튼 (4-9 항목)
-  imageResult?: "prescription" | "drug" | "unreadable";  // 사진에 대한 판별 결과: 사진 안내(처방전, 읽지 못함)를 일반 답변과 구분 (피드백 여부 등, 4-3, 4-9 항목)
-  safety?: SafetyInfo;                          // 서버 2차 감지 결과: answerType이 emergency, crisis일 때. 동시 해당, 과다 복용 여부를 함께 알림 (4-6 항목)
-  safetyCard?: { analysisId: number; warningIds: number[] };  // v0.9: 위 Message와 같음
-  drugMatch?: { status: "matched" | "candidates" | "not_found"; items: { ediCode: string | null; itemSeq: string | null; itemName: string }[] };  // v0.9: 질문에서 찾은 약 이름 (O-4와 같은 모양, 0-1 항목 3). candidates, not_found면 answerType은 clarify
+  messageId: number;                            // 만드는 중(generating)인 답 줄 번호. H-2를 2초마다 불러 이 줄이 done이 되면 그림 (4-3 항목)
 };
 
 // 오류 (3-6 항목 표로 화면 처리를 정함)
@@ -935,7 +928,7 @@ sendMessage(
   req: SendRequest,                             // 3-3 항목 요청
   handlers: {
     onDelta: (text: string) => void;            // 글자 조각
-    onDone: (res: SendResponse) => void;        // 끝: answerType, sources, clarify, suggestions
+    onDone: (res: Message) => void;             // 끝: H-2로 받은 완성된 답 줄 (v0.14)
     onError: (err: ChatError) => void;          // 3-6 항목 오류 처리
     signal?: AbortSignal;                       // 시간 초과(30초), 화면 이탈 시 받기만 멈춤 (서버는 끝까지 만듦, 4-3 항목)
   }
