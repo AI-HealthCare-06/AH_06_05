@@ -1,6 +1,6 @@
 # 챗봇(CB) 프론트 설계 메모
 
-5팀, 피처 3 챗봇, 작성 이수인, 2026-10-22, 초안 v0.15
+5팀, 피처 3 챗봇, 작성 이수인, 2026-10-22, 초안 v0.17
 
 > 기준 자료: Figma `05 챗봇 (수인)` 변경 이력 v0.9, `00 톤앤매너 가이드` / 저장소 `main` (34f4bb7, 9/29 13:30): 요구사항 v1.4, API v1.2, ERD v1.2, 화면 번호 통합표 v0.4, 2회차 멘토링 사전 보고 / 회의용 프로토타입 `gh-pages` (774490d, 9/29 10:32)
 > 기준 자료 점검일 9/29: Figma 챗봇 페이지는 9/28 이후 변경 없음. `main`은 9/29에 2회차 멘토링 사전 보고와 요구사항 v1.4, API v1.2, 화면 번호 통합표 v0.4(RW-01 제외 반영)가 올라옴: 챗봇 요구사항(REQ-070~079), API 5장은 그대로이고, 통합표에 챗봇 화면 6개가 추가됨 (8 항목) (0 결정 사항, 9 항목)
@@ -24,6 +24,8 @@
 | v0.13 | 2026-10-20 | 2, 7-12 | `lifestyle.py`로 팩트표 조회, ⑥은 코드로 먼저 찾고 못 찾으면 pgvector, `evidence.py` 없음, 근거를 못 찾으면 갈래와 상관없이 no_evidence | 생활습관 근거도 RAG 담당 `rag.search` 하나로 받음(팩트표 조각 포함)이라 `lifestyle.py`는 만들지 않음. `evidence.py`(근거 모으기), `answer.py`(답 만들기와 정리) 추가. 근거 검색 예산은 25초에서 지금까지 걸린 시간과 답 만들기 한 번(15초)을 뺀 만큼. 다시 만들기는 #99 PR 2-2. refer 갈래에서 근거를 못 찾으면 상담 안내 문구만 (10/20 수인 결정) | 이수인 |
 | v0.14 | 2026-10-22 | 3-3, 7-1 | `SendResponse`에 답 전체(`answerType`, `content`, `sources`, `safety`, `drugMatch` 등), `onDone`이 `SendResponse`를 받음 | `SendResponse`는 `{ messageId }`(만드는 중인 답 줄 번호)만. 답은 H-2 `Message`로 받고 `safety`를 `Message`로 옮김. `drugMatch`는 지금 코드에서 만들지 않아 만들 때 저장 방법을 정함(확정 전). `onDone`은 완성된 답 줄(`Message`)을 받음 (API 명세서 v1.5 초안 H-3 10/22, #100) | 이수인 |
 | v0.15 | 2026-10-22 | 2, 3-3, 9 | 서버 파일 `apis/v1/chatbot.py`(H-1 ~ H-7), `dtos/chatbot.py`, 서비스 파일 없음 / `emergencyDismissed`는 "응급 검사만 건너뜀" / 고정 정보 출처, "지금 먹는 약" 함수 미정 | 파일 이름을 `apis/v1/chat_routers.py`(H-1 ~ H-8), `dtos/chat.py`, `services/chats.py`로(기존 `*_routers.py`, SYSTEM_DESIGN 의존 방향) / 2층 `emergency`도 건너뜀 / 1단계 고정 정보는 가장 최근에 붙은 맥락 카드의 분석(없으면 H-1의 `analysisId`)의 확인된 약, 동의가 있을 때만, 30일 구분과 경고는 #116 (10/22 수인 결정, #100) | 이수인 |
+| v0.16 | 2026-10-22 | 3-3 | `Message`에 답이 어느 질문의 답인지 적는 칸 없음 | `Message.replyTo`(답 줄만, 질문 줄 번호). 다시 시도한 답이 맨 아래에 생겨도 질문을 인용함(4-7 항목). `SendRequest.replyTo`와 같은 뜻(질문 번호) (API 명세서 v1.5 초안 H-2, ERD `reply_to_id`, 10/22 수인 결정, #100) | 이수인 |
+| v0.17 | 2026-10-22 | 3-4 | 1단계 분석 연계: 오늘 대화가 없으면 H-1 (context 포함), `analysisId`만이면 첫 질문 때 H-1 | 맥락 카드 줄은 H-7에서만 만들므로(명세서 H-1, H-7) 오늘 대화가 없으면 H-1 뒤 H-7. `analysisId`만이면 오늘 대화가 있을 때 H-7, 없으면 첫 질문 때 H-1, H-7, H-3 순서(빈 대화를 만들지 않는 3-5 규칙 그대로) (10/22, #100) | 이수인 |
 
 > 작성 과정: 저장소에 올리기 전 초안 v0.1(범위, API, 화면 명세) → v0.2(대화 기록, 대화 나누는 규칙) → v0.3(프로토타입 비교, 전체 흐름, 개발자 관점 점검 반영, 첨부 사진 처리 구체화)
 
@@ -359,6 +361,7 @@ type Message = {
   imageResult?: "prescription" | "drug" | "unreadable";  // 사진에 대한 판별 결과: 사진 안내(처방전, 읽지 못함)를 일반 답변과 구분 (피드백 여부 등, 4-3, 4-9 항목)
   safetyEvent?: SafetyInfo;                     // 앱에서 감지한 E4, E5 (원문 없이 카드만 다시 그림, 4-6 항목)
   contextCard?: { analysisId: number; context?: { type: "warning" | "drug"; id: number } };  // 1단계: 대화 중간에 붙은 분석 맥락 카드 (3-5 항목)
+  replyTo?: number;                             // v0.16: 답 줄만. 어느 질문의 답인지 질문 줄 번호 (4-7 항목, 맨 아래에 생긴 답에 질문 인용)
   safetyCard?: { analysisId: number; warningIds: number[] };  // v0.9: 안전성 점검 결과 카드. answerType은 normal, 카드가 없는 답은 칸 생략 (0-1 항목 12)
   safety?: SafetyInfo;                          // v0.14: 서버 2차 감지 결과. answerType이 emergency, crisis일 때 (H-3 응답에서 옮김, 4-6 항목)
   drugMatch?: { status: "matched" | "candidates" | "not_found"; items: { ediCode: string | null; itemSeq: string | null; itemName: string }[] };  // v0.14: H-3 응답에서 옮김. 지금 코드에서 만들지 않아 만들 때 저장 방법을 정함 (확정 전)
@@ -418,8 +421,9 @@ CM-03 예시 질문 카드 (재방문 홈) → { initialQuestion: "노바스크�
 챗봇 화면 (분석 연계): 1단계 (하루 한 대화, v0.7)
   1. 오늘 대화 찾기 GET /chat/sessions/today (파라미터 없이)
   2. R-4 조회 → 오늘 대화 맨 아래에 맥락 카드. 같은 날, 같은 분석, 같은 대상 카드가 이미 있으면 새로 붙이지 않고 그 카드로 스크롤
-  3. context 있음 → 첫 답변: 오늘 대화가 있으면 맥락 추가(POST /chat/sessions/{id}/context), 없으면 H-1 (context 포함)
-     analysisId만 → 분석 요약 맥락 카드 + 고정 후속 질문 칩 (대화가 없으면 첫 질문 때 H-1)
+  3. context 있음 → 첫 답변: 오늘 대화가 있으면 맥락 추가(POST /chat/sessions/{id}/context), 없으면 H-1 (context 포함) 뒤 맥락 추가
+     analysisId만 → 분석 요약 맥락 카드 + 고정 후속 질문 칩. 오늘 대화가 있으면 맥락 추가, 없으면 첫 질문 때 H-1, 맥락 추가, H-3 순서
+     v0.17: 맥락 카드 줄은 맥락 추가(H-7)에서만 만듦 (명세서 H-1, H-7). H-1만 부르면 다시 들어왔을 때 카드가 없음
 
 챗봇 화면 (분석 연계): 2단계 (분석 결과는 새 대화, 대화 기록 화면이 생긴 뒤 다시 정함)
   1. 오늘 대화 찾기 GET /chat/sessions/today?analysisId=&contextType=&contextId=
