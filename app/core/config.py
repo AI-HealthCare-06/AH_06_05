@@ -44,9 +44,20 @@ class Config(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET_KEY: str = ""
 
-    # OCR 호출 전 흐린 사진 거르기: 글자가 가장 많은 칸 3개의 선명도가 이보다 낮으면 다시 찍게 함 (0이면 끔)
-    # 근거: 10/13 시험 사진에서 못 읽힌 흐린 사진 11, 흐려도 읽힌 사진 232, 정상 사진 940 이상 (docs/design/ocr_precheck.md)
-    OCR_MIN_SHARPNESS: float = 100.0
+    # 처방전 사진 임시 저장 (10/22 결정 1, 2). ""이면 저장하지 않음(기본), "s3"는 S3 버킷(EC2 역할로 접근), "disk"는 서버 디스크 폴더
+    PHOTO_STORAGE: str = ""
+    PHOTO_RETENTION_HOURS: int = 24  # 올린 지 이 시간이 지난 사진을 지움 (성공 · 실패 모두)
+    PHOTO_S3_BUCKET: str = ""
+    PHOTO_S3_REGION: str = "ap-northeast-2"
+    PHOTO_DISK_DIR: str = "./photo_store"
+
+    # OCR을 arq 워커에서 돌릴지 (10/26 이전). 꺼짐이 기본 — 켜려면 사진 저장(PHOTO_STORAGE)도 켜져 있어야 한다 (워커가 저장소에서 사진을 읽음).
+    # 사진을 저장소에 못 올리거나 큐에 못 넣으면 예전처럼 서버 안 백그라운드로 처리한다
+    OCR_WORKER: bool = False
+    OCR_WORKER_MAX_TRIES: int = 2  # 처음 + 다시 시도 1번 (CLOVA가 전부 실패했을 때만)
+    OCR_WORKER_RETRY_DELAY_SEC: int = 20
+    OCR_WORKER_TIMEOUT_SEC: int = 300  # 한 번 시도의 제한 시간 (사진 5장 × CLOVA 40초 + 여유)
+    OCR_UPLOAD_WAIT_SEC: float = 8.0  # 업로드 응답이 사진 저장을 기다리는 최대 시간 (넘으면 서버 안 처리로 바꿈)
 
     # 사용자 한 명이 하루(한국 시간 자정부터)에 올릴 수 있는 사진 수 (0이면 끔). 처방전이 아닌 사진을 OCR 호출 전에 가려내는 것이
     # 어려워서(docs/design/ocr_precheck.md 시도 결과) CLOVA 호출 비용을 막는 안전장치로 둠

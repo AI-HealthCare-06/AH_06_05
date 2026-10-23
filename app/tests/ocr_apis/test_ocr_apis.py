@@ -1,8 +1,9 @@
 """O-1 ~ O-5 — 업로드 · 작업 상태 · 인식 결과 · 수정 · 약 이름 검색 (CLOVA는 저장해 둔 가짜 처방전 결과로 대신함)"""
 
+import itertools
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from httpx import ASGITransport, AsyncClient
 from starlette import status
@@ -11,13 +12,21 @@ from tortoise.contrib.test import TestCase
 from app.core import config
 from app.main import app
 from app.models.masters import Disease, DrugProduct
-from app.models.ocr import MatchStatus, OcrJob, Prescription, PrescriptionItem, PrescriptionItemCandidate
+from app.models.ocr import (
+    MatchStatus,
+    OcrJob,
+    Prescription,
+    PrescriptionFileHash,
+    PrescriptionItem,
+    PrescriptionItemCandidate,
+)
 from app.models.users import ConsentType, User, UserConsent
 from app.services import prescriptions as svc
 from app.services.ocr import clova, llm_fix
 from app.tests.helpers import signup
 
 JPG = b"\xff\xd8\xff\xe0" + b"0" * 100
+_UPLOAD_SEQ = itertools.count(1)
 PRODUCTS = [
     ("641900040", "노바스크정5밀리그람(암로디핀베실산염)_(6.944mg/1정)", "한국화이자제약(주)"),
     ("644300010", "다이아벡스정500밀리그램(메트포르민염산염)_(0.5g/1정)", "한국비엠에스제약(주)"),
@@ -81,7 +90,9 @@ class OcrApiCase(TestCase):
 
     @staticmethod
     async def upload(client: AsyncClient, headers: dict[str, str], n: int = 1):
-        files = [("files", (f"p{i}.jpg", JPG + bytes([i]), "image/jpeg")) for i in range(n)]
+        # 업로드마다 바이트가 달라야 한다 (같은 파일을 다시 올리면 OCR 없이 지난 결과를 쓰므로)
+        salt = next(_UPLOAD_SEQ).to_bytes(4, "big")
+        files = [("files", (f"p{i}.jpg", JPG + salt + bytes([i]), "image/jpeg")) for i in range(n)]
         return await client.post("/api/v1/prescriptions", files=files, headers=headers)
 
 
@@ -220,15 +231,66 @@ class TestUploadAndJob(OcrApiCase):
         assert n == 0 and job["prescriptionIds"] == []
         assert job["failedFiles"] == [{"fileIndex": 1, "code": "IMAGE_QUALITY_LOW"}] and job["status"] == "done"
 
-    async def test_blurry_photo_is_not_sent_to_ocr_and_sharp_one_is(self):
-        from app.tests.ocr_pipeline.test_precheck import _page
-
+    async def test_same_file_uploaded_again_later_does_not_call_ocr(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        photo = jpeg_of_size(1200, 1600)
         async with self.client() as client:
-            headers = await self.auth(client, "pc5@example.com")
-            n, job = await self.read_with(client, headers, [_page(), _page(blur=4)], [sample])
-        assert n == 1 and len(job["prescriptionIds"]) == 1
-        assert job["failedFiles"] == [{"fileIndex": 2, "code": "IMAGE_QUALITY_LOW"}] and job["status"] == "done"
+            headers = await self.auth(client, "pc6@example.com")
+            n1, job1 = await self.read_with(client, headers, [photo], [sample])
+            n2, job2 = await self.read_with(client, headers, [photo], [sample])
+            other = await self.auth(client, "pc7@example.com")
+            n3, job3 = await self.read_with(client, other, [photo], [sample])
+        assert n1 == 1 and n2 == 0  # 두 번째는 OCR 호출 없음
+        assert (
+            n3 == 1 and len(job3["prescriptionIds"]) == 1
+        )  # 다른 사용자는 같은 파일이어도 따로 읽음 (남의 기록을 보여 주지 않음)
+        assert job2["prescriptionIds"] == job1["prescriptionIds"]
+        assert job2["duplicatedFiles"] == [{"fileIndex": 1, "prescriptionId": job1["prescriptionIds"][0]}]
+        assert job2["failedFiles"] == [] and job2["status"] == "done"
+
+    async def test_file_caught_by_content_key_is_remembered_so_next_identical_upload_skips_ocr(self):
+        """다시 찍은 같은 처방전(바이트만 다름)을 한 번 거르고 나면, 그 파일을 또 올려도 OCR을 부르지 않는다"""
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        retake = jpeg_of_size(1200, 1600, b"retake")
+        async with self.client() as client:
+            headers = await self.auth(client, "pc11@example.com")
+            _, first = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            n2, second = await self.read_with(client, headers, [retake], [sample])  # 2단계(내용 열쇠)에서 걸림
+            n3, third = await self.read_with(client, headers, [retake], [sample])  # 같은 파일 → 1단계에서 걸림
+        rx_id = first["prescriptionIds"][0]
+        assert n2 == 1 and second["prescriptionIds"] == [rx_id]
+        assert n3 == 0 and third["prescriptionIds"] == [rx_id]
+        assert third["duplicatedFiles"] == [{"fileIndex": 1, "prescriptionId": rx_id}]
+        assert await Prescription.filter(user__login_id="pc11@example.com").count() == 1
+        assert await PrescriptionFileHash.filter(prescription_id=rx_id).count() == 2
+
+    async def test_file_hash_is_removed_with_the_user_and_not_shared(self):
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        photo = jpeg_of_size(1200, 1600)
+        async with self.client() as client:
+            headers = await self.auth(client, "pc12@example.com")
+            await self.read_with(client, headers, [photo], [sample])
+        assert await PrescriptionFileHash.filter(user__login_id="pc12@example.com").count() == 1
+        await User.filter(login_id="pc12@example.com").delete()
+        assert await PrescriptionFileHash.all().count() == 0
+
+    async def test_pdf_with_an_unreadable_page_is_read_again_next_time(self):
+        """못 읽은 쪽이 있는 파일은 해시를 남기지 않는다 (남기면 다시 올려도 그 쪽을 영영 안 읽음)"""
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        junk = {"fields": sample["images"][0]["fields"][:3]}
+        data = {**sample, "images": [sample["images"][0], junk]}
+        async with self.client() as client:
+            headers = await self.auth(client, "pc13@example.com")
+            for _ in range(2):
+                with patch.object(clova, "recognize", AsyncMock(return_value=data)) as rec:
+                    res = await client.post(
+                        "/api/v1/prescriptions",
+                        files=[("files", ("a.pdf", b"%PDF-1.4 x", "application/pdf"))],
+                        headers=headers,
+                    )
+                assert rec.await_count == 1, "두 번 모두 OCR을 불러야 한다"
+                assert res.status_code == status.HTTP_202_ACCEPTED
+        assert await PrescriptionFileHash.all().count() == 0
 
     async def test_normal_size_and_unknown_header_still_go_to_ocr(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
