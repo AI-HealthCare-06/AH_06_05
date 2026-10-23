@@ -29,6 +29,17 @@ class ChatRepository:
     async def delete_session(self, session: ChatSession) -> None:
         await session.delete()  # 메시지는 DB가 같이 지움 (ON DELETE CASCADE)
 
+    async def delete_sessions_for_analysis(self, user: User, analysis_id: int) -> None:
+        """R-8: 그 분석으로 시작한 대화와 그 분석의 맥락 카드가 붙은 대화를 지움 (명세서 R-8, #119 리뷰 10/23).
+        1단계는 하루 한 대화라 카드는 대화 중간에 붙고 analysis_id로는 잡히지 않아 카드 줄도 봄"""
+        cards = await ChatMessage.filter(session__user=user, context_card__not_isnull=True).values(
+            "session_id", "context_card"
+        )
+        ids = {c["session_id"] for c in cards if (c["context_card"] or {}).get("analysisId") == analysis_id}
+        ids |= set(await ChatSession.filter(user=user, analysis_id=analysis_id).values_list("id", flat=True))
+        if ids:
+            await ChatSession.filter(id__in=ids, user=user).delete()  # 메시지는 DB가 같이 지움
+
     async def set_safety_mode(self, session_id: int, until: datetime) -> None:
         await ChatSession.filter(id=session_id).update(safety_mode_until=until)
 

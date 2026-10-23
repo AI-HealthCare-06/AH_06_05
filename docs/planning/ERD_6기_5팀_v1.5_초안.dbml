@@ -30,6 +30,7 @@
 //   답 줄에 남겨 카드를 그림. 원문은 담지 않음. 답 만들기가 실패하면 만드는 중이던 줄을 지우고, 30초를 넘긴 줄은 다시 시도 때 지움(status에 failed는 두지 않음).
 //   chat_messages.reply_to_id 추가: 답 줄이 어느 질문의 답인지. client_request_id는 질문 줄에만 둘 수 있어서 다시 시도 때 답 줄을 찾으려면 필요함.
 //   chat_sessions.analysis_id: 분석을 지우면(R-8) 비움. 하루 한 대화를 통째로 지우지 않으려고. 대화까지 지울지는 채연과 정함.
+//   (10/23 바꿈) R-8은 그 분석으로 시작한 대화와 그 분석의 맥락 카드가 붙은 대화를 지움(#119 채연 리뷰). FK는 set null 그대로 두고 R-8 코드가 지움.
 //
 // [v1.4, 2026-10-08, 채연] 팩트표 v0.12 반영. lifestyle_guides에 group_type(위험 신호, 교차 규칙을 같은 표에 담음),
 //   requires_clinician, goal_eligible, applies_when, show_when_unknown, condition, user_message 추가. lifestyle_guide_actions에 kind(fact 또는
@@ -305,7 +306,7 @@ Table feedbacks {
 Table chat_sessions {
   id            bigint      [pk, increment]
   user_id       bigint      [ref: > users.id, not null]
-  analysis_id   bigint      [ref: > analyses.id, note: 'null이면 일반 질문 모드 (분석 전). 분석을 지우면(R-8) 비움(set null). 대화까지 지울지는 채연과 정함 (이슈 #100, 수인 10/22)']
+  analysis_id   bigint      [ref: > analyses.id, note: 'null이면 일반 질문 모드 (분석 전). 분석을 지우면(R-8) 이 대화는 R-8 코드가 지움(그 분석의 맥락 카드가 붙은 대화도). FK는 set null (이슈 #100, #119 리뷰 10/23)']
   context_type  varchar(20) [note: 'v1.0 · warning / drug (CB-01-E2에서 무엇을 알고 시작했는지)']
   context_ref   bigint      [note: 'v1.0 · analysis_warnings.id 또는 prescription_items.id']
   title         varchar(100) [note: 'v1.0 🟡 수인 확인 · 대화 제목 자동 생성 · 수정 (CB-03)']

@@ -156,15 +156,28 @@ class TestSessions(ChatCase):
         assert card["contextCard"] == {"analysisId": aid, "context": {"type": "drug", "id": 7001}}
         assert "replyTo" not in card
 
-    async def test_deleting_analysis_keeps_chat(self):
-        """R-8: 분석을 지우면 대화의 분석 연결만 비움 (채연과 정할 때까지, 10/22)"""
+    async def test_deleting_analysis_deletes_linked_chats(self):
+        """R-8: 분석을 지우면 그 분석으로 시작한 대화와 그 분석의 맥락 카드가 붙은 대화를 메시지째 지움 (명세서 R-8, #119 리뷰 10/23).
+        다른 분석의 카드만 붙은 대화는 남김"""
         async with self.client() as client:
             headers, user = await self.auth(client, "c7@example.com")
             aid = (await self.start(client, headers, await self.prescription(user, ["641900040"]))).json()["analysisId"]
-            sid = await self.session(client, headers, analysisId=aid)
+            other = (await self.start(client, headers, await self.prescription(user, ["645600020"]))).json()[
+                "analysisId"
+            ]
+            started = await self.session(client, headers, "s-1", analysisId=aid)
+            carded = await self.session(client, headers, "s-2")
+            kept = await self.session(client, headers, "s-3")
+            for sid, target in ((carded, aid), (kept, other)):
+                body = {"analysisId": target, "clientRequestId": f"ctx-{sid}"}
+                assert (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).status_code == 201
+            assert (await self.ask(client, headers, carded, "그 약은 언제 먹어요?")).status_code == 202
             assert (await client.delete(f"/api/v1/analyses/{aid}", headers=headers)).status_code == 204
-        s = await ChatSession.get(id=sid)
-        assert s.analysis_id is None
+            assert (await client.get(f"{API}/{carded}/messages", headers=headers)).status_code == 404
+        assert await ChatSession.filter(id__in=[started, carded]).count() == 0
+        assert await ChatMessage.filter(session_id=carded).count() == 0
+        assert await ChatSession.filter(id=kept).exists()
+        assert await ChatMessage.filter(session_id=kept).count() == 1
 
 
 def test_sources_map_fact_ids_by_lifestyle_name():

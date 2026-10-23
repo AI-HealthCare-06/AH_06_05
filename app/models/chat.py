@@ -47,7 +47,7 @@ class ChatSession(models.Model):
     user: fields.ForeignKeyRelation["User"] = fields.ForeignKeyField(
         "models.User", related_name="chat_sessions", on_delete=fields.CASCADE
     )
-    # 분석을 지우면(R-8) 비움. 대화까지 지울지는 채연과 정함 (#100)
+    # 분석을 지우면(R-8) 이 대화는 R-8 코드가 지움 (그 분석의 맥락 카드가 붙은 대화도, #119 리뷰 10/23). FK는 set null
     analysis: fields.ForeignKeyNullableRelation["Analysis"] = fields.ForeignKeyField(
         "models.Analysis", related_name="chat_sessions", null=True, on_delete=fields.SET_NULL
     )

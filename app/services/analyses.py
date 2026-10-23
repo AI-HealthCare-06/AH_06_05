@@ -36,6 +36,7 @@ from app.models.analysis import (
 from app.models.masters import Disease
 from app.models.ocr import MatchStatus, Prescription, PrescriptionDisease, PrescriptionItem
 from app.models.users import User, UserHealthProfile
+from app.repositories.chat import ChatRepository
 from app.services import safety
 from app.services.drug_names import base_name
 from app.services.guide import lifestyle, medication, store
@@ -578,7 +579,7 @@ async def list_analyses(user: User, cursor: str | None, size: int) -> dict[str, 
 # ── R-8 기록 삭제 ─────────────────────────────────────────────────────────────────────────────
 async def delete_analysis(user: User, analysis_id: int) -> None:
     """분석 결과 · 경고 · 안내문 · 피드백을 지우고, 이 분석에만 쓰인 처방전(약 포함)도 같이 지움 (다른 분석에도 쓰였으면 남김).
-    챗봇 대화와 실천 목표는 아직 서버에 없어서 여기서 다루지 않음 (생기면 이어서 처리)"""
+    챗봇 대화는 이 분석으로 시작했거나 이 분석의 맥락 카드가 붙은 대화를 지움 (#100, #119 리뷰 10/23). 실천 목표는 아직 서버에 없음"""
     a = await _expire_if_stuck(await _get(user, analysis_id))
     if a.status in (AnalysisStatus.QUEUED, AnalysisStatus.RUNNING):
         raise AppError(
@@ -586,6 +587,7 @@ async def delete_analysis(user: User, analysis_id: int) -> None:
         )
     async with in_transaction():
         rx_ids = list(await AnalysisPrescription.filter(analysis=a).values_list("prescription_id", flat=True))
+        await ChatRepository().delete_sessions_for_analysis(user, a.id)
         await Analysis.filter(id=a.id).delete()  # 경고 · 안내문 · 피드백 · 연결 표는 DB가 같이 지움 (ON DELETE CASCADE)
         still_used = set(
             await AnalysisPrescription.filter(prescription_id__in=rx_ids).values_list("prescription_id", flat=True)
