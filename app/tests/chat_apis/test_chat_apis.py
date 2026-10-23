@@ -167,12 +167,25 @@ class TestSessions(ChatCase):
         assert s.analysis_id is None
 
 
-def test_sources_map_fact_ids_by_lifestyle_order():
-    """팩트표 번호를 생활습관 항목 순서로 이음. 범위 밖, 모르는 질환, 질환 겹침(X)은 확인 전이라 뺌. 같은 출처는 한 번만"""
-    ids = ["F:HTN:1", "F:HTN:2", "F:HTN:99", "F:NONE:1", "F:HTN:0", "X:1", "D:1:S1", "D:2:S3"]
+def test_sources_map_fact_ids_by_lifestyle_name():
+    """팩트표 생활습관 번호 F:<질환>:life:<항목 이름>을 그 항목의 출처로 이음 (조각 파일 번호 모양, #119 채연 리뷰).
+    목표 수치, 약 연결, 위험 신호, 질환 겹침은 출처 칸이 없어 붙이지 않음. 없는 항목, 모르는 질환도 뺌. 같은 출처는 한 번만"""
+    ids = [
+        "F:HTN:life:나트륨 줄이기",
+        "F:HTN:life:혈압 자가측정",
+        "F:HTN:life:없는 항목",
+        "F:NONE:life:금연",
+        "F:HTN:target",
+        "F:HTN:med:1",
+        "F:HTN:warn",
+        "F:X:cross:1",
+        "D:1:S1",
+        "D:2:S3",
+    ]
     assert chats._sources(ids) == [
         {"title": "질병관리청 국가건강정보포털"},
         {"title": "대한고혈압학회 진료지침"},
+        {"title": "대한고혈압학회 가정혈압 측정 권고"},
         {"title": "식약처 의약품 허가정보"},
     ]
 
@@ -182,7 +195,7 @@ class TestAsk(ChatCase):
         async with self.client() as client:
             headers, _ = await self.auth(client, "a1@example.com")
             sid = await self.session(client, headers)
-            self.fake.reply = normal_reply(["D:645600020:S3", "F:HTN:1"])
+            self.fake.reply = normal_reply(["D:645600020:S3", "F:HTN:life:나트륨 줄이기"])
             res = await self.ask(client, headers, sid, "  메트포르민은 밥 먹고 먹어야 하나요?  ")
             assert res.status_code == status.HTTP_202_ACCEPTED
             mid = res.json()["messageId"]
@@ -191,7 +204,7 @@ class TestAsk(ChatCase):
         assert q["role"] == "user" and q["content"] == "메트포르민은 밥 먹고 먹어야 하나요?" and q["status"] == "done"
         assert a["id"] == mid and a["role"] == "assistant" and a["status"] == "done"
         assert a["answerType"] == "normal" and a["replyTo"] == q["id"] and a["content"]
-        # 팩트표 F:<질환>:<번호>는 lifestyle_facts.json 생활습관 항목 순서(1부터)로 보고 그 항목의 출처를 붙임 (10/22 수인 결정)
+        # 팩트표 F:<질환>:life:<항목 이름>은 lifestyle_facts.json 그 항목의 출처를 붙임 (#119 채연 리뷰)
         assert a["sources"] == [
             {"title": "식약처 의약품 허가정보"},
             {"title": "질병관리청 국가건강정보포털"},

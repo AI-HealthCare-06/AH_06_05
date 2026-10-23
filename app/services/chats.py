@@ -173,18 +173,18 @@ async def run_pipeline(
 
 
 def _fact_sources(sentence_id: str) -> list[str]:
-    """F:<질환 id>:<번호>는 lifestyle_facts.json의 그 질환 생활습관 항목 순서(1부터)로 봄 (10/22 수인 결정, 채연 확인 전).
-    출처 글은 R-4 생활습관과 같게 " / "로 나눔. 번호가 범위 밖이면 출처를 붙이지 않음"""
-    _, disease_id, n = (sentence_id.split(":") + ["", ""])[:3]
-    d = next((x for x in lifestyle.facts()["diseases"] if x["id"] == disease_id), None)
-    if d is None or not n.isdigit() or not 1 <= int(n) <= len(d["lifestyle"]):
+    """F:<질환 id>:life:<항목 이름>은 lifestyle_facts.json 그 질환 생활습관 항목(category)의 출처 (조각 파일 번호 모양, #119 채연 리뷰).
+    출처 글은 R-4 생활습관과 같게 " / "로 나눔. 목표 수치(target), 약 연결(med), 위험 신호(warn), 질환 겹침(cross)은 출처 칸이 없어 뺌"""
+    parts = sentence_id.split(":", 3)
+    if len(parts) != 4 or parts[2] != "life":
         return []
-    return [p.strip() for p in (d["lifestyle"][int(n) - 1].get("source") or "").split(" / ") if p.strip()]
+    d = next((x for x in lifestyle.facts()["diseases"] if x["id"] == parts[1]), None)
+    item = next((x for x in d["lifestyle"] if x["category"] == parts[3]), None) if d else None
+    return [p.strip() for p in ((item or {}).get("source") or "").split(" / ") if p.strip()]
 
 
 def _sources(ids: list[str]) -> list[dict[str, str]]:
-    """근거 번호 → 출처 이름. 질환 겹침(X)은 번호 매기는 법을 확인하기 전이라 뺌.
-    팩트표의 생활습관 밖 조각(목표 지표, 약 연결, 위험 신호)이 같은 F 모양이면 구분하지 못함 (채연 확인 전)"""
+    """근거 번호 → 출처 이름. 허가정보(D)와 팩트표 생활습관(F:...:life:...)만 출처가 있음"""
     titles: list[str] = []
     for i in ids:
         kind = i.split(":")[0]
