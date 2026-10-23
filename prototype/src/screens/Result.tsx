@@ -82,7 +82,7 @@ function Safety() {
         <Excluded />
         <Card tone="success" style={{ marginTop: 12 }}>
           <Text style={T.heading}>점검 기준에서 걸린 항목이 없어요</Text>
-          <Text style={[T.caption, { color: C.text, marginTop: 6 }]}>점검한 약 {cnt}개에서 같이 먹으면 안 되는 조합을 찾지 못했어요.</Text>
+          <Text style={[T.caption, { color: C.text, marginTop: 6 }]}>점검한 약 {cnt}개에서 아래 점검 항목에 걸리는 것을 찾지 못했어요.</Text>
         </Card>
         <Section title="이렇게 점검했어요">
           {[...CHECKED_ITEMS.filter((c) => c.type !== 'polypharmacy'), { type: 'dose', label: '하루 최대량 초과' }].map((c) => <Card key={c.type} style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={T.bodyM}>{c.label}</Text><Chip label="확인됨" tone="success" /></Card>)}
