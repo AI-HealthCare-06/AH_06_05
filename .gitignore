@@ -21,6 +21,7 @@ data/private/
 04_프로토타입/
 *.patch
 uploads/
+photo_store/
 *.dcm
 
 # ===== Python =====

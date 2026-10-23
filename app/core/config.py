@@ -44,6 +44,13 @@ class Config(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET_KEY: str = ""
 
+    # 처방전 사진 임시 저장 (10/22 결정 1, 2). ""이면 저장하지 않음(기본), "s3"는 S3 버킷(EC2 역할로 접근), "disk"는 서버 디스크 폴더
+    PHOTO_STORAGE: str = ""
+    PHOTO_RETENTION_HOURS: int = 24  # 올린 지 이 시간이 지난 사진을 지움 (성공 · 실패 모두)
+    PHOTO_S3_BUCKET: str = ""
+    PHOTO_S3_REGION: str = "ap-northeast-2"
+    PHOTO_DISK_DIR: str = "./photo_store"
+
     # 사용자 한 명이 하루(한국 시간 자정부터)에 올릴 수 있는 사진 수 (0이면 끔). 처방전이 아닌 사진을 OCR 호출 전에 가려내는 것이
     # 어려워서(docs/design/ocr_precheck.md 시도 결과) CLOVA 호출 비용을 막는 안전장치로 둠
     OCR_DAILY_FILE_LIMIT: int = 30

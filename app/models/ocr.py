@@ -1,6 +1,6 @@
 """피처 1 OCR — 처방전 · 약봉투 입력 (ERD v1.3 입력 영역, API O-1 ~ O-5)
 
-원본 사진은 저장하지 않는다 (NFR-011). 사진 1장 = prescriptions 1행.
+원본 사진은 PHOTO_STORAGE를 켠 서버에서만 24시간 임시 저장한다 (ocr_jobs.photos, 서비스는 services/ocr/photos.py). 끄면 저장하지 않는다. 사진 1장 = prescriptions 1행.
 """
 
 from enum import StrEnum
@@ -50,6 +50,10 @@ class OcrJob(models.Model):
     error_code = fields.CharField(max_length=50, null=True, description="전체 실패 시 OCR_FAILED 등")
     duplicates: Any = fields.JSONField(
         null=True, description='이미 있는 처방전이라 새로 저장하지 않은 사진 [{"fileIndex": 2, "prescriptionId": 7}]'
+    )
+    photos: Any = fields.JSONField(
+        null=True,
+        description='임시 저장한 사진의 위치 [{"fileIndex": 1, "key": "ocr/3/12/1.jpg"}]. 24시간 뒤 지우고 null로 비움. 저장하지 않으면 null',
     )
     created_at = fields.DatetimeField(auto_now_add=True)
     finished_at = fields.DatetimeField(null=True)

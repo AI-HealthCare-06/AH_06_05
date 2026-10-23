@@ -10,7 +10,7 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -36,7 +36,7 @@ from app.models.ocr import (
 )
 from app.models.users import ConsentType, User, UserConsent
 from app.services.drug_names import base_name
-from app.services.ocr import clova, llm_fix, numeric, precheck
+from app.services.ocr import clova, llm_fix, numeric, photo_store, photos, precheck
 from app.services.ocr.mask import mask
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
 from app.services.ocr.pipeline import OcrRead, read
@@ -154,6 +154,36 @@ async def create_job(user: User, blobs: list[Blob]) -> OcrJob:
         )
     await _check_daily_limit(user, len(blobs))
     return await OcrJob.create(user=user, status=OcrJobStatus.QUEUED, file_count=len(blobs))
+
+
+async def _upload_photos(job_id: int, user_id: int, blobs: list[Blob]) -> list[dict[str, Any]] | None:
+    """사진 임시 저장 (PHOTO_STORAGE를 켠 서버에서만). 저장소에 올리기만 하고 DB는 건드리지 않는다.
+    실패해도 읽기는 계속한다 (사진은 이 작업의 메모리에 있음) — 다시 시도할 사진이 없어 로그만 남는다"""
+    if not photo_store.enabled():
+        return None
+    try:
+        return await photos.upload_job_photos(job_id, user_id, blobs)
+    except photo_store.PhotoStoreError as e:
+        logger.warning("사진을 저장하지 못함 job=%s (%s)", job_id, e)
+    except Exception:
+        logger.exception("사진을 저장하지 못함 job=%s", job_id)
+    return None
+
+
+async def process_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
+    """백그라운드 작업 전체. 사진 임시 저장(저장소 호출)과 OCR을 동시에 돌려, 업로드 응답도 OCR도 저장소(S3)가 느린 것을
+    기다리지 않는다. 저장소 호출은 DB를 쓰지 않고, 위치 기록(DB)은 OCR이 끝난 뒤에 한다.
+    run_job이 끝나면서 메모리의 사진을 비우므로 저장에는 복사본(같은 바이트를 가리킴)을 넘긴다"""
+    upload = asyncio.create_task(_upload_photos(job_id, user_id, [replace(b) for b in blobs]))
+    try:
+        await run_job(job_id, user_id, blobs)
+    finally:
+        saved = await upload
+    if saved:
+        try:
+            await photos.record_job_photos(job_id, saved)
+        except Exception:
+            logger.exception("사진 위치를 기록하지 못함 job=%s", job_id)
 
 
 async def _check_daily_limit(user: User, new_files: int) -> None:
