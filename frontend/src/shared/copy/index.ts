@@ -243,7 +243,7 @@ export const copy = {
     more: '더 보기',
     loadFail: '기록을 불러오지 못했어요',
     confirmTitle: '이 기록을 삭제할까요?',
-    confirmBody: '분석 결과와 안내문이 지워지고, 이 분석에만 쓰인 처방전도 함께 지워져요. 지운 기록은 되돌릴 수 없어요.',
+    confirmBody: '분석 결과, 안내문, 이어진 챗봇 대화가 지워지고, 이 분석에만 쓰인 처방전도 함께 지워져요. 지운 기록은 되돌릴 수 없어요.', // 챗봇 대화를 넣은 문구는 #119 채연 답글 (10/23)
     confirmOk: '삭제',
     running: '분석이 끝난 뒤에 지울 수 있어요.',
     emptyHead: '아직 분석한 기록이 없어요',
@@ -266,6 +266,61 @@ export const copy = {
       '약 먹는 동안 운동해도 되나요?',
     ],
     attachNotice: '※ 처방전 · 약봉투는 홈 화면에서 찍어 올려 주세요.', // CB-04
+    // 아래는 설계 메모 6-1, 6-2 항목 그대로 (Figma, 신규 임시 표시는 메모를 따름)
+    notice: 'AI 답변은 정보 제공용이며 의사 · 약사의 진단이나 처방을 대신하지 않아요.',
+    emptyTitle: '무엇이든 물어보세요',
+    emptyBody: '복용 중인 약과 생활습관에 대해 답해 드려요',
+    emptyNoHistory: '아직 나눈 대화가 없어요',
+    emptyHasHistory: '오늘은 어떤 게 궁금하세요?',
+    startWith: '이런 질문으로 시작해 보세요',
+    todayFail: '지난 대화를 불러오지 못했어요',
+    reload: '다시 불러오기',
+    placeholder: '궁금한 점을 입력하세요',
+    send: '보내기',
+    generating: '● ● ● 답변을 만들고 있어요',
+    source: (name: string) => `출처 · ${name}`,
+    labels: {
+      clarify: '정보 확인',
+      partial: '일부만 확인됐어요',
+      no_evidence: '확인이 어렵습니다',
+      refer: '의료진 상담 필요',
+      emergency: '긴급 안내',
+      crisis: '도움 연결',
+      error: '연결 오류',
+    },
+    emergency: [
+      '말씀하신 증상은 응급일 수 있어요. 지금 바로 119에 전화하거나 가까운 응급실로 가 주세요.',
+      '응급일 수 있는 상황에서는 복약 정보 답변을 이어 가지 않아요.',
+    ],
+    call119: '119 전화하기',
+    findER: '가까운 응급실 찾기',
+    noSymptom: '지금은 증상이 없어요',
+    noSymptomReply: '다행이에요. 다시 증상이 생기면 바로 119에 연락해 주세요. 복약에 관한 질문은 계속 하실 수 있어요.',
+    crisis: [
+      '많이 힘드셨겠어요. 말씀해 주셔서 고마워요. 지금 마음을 전문 상담사와 이야기해 볼 수 있어요. 자살예방상담전화 109는 24시간 연결돼요.',
+      '복약에 관한 질문은 언제든 다시 하실 수 있어요.',
+    ], // 전문가 검토 후 확정
+    call109: '109 전화하기',
+    danger119: '지금 위험하다면 119',
+    safetyLine: '힘들 때 109 · 24시간',
+    restoredQuestion: '(이전에 긴급 안내를 보여 드린 질문이에요)',
+    error: ['답변을 만들지 못했어요. 잠시 뒤 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'], // 와이어프레임 E6 (10/20)
+    errorTooMany: ['잠시 후 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'],
+    contextTitle: '분석 결과를 알고 있어요',
+    contextSummary: (day: string, daysAgo: number, drugs: number, warnings: number) =>
+      `${day} 분석 · ${daysAgo}일 전 · 약 ${drugs}개 · 경고 ${warnings}건`,
+    contextWarning: (names: string) => `질문 중인 경고 · ${names}`,
+    contextDrug: (name: string) => `질문 중인 약 · ${name}`,
+    contextFail: '분석 결과를 불러오지 못했어요',
+    analysisChips: ['이번 분석에서 가장 조심할 건 뭔가요?', '같이 먹으면 안 되는 약이 있나요?'],
+    // 답 아래 꼬리질문 (요구사항에 없는 새 기능, 10/22 수인 결정). 문구는 메모에 있는 것만: E1 추천 질문 + E2 약 후속 질문(임시)
+    followTitle: '이어서 물어볼 수 있어요',
+    followChips: [
+      '약은 언제 먹는 게 좋나요?',
+      '같이 먹으면 안 되는 음식이 있나요?',
+      '먹는 걸 잊으면 어떻게 하나요?',
+      '약 먹는 동안 운동해도 되나요?',
+    ],
   },
   // CM-03-E2 첫 사용 안내 (코치 마크 2단계, 챗봇 → 처방전 찍기)
   coachMark: {

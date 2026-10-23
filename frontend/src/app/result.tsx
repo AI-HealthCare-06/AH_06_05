@@ -73,7 +73,7 @@ export default function Result() {
     <Screen
       title={r.title}
       onBack={goHome}
-      footer={<Btn label={r.askChat} kind="secondary" onPress={openChat} />}
+      footer={<Btn label={r.askChat} kind="secondary" onPress={() => openChat({ from: 'RG-02', analysisId })} />}
     >
       <Card style={{ gap: 4 }}>
         <Text style={T.caption}>{r.analyzedOn(`${day.getMonth() + 1}월 ${day.getDate()}일`)}</Text>
@@ -99,7 +99,7 @@ export default function Result() {
       </View>
 
       {tab === 'safety' && <Safety data={data} onDetail={(id) => router.push({ pathname: '/warning', params: { id: String(id) } })} />}
-      {tab === 'med' && <Medication data={data} analysisId={analysisId} onRetried={() => router.replace('/analyzing')} onAsk={openChat} />}
+      {tab === 'med' && <Medication data={data} analysisId={analysisId} onRetried={() => router.replace('/analyzing')} onAsk={(itemId) => openChat({ from: 'RG-04', analysisId, context: { type: 'drug', id: itemId } })} />}
       {tab === 'life' && (
         <Life
           data={data}
@@ -206,7 +206,7 @@ const Field = ({ label, value }: { label: string; value: string | null }) => (
   </Text>
 );
 
-function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResult; analysisId: number; onRetried: () => void; onAsk: () => void }) {
+function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResult; analysisId: number; onRetried: () => void; onAsk: (itemId: number) => void }) {
   if (data.medication.status === 'failed') return <GuideFailed analysisId={analysisId} onRetried={onRetried} />;
   return (
     <View style={{ marginTop: 12, gap: 12 }}>
@@ -233,7 +233,7 @@ function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResu
             <Field label={r.caution} value={m.caution} />
           )}
           {m.source && <Text style={T.caption}>{r.source(m.source)}</Text>}
-          <Pressable accessibilityRole="button" onPress={onAsk} style={{ minHeight: 48, justifyContent: 'center' }}>
+          <Pressable accessibilityRole="button" onPress={() => onAsk(m.itemId)} style={{ minHeight: 48, justifyContent: 'center' }}>
             <Text style={{ color: C.p700, fontWeight: '600', fontSize: 16 }}>{r.askDrug} {'>'}</Text>
           </Pressable>
         </Card>

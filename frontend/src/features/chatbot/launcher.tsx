@@ -1,5 +1,6 @@
 // 챗봇 플로팅 버튼 — 아이콘만 56 원형, 새 답변 빨간 점 (설계 메모 4-1)
 // 앱 루트에 떠 있음. 다른 화면은 useChatLauncher()로 숨기기 · 새 답변 표시 · 열기를 요청
+// 분석 화면은 openChat({ from, analysisId, context })로 엶 (설계 메모 3-4 항목). 창은 chatParams로 받음
 import { usePathname, useRouter } from 'expo-router';
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -9,13 +10,18 @@ import { copy } from '@/shared/copy';
 import { C, L } from '@/shared/theme';
 import { ChatbotIcon } from '@/shared/ui/icons';
 
+import type { ChatParams } from './types';
+
 // 버튼을 숨기는 화면 — 챗봇 창 자체 · 촬영 · 인식 확인 · 분석 중 · 분석 결과 · 경고 자세히(아래 고정 버튼이 챗봇을 염) · 로그인 · 회원가입 · 내 정보 수정 (경로는 화면을 만들 때 맞춤)
 const HIDDEN = ['/chat', '/capture', '/recognize', '/analyzing', '/result', '/warning', '/login', '/signup', '/me-edit'];
 // 하단 내비가 있는 화면 — 버튼을 내비 위로 올림
 const WITH_BOTTOM_NAV = ['/challenge', '/me'];
 
+const FAB: ChatParams = { from: 'fab' };
+
 type Launcher = {
-  openChat: () => void;
+  openChat: (params?: ChatParams) => void;
+  chatParams: ChatParams;
   setLauncherVisible: (v: boolean) => void;
   setHasNewAnswer: (v: boolean) => void;
 };
@@ -32,18 +38,23 @@ export function ChatLauncherProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [visible, setLauncherVisible] = useState(true);
   const [hasNew, setHasNewAnswer] = useState(false);
+  const [chatParams, setChatParams] = useState<ChatParams>(FAB);
 
-  const openChat = useCallback(() => {
-    setHasNewAnswer(false); // 창을 열면 빨간 점이 사라짐
-    router.push('/chat');
-  }, [router]);
+  const openChat = useCallback(
+    (params: ChatParams = FAB) => {
+      setHasNewAnswer(false); // 창을 열면 빨간 점이 사라짐
+      setChatParams(params);
+      router.push('/chat');
+    },
+    [router],
+  );
 
-  const value = useMemo(() => ({ openChat, setLauncherVisible, setHasNewAnswer }), [openChat]);
+  const value = useMemo(() => ({ openChat, chatParams, setLauncherVisible, setHasNewAnswer }), [openChat, chatParams]);
 
   return (
     <Ctx.Provider value={value}>
       {children}
-      {visible && <LauncherButton hasNew={hasNew} onPress={openChat} />}
+      {visible && <LauncherButton hasNew={hasNew} onPress={() => openChat()} />}
     </Ctx.Provider>
   );
 }

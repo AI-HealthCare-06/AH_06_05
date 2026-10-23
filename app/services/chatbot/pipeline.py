@@ -6,6 +6,7 @@
 - 2층이 응답하지 않으면 답을 만들지 않고 답변 오류(error, 화면 E6). 1층만으로 답하면 2층에 넘긴 애매한 위기 표현을 아무도 못 잡음 (10/19 수인 결정)
 - 2층이 위험이라고 하면 분류가 실패했어도 안내를 보여 줌
 - 2층은 과다 복용인지 알려 주지 않으므로 2층 응급은 [지금은 증상이 없어요] 칩을 늘 숨김 (#108 리뷰, 10/20 수인 결정)
+- emergency_dismissed: [지금은 증상이 없어요] 뒤 다시 보낸 질문은 1층 응급 규칙과 2층 emergency를 건너뛰고 자해만 봄 (명세서 H-3, 10/22)
 
 PR 2-2에서 더할 것: 약 이름 검색으로 되묻기, 제품 이름을 모르는 약("두통약") 되묻기, 허가정보로 음식 질문 보정, 사실 칸, 다시 만들기
 결과에는 질문 원문을 담지 않는다 (설계 메모 7-2).
@@ -51,17 +52,29 @@ def _safety(types: list[str], layer: int, rules: list[str], overdose: bool = Fal
     return Route(kind=types[0], layer=layer, safety_types=types, overdose=overdose, safety_rules=rules, **kw)
 
 
+def first_layer(question: str, emergency_dismissed: bool = False) -> tuple[Route | None, str | None]:
+    """1층 규칙과 문맥 파악 (AI 없음). 막을 질문이면 긴급, 자해 갈래를, 아니면 None과 문맥 파악이 푼 이유를 돌려줌.
+    질문을 저장하기 전에 서버가 먼저 부름 (명세서 H-3)"""
+    rule = safety_rules.check(question)
+    if emergency_dismissed:
+        rule = safety_rules.crisis_only(rule)
+    release = context_check.looks_normal(question, rule)
+    if rule.hit and release is None:
+        return _safety(rule.types, 1, rule.rules, rule.overdose), None
+    return None, release
+
+
 async def route(
     question: str,
     info: FixedInfo,
     history: list[dict[str, str]],
     client: ChatClient,
     summary: str | None = None,
+    emergency_dismissed: bool = False,
 ) -> Route:
-    rule = safety_rules.check(question)
-    release = context_check.looks_normal(question, rule)
-    if rule.hit and release is None:
-        return _safety(rule.types, 1, rule.rules, rule.overdose)
+    blocked, release = first_layer(question, emergency_dismissed)
+    if blocked:
+        return blocked
 
     past, first_turn = _turns(history)
     resolved = resolve_ordinal(question, history, info.drugs)
@@ -81,7 +94,7 @@ async def route(
         if not isinstance(risk, LLMError):
             raise risk
         return Route(kind="error", context_release=release, usage=usage)
-    if risk in ("emergency", "crisis"):
+    if risk == "crisis" or (risk == "emergency" and not emergency_dismissed):
         return _safety([risk], 2, ["llm_guard"], risk == "emergency", context_release=release, usage=usage)
     if isinstance(cls, BaseException):
         if not isinstance(cls, LLMError):
@@ -116,9 +129,10 @@ async def answer(
     client: ChatClient,
     summary: str | None = None,
     search: evidence.Search = rag_search,
+    emergency_dismissed: bool = False,
 ) -> Reply:
     started = time.perf_counter()
-    r = await route(question, info, history, client, summary)
+    r = await route(question, info, history, client, summary, emergency_dismissed)
     usage = Usage()
     usage.add(r.usage)
     if r.kind == "clarify":

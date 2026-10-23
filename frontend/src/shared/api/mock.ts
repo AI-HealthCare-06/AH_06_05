@@ -4,6 +4,7 @@ import { DIALYSIS, DISEASE_IDS, DRINKING, EXAM_NAME_MAX, SMOKING } from '@/featu
 
 import type { Method } from './client';
 import * as md from './mockData';
+import { routeChat } from './mockChat';
 
 const MAX_FAILURES = 5;
 const LOCK_MINUTES = 10;
@@ -169,5 +170,5 @@ function routeFlow(method: Method, path: string, body: Record<string, unknown>):
   if (method === 'GET' && (m = route(/^\/analyses\/\d+\/warnings\/(\d+)$/))) return md.warningDetail(Number(m[1]));
   if (method === 'PUT' && route(/^\/analyses\/\d+\/diseases$/)) return md.putDiseases((body ?? {}) as Record<string, unknown>);
   if (method === 'GET' && route(/^\/analyses\/\d+$/)) return md.analysisResult();
-  return null;
+  return routeChat(method, p, body);
 }

@@ -47,7 +47,10 @@ export default function WarningScreen() {
   }
   const tone = w.severity;
   return (
-    <Screen title={r.warningTitle} footer={<Btn label={r.askWarning} onPress={openChat} />}>
+    <Screen
+      title={r.warningTitle}
+      footer={<Btn label={r.askWarning} onPress={() => openChat({ from: 'RG-03', analysisId: analysisId ?? undefined, context: { type: 'warning', id: w.id } })} />}
+    >
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
         <Chip label={r.severity[tone]} tone={tone} />
         <Text style={[T.heading, { flex: 1 }]}>{w.title}</Text>

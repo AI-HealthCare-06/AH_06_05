@@ -235,3 +235,11 @@ def check(text: str) -> SafetyResult:
         result.rules.extend(crisis_hits)
 
     return result
+
+
+def crisis_only(result: SafetyResult) -> SafetyResult:
+    """[지금은 증상이 없어요] 뒤 다시 보낸 질문: 응급 규칙은 빼고 자해 검사만 남김 (명세서 H-3 emergencyDismissed)"""
+    if "crisis" not in result.types:
+        return SafetyResult()
+    names = {name for name, _ in CRISIS_RULES + _LEX_CRISIS}
+    return SafetyResult(types=["crisis"], rules=[r for r in result.rules if r in names])
