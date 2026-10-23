@@ -10,7 +10,7 @@
 
 | 항목 | 10/2 흐름도 | 지금 코드 | 확인한 파일 |
 |---|---|---|---|
-| 오래 걸리는 일 | Redis와 arq 워커 | FastAPI 백그라운드 작업(서버 안). 서버가 다시 시작되면 끊겨서, 조회할 때 15분이 지난 OCR 작업은 실패로 닫음 | `prescriptions.py`, `analyses.py` |
+| 오래 걸리는 일 | Redis와 arq 워커 | OCR은 `OCR_WORKER=true`이면 arq 워커(사진은 S3에서 읽음, `ocr_worker.md`), 아니면 FastAPI 백그라운드 작업(서버 안). 분석은 아직 서버 안. 서버가 다시 시작되면 끊겨서, 조회할 때 15분이 지난 OCR 작업은 실패로 닫음 | `prescriptions.py`, `analyses.py` |
 | OCR 호출 전 | 없음 | 같은 사진(이번 업로드 안, 같은 사용자의 지난 업로드는 prescription_file_hashes로), 짧은 쪽 400px 미만을 거름 | `precheck.py` |
 | 읽는 대상 | 처방전 표 | 처방전 표, 약봉투 표(머리글 없는 목록 포함), 약봉투 약 카드의 복약 안내 문구 | `pipeline.py`, `pouch.py`, `pouch_guide.py`, `pouch_panel.py` |
 | 약 이름 맞추기 | 표기 통일과 글자 조각, 후보 3개 | 규칙, 형제 약 확인, 비슷한 이름 추천, LLM(기본 꺼짐) | `matcher.py`, `llm_fix.py` |

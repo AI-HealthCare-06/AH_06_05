@@ -8,6 +8,7 @@
 지우기는 한 장이 실패해도 나머지를 계속 지우고, 실패한 사진은 위치를 남겨 다음에 다시 지운다.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -23,17 +24,23 @@ logger = logging.getLogger(__name__)
 
 
 async def upload_job_photos(job_id: int, user_id: int, blobs: "list[Blob]") -> list[dict[str, Any]]:
-    """사진을 저장소에 올리고 [{"fileIndex", "key"}]를 돌려준다 (DB는 건드리지 않음 — OCR이 DB를 쓰는 동안 같이 돌릴 수 있게).
-    하나라도 실패하면 이미 올린 것은 지우고 PhotoStoreError를 올린다"""
-    saved: list[dict[str, Any]] = []
-    try:
-        for b in blobs:
-            key = photo_store.make_key(user_id, job_id, b.file_index, b.fmt)
-            await photo_store.put(key, b.content)
-            saved.append({"fileIndex": b.file_index, "key": key})
-    except photo_store.PhotoStoreError:
-        await _remove_keys(job_id, saved)
-        raise
+    """사진을 저장소에 한꺼번에 올리고 [{"fileIndex", "key"}]를 돌려준다 (DB는 건드리지 않음 — OCR이 DB를 쓰는 동안 같이 돌릴 수 있게).
+    하나라도 실패하면 올린 것은 모두 지우고 PhotoStoreError를 올린다"""
+    saved = [
+        {"fileIndex": b.file_index, "key": photo_store.make_key(user_id, job_id, b.file_index, b.fmt)} for b in blobs
+    ]
+    results = await asyncio.gather(
+        *(photo_store.put(p["key"], b.content) for p, b in zip(saved, blobs, strict=True)), return_exceptions=True
+    )
+    errors = [r for r in results if isinstance(r, BaseException)]
+    if errors:
+        await _remove_keys(job_id, saved)  # 없는 키를 지워도 오류가 아님
+        first = errors[0]
+        raise (
+            first
+            if isinstance(first, photo_store.PhotoStoreError)
+            else photo_store.PhotoStoreError(type(first).__name__)
+        )
     return saved
 
 
@@ -59,6 +66,18 @@ async def save_job_photos(job_id: int, user_id: int, blobs: "list[Blob]") -> int
     saved = await upload_job_photos(job_id, user_id, blobs)
     await record_job_photos(job_id, saved)
     return len(saved)
+
+
+async def load_job_blobs(job: OcrJob) -> "list[Blob]":
+    """워커가 저장소에서 작업의 사진을 읽어 온다. 하나라도 못 읽으면 PhotoStoreError (일부만 읽고 진행하지 않음)"""
+    from app.services.prescriptions import Blob
+
+    entries = sorted(job.photos or [], key=lambda p: p["fileIndex"])
+    contents = await asyncio.gather(*(photo_store.get(p["key"]) for p in entries))
+    return [
+        Blob(p["fileIndex"], c, p["key"].rsplit(".", 1)[1], f"photo{p['fileIndex']}")
+        for p, c in zip(entries, contents, strict=True)
+    ]
 
 
 async def _delete_job_photos(job: OcrJob) -> int:

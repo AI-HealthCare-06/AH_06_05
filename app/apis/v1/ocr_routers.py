@@ -31,9 +31,9 @@ async def upload_prescriptions(
     raw = [(f.filename or "", await f.read(svc.MAX_BYTES + 1)) for f in files[: svc.MAX_FILES + 1]]
     blobs = svc.validate_uploads(raw)
     job = await svc.create_job(user, blobs)
-    background.add_task(
-        svc.process_job, job.id, user.id, blobs
-    )  # 사진 저장 · OCR 모두 응답 뒤에 (S3가 느려도 응답은 바로)
+    if not await svc.hand_to_worker(job.id, user.id, blobs):
+        # 워커를 안 쓰거나 못 쓸 때는 서버 안에서 (사진 저장 · OCR 모두 응답 뒤에 — S3가 느려도 응답은 바로)
+        background.add_task(svc.process_job, job.id, user.id, blobs)
     return JobCreatedResponse(job_id=job.id, status="queued")
 
 

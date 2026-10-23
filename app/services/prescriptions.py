@@ -36,7 +36,7 @@ from app.models.ocr import (
 )
 from app.models.users import ConsentType, User, UserConsent
 from app.services.drug_names import base_name
-from app.services.ocr import clova, llm_fix, numeric, photo_store, photos, precheck
+from app.services.ocr import clova, llm_fix, numeric, photo_store, photos, precheck, queue
 from app.services.ocr.mask import mask
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
 from app.services.ocr.pipeline import OcrRead, read
@@ -171,9 +171,9 @@ async def _upload_photos(job_id: int, user_id: int, blobs: list[Blob]) -> list[d
 
 
 async def process_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
-    """백그라운드 작업 전체. 사진 임시 저장(저장소 호출)과 OCR을 동시에 돌려, 업로드 응답도 OCR도 저장소(S3)가 느린 것을
+    """서버 안 백그라운드 작업 전체. 사진 임시 저장(저장소 호출)과 OCR을 동시에 돌려, 업로드 응답도 OCR도 저장소(S3)가 느린 것을
     기다리지 않는다. 저장소 호출은 DB를 쓰지 않고, 위치 기록(DB)은 OCR이 끝난 뒤에 한다.
-    run_job이 끝나면서 메모리의 사진을 비우므로 저장에는 복사본(같은 바이트를 가리킴)을 넘긴다"""
+    run_job이 끝나면서 메모리의 사진을 비우므로 저장에는 복사본(같은 바이트를 가리킴)을 넘긴다."""
     upload = asyncio.create_task(_upload_photos(job_id, user_id, [replace(b) for b in blobs]))
     try:
         await run_job(job_id, user_id, blobs)
@@ -184,6 +184,54 @@ async def process_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
             await photos.record_job_photos(job_id, saved)
         except Exception:
             logger.exception("사진 위치를 기록하지 못함 job=%s", job_id)
+
+
+async def hand_to_worker(job_id: int, user_id: int, blobs: list[Blob]) -> bool:
+    """OCR을 워커에 맡긴다: 사진을 저장소에 올려 위치를 적고 → 대기열에 넣는다. 맡겼으면 True.
+    꺼져 있거나(OCR_WORKER) 올리기 · 넣기에 실패하면 False — 부른 쪽이 서버 안 백그라운드로 처리한다 (사용자에게는 오류가 아니다).
+    사진을 올리는 동안 응답이 기다리지만 OCR_UPLOAD_WAIT_SEC(8초)에서 끊는다"""
+    if not (config.OCR_WORKER and photo_store.enabled()):
+        return False
+    try:
+        saved = await asyncio.wait_for(
+            photos.upload_job_photos(job_id, user_id, blobs), timeout=config.OCR_UPLOAD_WAIT_SEC
+        )
+        await photos.record_job_photos(job_id, saved)
+    except TimeoutError:
+        logger.warning("사진 저장이 %s초 안에 끝나지 않아 서버 안에서 처리 job=%s", config.OCR_UPLOAD_WAIT_SEC, job_id)
+        return False
+    except photo_store.PhotoStoreError as e:
+        logger.warning("사진을 저장하지 못해 서버 안에서 처리 job=%s (%s)", job_id, e)
+        return False
+    except Exception:
+        logger.exception("사진 저장 중 오류로 서버 안에서 처리 job=%s", job_id)
+        return False
+    return await queue.enqueue_ocr(job_id, user_id)
+
+
+async def run_queued_job(job_id: int, user_id: int, final: bool) -> bool:
+    """워커가 부르는 작업: 저장소에서 사진을 읽어 OCR을 돌린다. 다시 시도가 필요하면 True (final=False일 때만).
+    이미 끝난 작업이면 아무것도 하지 않는다 (같은 작업이 두 번 전달돼도 두 번 읽지 않게)"""
+    job = await OcrJob.get_or_none(id=job_id, user_id=user_id)
+    if job is None or job.status in (OcrJobStatus.DONE, OcrJobStatus.FAILED):
+        return False
+    try:
+        blobs = await photos.load_job_blobs(job)
+        if not blobs:
+            raise photo_store.PhotoStoreError("저장된 사진이 없습니다")
+    except Exception as e:
+        logger.warning(
+            "저장소에서 사진을 읽지 못함 job=%s (%s)",
+            job_id,
+            e if isinstance(e, photo_store.PhotoStoreError) else type(e).__name__,
+        )
+        if not final:
+            return True
+        await OcrJob.filter(id=job_id).update(
+            status=OcrJobStatus.FAILED, error_code="OCR_FAILED", finished_at=datetime.now(config.TIMEZONE)
+        )
+        return False
+    return await run_job(job_id, user_id, blobs, final=final)
 
 
 async def _check_daily_limit(user: User, new_files: int) -> None:
@@ -424,8 +472,9 @@ async def remember_file(user_id: int, file_hash: str, prescription_ids: list[int
         logger.exception("파일 해시 기록 실패 (작업은 계속)")
 
 
-async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
-    """백그라운드 작업. 어떤 오류가 나도 작업이 queued · running에 멈춰 있지 않게 마무리한다"""
+async def run_job(job_id: int, user_id: int, blobs: list[Blob], final: bool = True) -> bool:
+    """백그라운드 작업. 어떤 오류가 나도 작업이 queued · running에 멈춰 있지 않게 마무리한다.
+    final=False(워커의 첫 시도)일 때 CLOVA가 전부 실패했으면 실패로 닫지 않고 queued로 되돌린 뒤 True(다시 시도해 주세요)를 돌려준다"""
     try:
         await OcrJob.filter(id=job_id).update(status=OcrJobStatus.RUNNING)
         matcher, codes = await get_matcher(), await get_codes()
@@ -464,6 +513,11 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
                 duplicated.append({"fileIndex": i, "prescriptionId": saved_ids[first]})
         duplicated.sort(key=lambda d: d["fileIndex"])
         all_failed_service = saved == 0 and failures and all(f.startswith("F") for f in failures)
+        if all_failed_service and not final:
+            # 읽은 것이 하나도 저장되지 않았으므로 처음부터 다시 해도 안전하다 (화면에는 계속 "읽는 중"으로 보임)
+            logger.warning("CLOVA가 모두 실패해 다시 시도 job=%s", job_id)
+            await OcrJob.filter(id=job_id).update(status=OcrJobStatus.QUEUED)
+            return True
         await OcrJob.filter(id=job_id).update(
             status=OcrJobStatus.FAILED if all_failed_service else OcrJobStatus.DONE,
             error_code=",".join(failures)[:50] or None,
@@ -476,9 +530,10 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
             status=OcrJobStatus.FAILED, error_code="OCR_FAILED", finished_at=datetime.now(config.TIMEZONE)
         )
     finally:
-        # 사진 원본은 저장하지 않는다 (참조를 끊어 메모리에서 버림)
+        # 메모리의 사진은 버린다 (참조를 끊음). 저장소의 사진은 24시간 뒤 따로 지운다
         for b in blobs:
             b.content = b""
+    return False
 
 
 # ── O-5 · O-2 · O-3 · O-4 ────────────────────────────────────────────────────────────────────
