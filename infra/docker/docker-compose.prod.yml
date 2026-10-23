@@ -47,6 +47,7 @@ services:
     volumes:
       - static_volume:/app/templates
       - media_volume:/app/media
+      - ./data/safety.sqlite:/data/safety.sqlite:ro  # 안전성 점검 DB (서버 ~/project/data/safety.sqlite, 읽기 전용). 없으면 분석 2단계가 실패함
     restart: always
     ports:
       - "8000:8000"
