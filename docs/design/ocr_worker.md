@@ -30,11 +30,11 @@ ai-worker ◀─ 대기열 ── ocr_job(job_id, user_id) → S3에서 사진 �
 
 ## 배포 순서 (서버)
 
-1. main 병합 뒤 `bash scripts/deployment.sh` 에서 `1 2` (fastapi, ai_worker 둘 다 새로 빌드).
-2. 서버에서 `git pull`, `aerich upgrade` (15, 16번 마이그레이션).
-3. `.env`에 `PHOTO_STORAGE=s3`, `PHOTO_S3_BUCKET=ah06-5-prescription-photos`를 넣고 컨테이너를 새 이미지로 다시 띄운다. 이때 `OCR_WORKER`는 아직 `false`.
+1. 내 컴퓨터의 `envs/.prod.env`(깃에 올라가지 않는 파일)를 먼저 고친다: `PHOTO_STORAGE=s3`, `PHOTO_S3_BUCKET=ah06-5-prescription-photos`, `OCR_WORKER=false`(아직). `scripts/deployment.sh`가 이 파일을 서버의 `~/project/.env`로 **통째로 덮어쓰므로**, 서버에서 `.env`만 고치면 다음 배포 때 사라진다. 서버에서 `cp ~/project/.env ~/project/.env.bak`으로 백업해 둔다.
+2. main 병합 뒤 `bash scripts/deployment.sh`에서 `1 2`(fastapi, ai_worker 둘 다 새로 빌드). https 질문에는 `1`(http 사용중).
+3. 바로 서버에서 `docker exec fastapi uv run --no-sync aerich upgrade` (15, 16번 마이그레이션. 컨테이너가 뜬 뒤 올리기 전까지는 파일 해시 표가 없어 업로드가 실패할 수 있으니 이어서 바로 한다).
 4. `docker logs ai-worker`에 `Starting worker for 3 functions: example_echo_task, ocr_job, cron:purge_photos`가 보이는지, `docker stats ai-worker`가 768MB 한도에 여유가 있는지 본다.
-5. `.env`의 `OCR_WORKER=true`로 바꾸고 fastapi를 다시 띄운다.
+5. `envs/.prod.env`의 `OCR_WORKER=true`로 바꾸고 다시 배포한다(fastapi만).
 6. 처방전 1장을 올려 본다: 결과가 나오고 → S3 `ocr/…`에 파일이 생기고 → 같은 파일을 다시 올리면 CLOVA를 부르지 않음(로그에 "지난번에 올린 같은 파일"). 워커 로그에 `ocr_job`이 찍혀야 워커가 읽은 것이다 (안 찍히면 서버 안 처리로 바뀐 것).
 7. 앱 안내문과 NFR-011은 6번까지 확인한 뒤에만 바꾼다.
 
