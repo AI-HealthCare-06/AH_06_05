@@ -37,7 +37,7 @@ export default function Result({ tab: initTab }: { tab?: TabKey }) {
         <Text style={T.caption}>{TODAY.short} 분석</Text>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text style={T.bodyM}>처방전 {s.rxs.length}장 · 약 {cnt}개</Text>
-          {ws.length ? <Chip label={sev} tone={n('danger') ? 'danger' : 'caution'} /> : <Chip label="확인된 위험 없음" tone="success" />}
+          {ws.length ? <Chip label={sev} tone={n('danger') ? 'danger' : 'caution'} /> : <Chip label="걸린 항목 없음" tone="success" />}
         </View>
         <Text style={T.caption}>{s.rxs.map((r) => r.hospital).join(' · ')}</Text>
       </Card>
@@ -81,7 +81,7 @@ function Safety() {
       <View style={{ marginTop: 12 }}>
         <Excluded />
         <Card tone="success" style={{ marginTop: 12 }}>
-          <Text style={T.heading}>확인된 위험이 없어요</Text>
+          <Text style={T.heading}>점검 기준에서 걸린 항목이 없어요</Text>
           <Text style={[T.caption, { color: C.text, marginTop: 6 }]}>점검한 약 {cnt}개에서 같이 먹으면 안 되는 조합을 찾지 못했어요.</Text>
         </Card>
         <Section title="이렇게 점검했어요">

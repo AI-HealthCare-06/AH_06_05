@@ -502,7 +502,7 @@ async def put_diseases(user: User, analysis_id: int, codes: list[str]) -> dict[s
 # ── R-7 지난 기록 목록 ────────────────────────────────────────────────────────────────────────
 LIST_DEFAULT_SIZE = 20
 LIST_MAX_SIZE = 50
-RESULT_LABELS = {"running": "분석 중", "failed": "분석 실패", "clean": "확인된 위험 없음"}
+RESULT_LABELS = {"running": "분석 중", "failed": "분석 실패", "clean": "걸린 항목 없음"}
 
 
 def _encode_cursor(analysis_id: int) -> str:

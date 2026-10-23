@@ -3,6 +3,7 @@ services:
   redis:
     image: redis:alpine
     container_name: redis
+    restart: always
     networks:
       - ws
     ports:
@@ -76,6 +77,7 @@ services:
   nginx:
     container_name: nginx
     image: nginx:latest
+    restart: always
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
       - static_volume:/vol/web/static

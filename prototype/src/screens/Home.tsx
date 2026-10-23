@@ -72,7 +72,7 @@ export default function Home() {
         <Card onPress={() => go('result')} style={{ gap: 6 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
             <Text style={[T.bodyM, { flex: 1 }]}>{s.rxs.map((r) => r.hospital).join(' · ')} 처방전 · 약 {s.items.filter((i) => i.edi && i.status !== 'excluded').length}개</Text>
-            {n ? <Chip label={`확인 필요 ${n}건`} tone="caution" /> : <Chip label="확인된 위험 없음" tone="success" />}
+            {n ? <Chip label={`확인 필요 ${n}건`} tone="caution" /> : <Chip label="걸린 항목 없음" tone="success" />}
           </View>
           {pending > 0 && <Text style={T.caption}>점검에서 빠진 약 {pending}개</Text>}
           <Text style={link}>결과 보기 {'>'}</Text>
@@ -94,8 +94,8 @@ export function History() {
   const [del, setDel] = useState<string | null>(null);
   const [hidden, setHidden] = useState<string[]>([]);
   const rows = [
-    ...(s.analysis && !s.analysisDeleted ? [{ id: 'now', date: '9월 29일 (월)', title: `${s.rxs.map((r) => r.hospital).join(' · ')} 처방전 · 약 ${s.items.filter((i) => i.edi && i.status !== 'excluded').length}개`, chip: s.analysis.warnings.length ? [`확인 필요 ${s.analysis.warnings.length}건`, 'caution'] : ['확인된 위험 없음', 'success'], sub: '고혈압 · 당뇨 · 고지혈증', action: '결과 보기 >', fail: false }] : []),
-    { id: 'p1', date: '9월 2일 (화)', title: '△△의원 처방전 · 약 2개 (예시)', chip: ['확인된 위험 없음', 'success'], sub: '고지혈증', action: '결과 보기 >', fail: false },
+    ...(s.analysis && !s.analysisDeleted ? [{ id: 'now', date: '9월 29일 (월)', title: `${s.rxs.map((r) => r.hospital).join(' · ')} 처방전 · 약 ${s.items.filter((i) => i.edi && i.status !== 'excluded').length}개`, chip: s.analysis.warnings.length ? [`확인 필요 ${s.analysis.warnings.length}건`, 'caution'] : ['걸린 항목 없음', 'success'], sub: '고혈압 · 당뇨 · 고지혈증', action: '결과 보기 >', fail: false }] : []),
+    { id: 'p1', date: '9월 2일 (화)', title: '△△의원 처방전 · 약 2개 (예시)', chip: ['걸린 항목 없음', 'success'], sub: '고지혈증', action: '결과 보기 >', fail: false },
     { id: 'p2', date: '8월 14일 (목)', title: '사진을 읽지 못했어요 (예시)', chip: ['분석 실패', 'danger'], sub: '원본 사진을 저장하지 않아 다시 찍어야 해요', action: '다시 분석하기 >', fail: true },
   ].filter((r) => !hidden.includes(r.id));
 

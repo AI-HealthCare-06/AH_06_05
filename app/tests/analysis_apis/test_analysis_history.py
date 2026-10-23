@@ -30,7 +30,7 @@ class TestHistoryList(AnalysisCase):
             second = (await self.start(client, headers, clean)).json()["analysisId"]
             items = (await client.get("/api/v1/analyses", headers=headers)).json()["items"]
         assert [i["analysisId"] for i in items] == [second, first]
-        assert items[0]["resultLabel"] == "확인된 위험 없음" and items[0]["hospitals"] == ["△△의원"]
+        assert items[0]["resultLabel"] == "걸린 항목 없음" and items[0]["hospitals"] == ["△△의원"]
         assert items[0]["drugCount"] == 1 and items[0]["status"] == "done" and items[0]["diseaseNames"]
         assert items[1]["resultLabel"] == "확인 필요 1건" and items[1]["drugCount"] == 2
         assert items[1]["hospitals"] == ["○○내과"] and items[1]["createdAt"]
