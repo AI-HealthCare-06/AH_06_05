@@ -86,6 +86,25 @@ class Prescription(models.Model):
         table = "prescriptions"
 
 
+class PrescriptionFileHash(models.Model):
+    """올린 파일의 SHA-256 ↔ 그 파일에서 나온 처방전. 같은 사용자가 같은 파일을 다시 올렸는지 OCR을 부르기 전에 보는 용도.
+    사진을 지운 뒤에도 남고, 처방전이나 사용자를 지우면(탈퇴) 함께 지워진다. 여러 쪽 PDF는 쪽마다 한 줄"""
+
+    id = fields.BigIntField(primary_key=True)
+    user: fields.ForeignKeyRelation["User"] = fields.ForeignKeyField(
+        "models.User", related_name="file_hashes", on_delete=fields.CASCADE
+    )
+    prescription: fields.ForeignKeyRelation["Prescription"] = fields.ForeignKeyField(
+        "models.Prescription", related_name="file_hashes", on_delete=fields.CASCADE
+    )
+    file_hash = fields.CharField(max_length=64, db_index=True, description="올린 파일의 SHA-256")
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "prescription_file_hashes"
+        unique_together = (("prescription", "file_hash"),)
+
+
 class PrescriptionDisease(models.Model):
     """처방전 질병분류기호 (주상병 + 부상병 여러 개). ERD 복합 PK → id + unique"""
 

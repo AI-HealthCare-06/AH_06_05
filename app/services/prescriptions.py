@@ -29,6 +29,7 @@ from app.models.ocr import (
     OcrJobStatus,
     Prescription,
     PrescriptionDisease,
+    PrescriptionFileHash,
     PrescriptionItem,
     PrescriptionItemCandidate,
     QualityFlag,
@@ -335,7 +336,9 @@ class FileOutcome:
     first_id: int | None = None  # 이 파일에서 처음 저장했거나 이미 있던 처방전 ID
 
 
-async def _read_file(job_id: int, user_id: int, b: Blob, matcher: NameMatcher, codes: dict[str, str]) -> FileOutcome:
+async def _read_file(
+    job_id: int, user_id: int, b: Blob, matcher: NameMatcher, codes: dict[str, str], file_hash: str | None = None
+) -> FileOutcome:
     """사진(또는 PDF) 1개를 읽어 저장한다. 여러 쪽 PDF는 쪽마다 처방전 하나로 읽는다 (첫 쪽만 읽고 나머지를 말없이 버리지 않게)"""
     try:
         data = await clova.recognize(b.content, b.fmt, b.name)
@@ -344,6 +347,7 @@ async def _read_file(job_id: int, user_id: int, b: Blob, matcher: NameMatcher, c
         return FileOutcome(failures=[f"F{b.file_index}"])
     out = FileOutcome(failures=[])
     page_failures: list[str] = []
+    rx_ids: list[int] = []  # 이 파일에서 나온(새로 저장했거나 이미 있던) 처방전
     for page in _pages(data):
         # 이름 맞추기가 CPU를 쓰므로 서버가 멈추지 않게 별도 스레드에서
         res = await asyncio.to_thread(read, page, matcher, codes)
@@ -359,18 +363,35 @@ async def _read_file(job_id: int, user_id: int, b: Blob, matcher: NameMatcher, c
         if existing is not None:
             logger.info("이미 있는 처방전이라 저장하지 않음 job=%s file=%s rx=%s", job_id, b.file_index, existing.id)
             out.duplicated.append({"fileIndex": b.file_index, "prescriptionId": existing.id})
+            rx_ids.append(existing.id)
             if out.first_id is None:
                 out.first_id = existing.id
             continue
         rx_id = await save_read(user_id, job_id, b.file_index, res, key)
+        rx_ids.append(rx_id)
         out.saved += 1
         if out.first_id is None:
             out.first_id = rx_id
+    if file_hash and rx_ids and not page_failures:
+        # 모든 쪽을 읽었을 때만 파일 해시를 남긴다 (못 읽은 쪽이 있으면 다음에 다시 올렸을 때 다시 읽게). 이미 있던 처방전에도 남겨
+        # 바이트만 다른 같은 처방전(다시 찍은 사진)을 한 번 거른 뒤에는 같은 파일이 OCR 없이 바로 걸리게 한다
+        await remember_file(user_id, file_hash, rx_ids)
     if out.first_id is None and page_failures:
         out.failures.append(
             page_failures[0]
         )  # 한 쪽도 못 읽었을 때만 실패로 알린다 (처방전이 아닌 쪽이 섞인 PDF는 읽힌 쪽만 쓴다)
     return out
+
+
+async def remember_file(user_id: int, file_hash: str, prescription_ids: list[int]) -> None:
+    """파일 해시 ↔ 처방전 기록. 기록 실패는 작업을 실패시키지 않는다 (다음에 같은 파일을 올리면 한 번 더 읽을 뿐)"""
+    try:
+        for rx_id in dict.fromkeys(prescription_ids):
+            await PrescriptionFileHash.get_or_create(
+                prescription_id=rx_id, file_hash=file_hash, defaults={"user_id": user_id}
+            )
+    except Exception:
+        logger.exception("파일 해시 기록 실패 (작업은 계속)")
 
 
 async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
@@ -380,13 +401,28 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob]) -> None:
         matcher, codes = await get_matcher(), await get_codes()
         failures: list[str] = []
         saved = 0
-        # OCR(유료 호출)을 부르기 전에 너무 작은 · 흐린 사진, 똑같은 사진을 거름 (이미지를 여는 계산이라 별도 스레드에서)
+        # OCR(유료 호출)을 부르기 전에 너무 작은 사진, 이 업로드 안의 똑같은 사진을 거름 (해시 계산이라 별도 스레드에서)
         screened = await asyncio.to_thread(precheck.screen, blobs)
-        failures += [f"Q{i}" for i in sorted([*screened.too_small, *screened.blurry])]
+        failures += [f"Q{i}" for i in sorted(screened.too_small)]
         saved_ids: dict[int, int] = {}  # 사진 번호 → 처방전 ID (새로 저장했거나 이미 있던 것)
         duplicated: list[dict[str, int]] = []
         for b in screened.ready:
-            outcome = await _read_file(job_id, user_id, b, matcher, codes)
+            # 1단계 중복 검사: 같은 사용자가 지난번에 올린 파일과 바이트가 같으면 OCR을 부르지 않고 기존 결과를 쓴다
+            # (해시는 사진을 지운 뒤에도 prescriptions에 남는다). 지난번에 읽지 못했다면 처방전이 없으니 다시 읽는다
+            digest = screened.hashes[b.file_index]
+            before = list(
+                await PrescriptionFileHash.filter(user_id=user_id, file_hash=digest)
+                .order_by("prescription_id")
+                .values_list("prescription_id", flat=True)
+            )
+            if before:
+                logger.info(
+                    "지난번에 올린 같은 파일이라 OCR을 부르지 않음 job=%s file=%s rx=%s", job_id, b.file_index, before
+                )
+                duplicated += [{"fileIndex": b.file_index, "prescriptionId": rx_id} for rx_id in before]
+                saved_ids[b.file_index] = before[0]
+                continue
+            outcome = await _read_file(job_id, user_id, b, matcher, codes, digest)
             failures += outcome.failures
             saved += outcome.saved
             duplicated += outcome.duplicated

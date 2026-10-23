@@ -44,10 +44,6 @@ class Config(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET_KEY: str = ""
 
-    # OCR 호출 전 흐린 사진 거르기: 글자가 가장 많은 칸 3개의 선명도가 이보다 낮으면 다시 찍게 함 (0이면 끔)
-    # 근거: 10/13 시험 사진에서 못 읽힌 흐린 사진 11, 흐려도 읽힌 사진 232, 정상 사진 940 이상 (docs/design/ocr_precheck.md)
-    OCR_MIN_SHARPNESS: float = 100.0
-
     # 사용자 한 명이 하루(한국 시간 자정부터)에 올릴 수 있는 사진 수 (0이면 끔). 처방전이 아닌 사진을 OCR 호출 전에 가려내는 것이
     # 어려워서(docs/design/ocr_precheck.md 시도 결과) CLOVA 호출 비용을 막는 안전장치로 둠
     OCR_DAILY_FILE_LIMIT: int = 30
