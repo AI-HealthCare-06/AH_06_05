@@ -89,3 +89,6 @@ docker-compose.override.yml
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 로컬 Redis 저장 파일 (redis-server를 저장소 폴더에서 띄우면 생김)
+dump.rdb
