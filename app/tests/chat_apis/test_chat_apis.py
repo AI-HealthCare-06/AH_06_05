@@ -262,6 +262,20 @@ class TestAsk(ChatCase):
             q, a = await self.items(client, headers, sid)
         assert a["id"] == mid and a["replyTo"] == q["id"] and a["status"] == "done"
 
+    async def test_no_evidence_reason_is_logged_without_question(self):
+        """근거 없음은 검색 이유를 로그에 남겨 서버에서 원인을 찾게 함 (10/25 서버 확인). 질문 글과 약 이름은 남기지 않음"""
+        self.fake.reply = Reply(
+            "no_evidence", "근거를 찾지 못했어요.", Route(kind="medication"), evidence_reason="no_candidate"
+        )
+        with self.assertLogs(chats.logger, "WARNING") as logs:
+            async with self.client() as client:
+                headers, _ = await self.auth(client, "a11@example.com")
+                sid = await self.session(client, headers)
+                await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+        line = "\n".join(logs.output)
+        assert "reason=no_candidate" in line and "kind=medication" in line and "drugs=0" in line
+        assert "혈압약" not in line
+
     async def test_slow_answer_is_cut_and_row_deleted(self):
         """답 만들기는 25초 안에서 끊음. 30초가 지나 새로 만드는 답과 겹치지 않게 (10/22)"""
         self.fake.before = lambda: asyncio.sleep(1)
