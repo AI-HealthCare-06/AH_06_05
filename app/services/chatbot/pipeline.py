@@ -118,7 +118,8 @@ class Reply:
     content: str | None
     route: Route
     sources: list[str] = field(default_factory=list)  # 답에 쓴 근거 번호
-    evidence_reason: str | None = None  # 근거 검색이 빈 목록일 때 이유 (rag.search reason)
+    # 근거 검색이 빈 목록일 때 이유 (rag.search reason), 출력 가드레일이면 output_guard:<종류>
+    evidence_reason: str | None = None
     usage: Usage = field(default_factory=Usage)
 
 
@@ -149,4 +150,6 @@ async def answer(
         draft = await write(question, cls, info, past, first_turn, found, client, usage)
     except LLMError:
         return Reply("error", None, r, evidence_reason=found.reason if found else None, usage=usage)
-    return Reply(draft.answer_type, draft.content, r, draft.sources, found.reason if found else None, usage)
+    # 출력 가드레일에 걸렸으면 그 이유를 근거 없음 이유 자리에 (#124가 병합되면 대화 API가 메시지 번호와 같이 로그에 남김)
+    reason = f"output_guard:{draft.blocked}" if draft.blocked else (found.reason if found else None)
+    return Reply(draft.answer_type, draft.content, r, draft.sources, reason, usage)

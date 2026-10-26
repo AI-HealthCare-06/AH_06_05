@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from app.services.chatbot.answer import NO_EVIDENCE, REFER, clean_text
+from app.services.chatbot.answer import NO_EVIDENCE, REFER, clean_text, output_guard
 from app.services.chatbot.context import FixedInfo, UserDrug
 from app.services.chatbot.llm import LLMError, Usage
 from app.services.chatbot.pipeline import answer
@@ -204,3 +204,312 @@ def test_clean_text_removes_marks():
     """글 규칙: 마크다운 기호, 이모지, 줄표, 가운뎃점을 지움 (설계 메모 7-12)"""
     assert clean_text("**자몽**은 피해요 — 약사 · 의사에게 😀") == "자몽은 피해요, 약사, 의사에게"
     assert clean_text("- 첫째\n# 제목") == "첫째\n제목"
+
+
+# ── 출력 가드레일: 근거에 없는 숫자나 복용 지시 (10/20 멘토링 수인 안, 10/25 정리 뒤에 두고 걸리면 근거 없음 고정 문구) ──
+async def _guarded(content: str, cls: dict[str, Any] | None = None):
+    reply = {"answer_type": "normal", "content": content, "used_sources": ["D:641900040:S3"]}
+    return await answer("자몽주스 마셔도 돼요?", S0, [], FakeChat(classify=cls, reply=reply), search=FakeSearch())
+
+
+@sync
+async def test_output_guard_blocks_number_not_in_evidence(caplog):
+    r = await _guarded("자몽주스는 하루 3잔까지는 괜찮아요.")
+    assert (r.answer_type, r.content, r.sources) == ("no_evidence", NO_EVIDENCE, [])
+    assert r.evidence_reason == "output_guard:number"  # 대화 API 로그(메시지 번호와 같이)에 이유가 남게
+    assert "출력 가드레일" in caplog.text and "자몽" not in caplog.text  # 답 글은 로그에 남기지 않음
+
+
+@sync
+async def test_output_guard_allows_numbers_from_prescription():
+    """고정 정보(처방대로 먹는 법, 약 이름)에 있는 숫자와 때는 근거로 봄"""
+    r = await _guarded("노바스크정5밀리그람은 1일 1회 아침에 드세요. 자몽주스는 피해 주세요.")
+    assert r.answer_type == "normal"
+
+
+@sync
+async def test_output_guard_allows_safety_numbers():
+    assert (await _guarded("숨이 차면 바로 119에 전화해 주세요.")).answer_type == "normal"
+
+
+@sync
+async def test_output_guard_reads_korean_count_words():
+    assert (await _guarded("다이아벡스는 하루 두 번 드세요.")).answer_type == "normal"  # 처방 1일 2회
+    assert (await _guarded("한 번에 세 알 드셔도 괜찮아요.")).answer_type == "no_evidence"
+
+
+@sync
+async def test_output_guard_blocks_dose_change_not_in_evidence():
+    assert (await _guarded("어지러우면 노바스크를 끊으세요.")).answer_type == "no_evidence"
+    assert (await _guarded("혈압이 높으면 약을 늘려도 돼요.")).answer_type == "no_evidence"
+    assert (await _guarded("노바스크를 임의로 끊지 마세요.")).answer_type == "normal"  # 하지 말라는 말은 지시가 아님
+
+
+@sync
+async def test_output_guard_blocks_timing_not_in_prescription_or_evidence():
+    assert (await _guarded("다이아벡스는 자기 전에 드세요.")).answer_type == "no_evidence"  # 처방은 식후
+
+
+@sync
+async def test_output_guard_on_refer_keeps_refer_copy_only():
+    cls = classified(category="refer", refer_kind="next_visit")
+    r = await _guarded("신장이 걱정되면 하루 4번으로 나눠 드세요.", cls)
+    assert (r.answer_type, r.content) == ("refer", REFER["next_visit"])
+
+
+@sync
+async def test_output_guard_ignores_lifestyle_change_next_to_drug():
+    """바꾸라는 말은 대상이 약일 때만 (10/25 점검: 약 이름과 같은 문장의 "술을 줄이세요"를 거르던 것)"""
+    assert (await _guarded("다이아벡스를 드시는 동안 술을 줄이세요.")).answer_type == "normal"
+    assert (await _guarded("약 드시는 동안 담배를 끊으세요.")).answer_type == "normal"
+    assert (await _guarded("노바스크는 다른 약으로 바꾸세요.")).answer_type == "no_evidence"
+
+
+@sync
+async def test_output_guard_ignores_list_numbers():
+    r = await _guarded("1. 자몽주스는 피해 주세요.\n2. 노바스크는 아침에 드세요.\n3. 물을 충분히 마셔요.")
+    assert r.answer_type == "normal"
+
+
+@sync
+async def test_output_guard_counts_only_dose_words():
+    """세는 말은 먹는 양과 "하루 ○ 번"만 숫자로 봄 (근거도 고정 정보도 없는 범위 밖 응대에서 "한 번 더"를 거르던 것)"""
+    info = FixedInfo(age=None)
+    assert output_guard("궁금한 점이 있으면 한 번 더 물어봐 주세요.", [], info) is None
+    assert output_guard("하루 세 번 드세요.", [], info) == "number"
+    assert output_guard("한 번에 두 알 드세요.", [], info) == "number"
+
+
+@sync
+async def test_missed_dose_rule_reads_only_drug_permit():
+    """약을 빠뜨린 질문은 허가정보 문장에 그 안내가 있을 때만 답함. 팩트표 "끼니 거르지 않기"를 그 안내로 보던 것 (10/25 실제 답 확인)"""
+    meal = Evidence(
+        "F:DM2:life:규칙적인 식사", "lifestyle_fact", None, "DM2", None, "규칙적인 식사", "끼니 거르지 않기"
+    )
+    reply = {"answer_type": "normal", "content": "생각났을 때 바로 드세요.", "used_sources": []}
+    r = await answer("다이아벡스를 한 번 깜빡했어요", S0, [], FakeChat(reply=reply), search=FakeSearch(found(meal)))
+    assert (r.answer_type, r.content) == ("no_evidence", NO_EVIDENCE)
+
+
+@sync
+async def test_missed_dose_rule_reads_forgot_words():
+    """ "잊었어요"도 빠뜨린 질문이고, 허가정보의 "잊은 경우"도 그 안내로 봄 (10/25 점검)"""
+    reply = {"answer_type": "normal", "content": "생각났을 때 바로 드세요.", "used_sources": []}
+    r = await answer("약 먹는 걸 잊었어요", S0, [], FakeChat(reply=reply), search=FakeSearch())
+    assert r.answer_type == "no_evidence"
+    forgot = Evidence(
+        "D:644300010:P2", "drug_permit", "644300010", None, "P", "용법용량", "복용을 잊은 경우 생각난 즉시 복용한다"
+    )
+    r = await answer("약 먹는 걸 잊었어요", S0, [], FakeChat(reply=reply), search=FakeSearch(found(forgot)))
+    assert r.answer_type == "normal"
+
+
+def test_output_guard_timing_only_on_instructions():
+    """먹는 때는 시키는 말에만 ("먹으면 졸릴 수 있어요" 같은 설명은 거르지 않음, 10/25 점검)"""
+    assert output_guard("저녁에 약을 먹으면 졸릴 수 있어요.", [GRAPEFRUIT], S0) is None
+    assert output_guard("다이아벡스는 자기 전에 드시면 돼요.", [GRAPEFRUIT], S0) == "timing"
+    assert output_guard("노바스크는 공복에 먹으세요.", [GRAPEFRUIT], S0) == "timing"
+
+
+def test_output_guard_timing_reads_previous_drug_sentence():
+    """약 이름을 앞 문장에 쓰고 다음 문장에서 먹는 때를 말해도 봄 (10/25 점검)"""
+    assert output_guard("노바스크는 혈압약이에요. 자기 전에 드셔도 괜찮아요.", [GRAPEFRUIT], S0) == "timing"
+    assert output_guard("자몽주스는 피해 주세요. 물은 아침에 드셔도 돼요.", [GRAPEFRUIT], S0) is None
+
+
+@sync
+async def test_forgetting_drug_name_is_not_missed_dose():
+    """ "잊"은 약을 먹는 것을 잊은 말일 때만 빠뜨린 질문으로 봄 ("약 이름을 잊었어요"는 아님, 10/25 점검)"""
+    reply = {
+        "answer_type": "normal",
+        "content": "노바스크정5밀리그람과 다이아벡스정500밀리그램을 드시고 있어요.",
+        "used_sources": [],
+    }
+    r = await answer("약 이름을 잊었어요", S0, [], FakeChat(reply=reply), search=FakeSearch())
+    assert r.answer_type == "normal"
+    r = await answer("아침 약을 잊었어요", S0, [], FakeChat(reply=reply), search=FakeSearch())
+    assert r.answer_type == "no_evidence"
+
+
+@sync
+async def test_skipping_meal_is_not_missed_dose():
+    """빠뜨린 약 규칙은 약 이야기일 때만 (질문에 약이나 약 이름, 또는 분류가 약, 상담). 끼니를 거르는 질문은 팩트표로 답함 (10/25 점검)"""
+    meal = Evidence(
+        "F:DM2:life:규칙적인 식사",
+        "lifestyle_fact",
+        None,
+        "DM2",
+        None,
+        "규칙적인 식사",
+        "끼니 거르지 않기(저혈당 위험)",
+    )
+    reply = {"answer_type": "normal", "content": "끼니를 거르면 저혈당 위험이 있어요.", "used_sources": []}
+    cls = classified(category="lifestyle")
+    for q in ("끼니를 거르면 안 되나요?", "끼니를 거르면 어떻게 되는지 알려 주세요"):
+        r = await answer(q, S0, [], FakeChat(classify=cls, reply=reply), search=FakeSearch(found(meal)))
+        assert r.answer_type == "normal", q
+    # 약 이름이 없어도 분류가 약이면 빠뜨린 질문 ("깜빡했어요"만 보낸 경우)
+    r = await answer("어제 깜빡했어요", S0, [], FakeChat(reply=reply), search=FakeSearch(found(meal)))
+    assert r.answer_type == "no_evidence"
+
+
+MISSED_QUESTIONS = (
+    "복용하는 걸 잊었어요",
+    "오늘 약 먹는 걸 까먹었어요",
+    "약 먹는 거 잊었어요",
+    "어제 약을 못 챙겼어요",
+    "약을 잊으면 어떻게 해요?",  # 빠뜨렸을 때를 묻는 말은 잡음 ("잊을까 봐"는 아님)
+    "어제 약을 안 챙겨 먹었어요",
+    "어제 약을 못 챙겨 먹었어요",
+    "약 먹는 시간을 놓쳤어요",
+    "약을 하루 걸렀어요",
+    "당뇨약을 거른 것 같아요",  # "거른" (10/26 수인 결정)
+    "약 먹었는지 기억이 안 나요",  # 두 번 먹을 수 있어 빠뜨린 질문처럼 다룸 (10/25 수인 결정)
+    "약 먹었는지 모르겠어요",
+    # 약이 없어도 "잊어버렸", "잊고", "잊었"만으로 봄 (main 규칙이 잡던 것, 10/26 수인 결정)
+    "아침 거 잊어버렸어요",
+    "어제 잊고 그냥 잤어요",
+    "저녁 걸 잊었어요",
+    "약을 잊어먹었어요",
+)
+NOT_MISSED_QUESTIONS = (
+    "약 이름을 까먹었어요",
+    "약 먹는 법을 잊었어요",
+    "약 이름을 잊어버렸어요",
+    "약을 잊어버릴까 봐 걱정이에요",
+    "약을 잊지 않으려면 어떻게 해요?",
+    "약을 잊지 말라고 알려 주세요",
+    "약국 가는 시간을 놓쳤어요",
+    "약 먹고 버스를 놓쳤어요",
+)
+
+
+def _typo_variants(q: str) -> list[str]:
+    """고령 사용자 입력처럼 바꾼 글: 붙여 씀, 글자마다 띄움, 받침 ㅆ을 ㅅ으로, 끝말 "요"를 "여"로 (10/25 점검)"""
+
+    def no_ss(s: str) -> str:
+        return "".join(
+            chr(ord(c) - 1) if 0 <= ord(c) - 0xAC00 < 11172 and (ord(c) - 0xAC00) % 28 == 20 else c for c in s
+        )
+
+    joined = q.replace(" ", "")
+    return [q, joined, " ".join(joined), no_ss(q), q.replace("요", "여"), no_ss(joined)]
+
+
+@sync
+async def test_missed_dose_question_words():
+    """빠뜨린 질문 낱말 (10/25 다시 의심, 점검: 놓치던 말과 잘못 잡던 말). 띄어쓰기와 흔한 오타가 있어도 같게"""
+    reply = {"answer_type": "normal", "content": "걱정하지 않으셔도 돼요.", "used_sources": []}
+    for q in MISSED_QUESTIONS:
+        for v in _typo_variants(q):
+            r = await answer(v, S0, [], FakeChat(reply=reply), search=FakeSearch())
+            assert r.answer_type == "no_evidence", v
+    for q in NOT_MISSED_QUESTIONS:
+        for v in _typo_variants(q):
+            r = await answer(v, S0, [], FakeChat(reply=reply), search=FakeSearch())
+            assert r.answer_type == "normal", v
+
+
+# 10/25 실제 답: 되물음 다음 차례("노바스크요")에 허가정보에 없는 빠뜨린 약 지시가 나감
+MISSED_ADVICE = (
+    "노바스크정은 고혈압에 쓰는 약이에요. 약을 안 챙겨 먹었다면, 다음 복용 시간에 바로 복용하세요. "
+    "하지만, 복용을 잊은 경우에는 두 배로 먹지 말고, 정해진 시간에 맞춰 복용하세요."
+)
+
+
+def test_output_guard_blocks_missed_dose_advice_not_in_permit():
+    """답이 빠뜨린 상황을 말하면서 먹으라고 하는데 허가정보에 그 안내가 없으면 거름 (10/25 점검)"""
+    assert output_guard(MISSED_ADVICE, [GRAPEFRUIT], S0) == "missed"
+    assert output_guard("생각났을 때 바로 드세요.", [GRAPEFRUIT], S0) == "missed"
+    assert output_guard("약을 안 챙겨 먹었다면, 다음 복용 시간에 바로 복용하세요.", [GRAPEFRUIT], S0) == "missed"
+    assert output_guard("복용 시간을 놓치셨다면 바로 드세요.", [GRAPEFRUIT], S0) == "missed"
+    # 10/25 실제 답 ("다이아벡스요" 차례): "먹은", "드신" 꼴
+    assert (
+        output_guard("약을 안 챙겨 먹은 경우, 다음 복용 시간에 정상적으로 복용하시면 돼요.", [GRAPEFRUIT], S0)
+        == "missed"
+    )
+    assert output_guard("약을 못 챙겨 드신 경우에는 다음 복용 시간에 드세요.", [GRAPEFRUIT], S0) == "missed"
+    assert output_guard("약을 빠뜨리지 않도록 약통을 쓰세요.", [GRAPEFRUIT], S0) is None  # 먹으라는 말이 없음
+    # 하지 않도록 하는 조언이나 주의는 거르지 않음 (10/25 점검: 줄기만 넣어 잘못 잡던 것)
+    for s in (
+        "깜빡하지 않도록 알람을 맞추고 식후에 드세요.",
+        "빼먹지 않게 약통에 넣고 식후에 드세요.",
+        "잊어버리지 않도록 식후에 드세요.",
+        "약을 빠뜨리지 않도록 약통에 넣고 식후에 드세요.",
+        "약을 안 챙겨 드시면 혈압이 오를 수 있으니 매일 식후에 드세요.",
+        "약을 안 챙겨 드신다면 혈압이 오를 수 있으니 매일 식후에 드세요.",  # "드신"을 더한 뒤 점검
+        "식사를 놓친 경우에는 약을 드시기 전에 간단히 드세요.",  # 끼니 이야기
+    ):
+        assert output_guard(s, [GRAPEFRUIT], S0) is None, s
+    forgot = Evidence(
+        "D:644300010:P2", "drug_permit", "644300010", None, "P", "용법용량", "복용을 잊은 경우 생각난 즉시 복용한다"
+    )
+    assert output_guard("복용을 잊은 경우 생각났을 때 바로 드세요.", [forgot], S0) is None
+
+
+@sync
+async def test_missed_dose_advice_after_clarify_turn():
+    """되물음 다음 차례는 질문에 빠뜨린 말이 없어도 답에서 거름 (10/25 실제 답)"""
+    past = [
+        {"role": "user", "content": "어제 약을 안 챙겨 먹었는데 어떡해요?"},
+        {"role": "assistant", "content": "어떤 약을 말씀하시는 건가요?"},
+    ]
+    reply = {"answer_type": "normal", "content": MISSED_ADVICE, "used_sources": []}
+    r = await answer("노바스크요", S0, past, FakeChat(reply=reply), search=FakeSearch())
+    assert (r.answer_type, r.evidence_reason) == ("no_evidence", "output_guard:missed")
+
+
+def test_output_guard_blocks_stop_taking():
+    """약을 먹지 말라는 말은 근거에 없으면 거름 (10/26 수인 결정, 함께 먹지 말라는 경고도 AI가 만들지 않음 NFR-032)"""
+    for s in (
+        "노바스크는 복용하지 마세요.",
+        "노바스크는 드시지 마세요.",
+        "약을 먹지 마세요.",
+        "오늘은 약을 드시지 말고 병원에 가세요.",
+        "술과 함께 약을 드시지 마세요.",  # 받아들인 대가 (10/26 수인 결정)
+    ):
+        assert output_guard(s, [GRAPEFRUIT], S0) == "change", s
+    for s in (
+        "약을 임의로 중단하지 마세요.",
+        "자몽주스와 함께 드시지 마세요.",
+        "공복에 드시지 마세요.",
+    ):
+        assert output_guard(s, [GRAPEFRUIT], S0) is None, s
+    stop = Evidence("D:641900040:P9", "drug_permit", "641900040", None, "P", "주의", "임부는 복용하지 마십시오")
+    assert output_guard("임부는 노바스크를 복용하지 마세요.", [stop], S0) is None  # 근거에 있는 말
+
+
+@sync
+async def test_missed_dose_question_classified_out_of_scope():
+    """분류가 범위 밖으로 나와도 약을 빠뜨린 질문이면 근거 없음 (10/25 실제 답이 normal로 나간 길, 가짜 AI로 확인)"""
+    cls = classified(category="out_of_scope")
+    reply = {"answer_type": "normal", "content": "다음부터 잘 챙겨 드시면 돼요.", "used_sources": []}
+    r = await answer("어제약을못챙겨먹엇어여", S0, [], FakeChat(classify=cls, reply=reply), search=FakeSearch())
+    assert (r.answer_type, r.content) == ("no_evidence", NO_EVIDENCE)
+    # 약 이야기가 아니면 범위 밖 응대 그대로. "약속", "약국"의 "약"은 약으로 보지 않음 (10/26 수인 결정)
+    reply = {"answer_type": "normal", "content": "약이나 생활습관을 물어봐 주세요.", "used_sources": []}
+    for q in (
+        "어제 친구 생일을 깜빡했어요",
+        "친구랑 약속을 깜빡했어요",
+        "약국 가는 걸 깜빡했어요",
+    ):
+        r = await answer(q, S0, [], FakeChat(classify=cls, reply=reply), search=FakeSearch())
+        assert r.answer_type == "normal", q
+    # 붙여 쓴 "약 하나", "아예 약을"은 약으로 봄. 그래서 "예약"도 약으로 봄 (안전한 쪽, 10/26 수인 결정)
+    for q in ("약하나 빼먹었어요", "아예약을 안먹었어요", "병원 예약을 깜빡했어요"):
+        r = await answer(q, S0, [], FakeChat(classify=cls, reply=reply), search=FakeSearch())
+        assert r.answer_type == "no_evidence", q
+
+
+@sync
+async def test_meal_skip_in_permit_is_not_missed_dose_guide():
+    """허가정보의 끼니 문장은 빠뜨린 약 안내로 보지 않음. "거르", "걸렀", "거른"은 질문에만 씀 (10/26 수인 결정)"""
+    reply = {"answer_type": "normal", "content": "다음 식사 때 꼭 챙기세요.", "used_sources": []}
+    for text in (
+        "식사를 거른 경우 저혈당이 나타날 수 있다",
+        "식사를 거르면 저혈당이 나타날 수 있다",
+        "식사를 걸렀을 때는 저혈당에 주의한다",
+    ):
+        meal = Evidence("D:644300010:P5", "drug_permit", "644300010", None, "P", "주의", text)
+        r = await answer("다이아벡스를 깜빡했어요", S0, [], FakeChat(reply=reply), search=FakeSearch(found(meal)))
+        assert r.answer_type == "no_evidence", text
