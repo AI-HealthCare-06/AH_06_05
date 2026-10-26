@@ -147,6 +147,23 @@ export function ErrorCard({ kind, onRetry }: { kind: ErrorKind; onRetry: () => v
   );
 }
 
+// E6 다시 시도가 뒤에 다른 대화가 있을 때 성공함: 오류 카드 자리와 맨 아래 답 위 인용 (설계 메모 4-7 항목)
+export function ResentCard() {
+  return (
+    <Card style={{ alignSelf: 'stretch' }}>
+      <Text style={T.caption}>{c.resent}</Text>
+    </Card>
+  );
+}
+
+export function QuoteLine({ text }: { text: string }) {
+  return (
+    <Text style={[T.caption, { alignSelf: 'flex-start' }]} numberOfLines={2}>
+      {c.quoted(text)}
+    </Text>
+  );
+}
+
 // 맥락 카드에 쓰는 분석 요약 (R-4에서 꺼냄, 설계 메모 3-3 AnalysisSummary)
 function targetLabel(a: AnalysisResult, ctx?: ChatContext) {
   if (!ctx) return null;

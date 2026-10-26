@@ -306,6 +306,9 @@ export const copy = {
     restoredQuestion: '(이전에 긴급 안내를 보여 드린 질문이에요)',
     error: ['답변을 만들지 못했어요. 잠시 뒤 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'], // 와이어프레임 E6 (10/20)
     errorTooMany: ['잠시 후 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'],
+    // E6 다시 보내기 성공 (뒤에 대화가 있을 때, 신규 임시)
+    resent: '다시 보냈어요 ↓',
+    quoted: (q: string) => `↩ 아까 보낸 질문: ${q}`,
     contextTitle: '분석 결과를 알고 있어요',
     contextSummary: (day: string, daysAgo: number, drugs: number, warnings: number) =>
       `${day} 분석 · ${daysAgo}일 전 · 약 ${drugs}개 · 경고 ${warnings}건`,
