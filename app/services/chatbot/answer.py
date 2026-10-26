@@ -86,6 +86,15 @@ _CHANGE = re.compile(
 )
 # 약을 먹지 말라는 말 ("중단하지 마세요"는 아님). 함께 먹지 말라는 경고도 AI가 만들지 않으므로 거름 (NFR-032, 10/26 수인 결정)
 _STOP = re.compile(r"(복용하지|드시지|먹지|복용을\s*하지)\s*(?:마|말)")
+# 약을 멈춰도 된다는 말 ("안 드셔도 돼요", "드시지 않아도", "그만 드셔야"). 같은 문장 앞쪽에 약이 있으면 거름.
+# 해로운 쪽이라 8글자 창보다 넓게 봄 ("노바스크는 이제 안 먹어도 돼요") (#126 채연 리뷰, 10/26 수인 결정)
+_STOP_OK = re.compile(
+    r"(?:안|못)\s*(?:드셔도|드시셔도|먹어도|복용하셔도|복용해도)|(?:드시지|먹지|복용하지)\s*않(?:아도|으셔도|는\s*게\s*좋)"
+    r"|그만\s*(?:드셔야|드셔도|먹어야|먹어도|드시는\s*게)"
+)
+# 약을 쉬라는 말은 "약을 (며칠) 쉬어도", "노바스크를 하루 쉬셔도"처럼 약 바로 뒤만 ("약 드시고 쉬세요"는 아님). 사이의 기간 말 목록은 제안
+_REST_TAIL = r"[을를은는]?\s*(?:하루|이틀|사흘|며칠|잠시|잠깐|당분간|한동안|일주일)?\s*쉬(?:어도|셔도|세요|시면)"
+
 # 먹는 때는 시키는 말에만 ("먹으면 졸릴 수 있어요" 같은 설명은 보지 않음, 10/25 점검)
 _TAKE = re.compile(r"(드세요|드시면\s*(?:돼|됩|좋)|드셔도|드시는\s*게\s*좋|복용하세요|복용하시면|먹으세요|드십시오)")
 _TIMING = re.compile(r"(아침|점심|저녁|자기\s*전|취침|식전|식후|식사\s*중|공복)")
@@ -123,14 +132,22 @@ def _about_drug(before: str, drug_names: list[str]) -> bool:
     return bool(_MED_OBJECT.search(before)) or any(n in before for n in drug_names)
 
 
+def _rest(sentence: str, drug_names: list[str]) -> list[str]:
+    objects = "|".join(["약", "복용", *(re.escape(n) + "[가-힣]{0,6}?" for n in drug_names)])
+    return [m.group(0) for m in re.finditer(rf"(?:{objects}){_REST_TAIL}", sentence)]
+
+
 def _changes_drug(sentence: str, drug_names: list[str], flat: str) -> bool:
-    """바로 앞 몇 글자에 약이 있는 바꾸라는 말이나 먹지 말라는 말 가운데 근거에 없는 것"""
+    """근거에 없는 바꾸라는 말, 먹지 말라는 말(바로 앞 몇 글자에 약), 멈춰도 된다는 말(같은 문장 앞쪽에 약), 약을 쉬라는 말"""
     found = [(m, m.group(1)) for m in _CHANGE.finditer(sentence)] + [(m, m.group(0)) for m in _STOP.finditer(sentence)]
     for m, word in found:
         before = sentence[max(0, m.start() - _OBJECT_WINDOW) : m.start()]
         if _about_drug(before, drug_names) and re.sub(r"\s+", "", word) not in flat:
             return True
-    return False
+    for m in _STOP_OK.finditer(sentence):
+        if _about_drug(sentence[: m.start()], drug_names) and re.sub(r"\s+", "", m.group(0)) not in flat:
+            return True
+    return any(re.sub(r"\s+", "", w) not in flat for w in _rest(sentence, drug_names))  # 약이 말 안에 있음
 
 
 def output_guard(content: str, evidence: list[Evidence], info: FixedInfo) -> str | None:

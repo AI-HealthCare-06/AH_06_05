@@ -479,6 +479,30 @@ def test_output_guard_blocks_stop_taking():
     assert output_guard("임부는 노바스크를 복용하지 마세요.", [stop], S0) is None  # 근거에 있는 말
 
 
+def test_output_guard_blocks_ok_to_stop():
+    """약을 멈춰도 된다는 말도 근거에 없으면 거름 (#126 채연 리뷰, 10/26 수인 결정: 미루지 않고 고침)"""
+    for s in (
+        "혈압이 정상이면 노바스크는 안 드셔도 돼요.",
+        "오늘 하루는 약을 안 드셔도 괜찮아요.",
+        "며칠 약을 쉬어도 돼요.",
+        "노바스크는 드시지 않아도 돼요.",
+        "노바스크는 먹지 않아도 괜찮아요.",
+        "노바스크는 드시지 않는 게 좋아요.",  # 10/26 점검에서 찾은 같은 종류
+        "노바스크는 그만 드셔야 해요.",
+        "노바스크는 이제 안 먹어도 돼요.",  # 약 이름이 8글자보다 앞 (점검)
+        "노바스크를 하루 쉬셔도 돼요.",
+    ):
+        assert output_guard(s, [GRAPEFRUIT], S0) == "change", s
+    for s in (
+        "자몽주스는 드시지 않는 게 좋아요.",  # 약이 아닌 것
+        "커피는 안 드셔도 돼요.",
+        "약을 드시고 푹 쉬어도 돼요.",  # 약을 먹고 쉬라는 말
+        "약을 임의로 쉬지 마세요.",
+        "약 드시고 쉬세요.",
+    ):
+        assert output_guard(s, [GRAPEFRUIT], S0) is None, s
+
+
 @sync
 async def test_missed_dose_question_classified_out_of_scope():
     """분류가 범위 밖으로 나와도 약을 빠뜨린 질문이면 근거 없음 (10/25 실제 답이 normal로 나간 길, 가짜 AI로 확인)"""
