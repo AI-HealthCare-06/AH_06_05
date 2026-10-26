@@ -277,6 +277,10 @@ export const copy = {
     reload: '다시 불러오기',
     placeholder: '궁금한 점을 입력하세요',
     send: '보내기',
+    // 받아쓰기 안내 (설계 메모 4-10, 신규 임시). 버튼 이름은 와이어프레임. [마이크가 안 보여요]는 그림 안내가 생기면 (10/26)
+    dictation: '음성 입력 안내',
+    dictationTip: '키보드에 있는 🎤 버튼을 누르고 말해 보세요.',
+    dictationNever: '다시 보지 않기',
     generating: '● ● ● 답변을 만들고 있어요',
     source: (name: string) => `출처 · ${name}`,
     labels: {
@@ -306,6 +310,15 @@ export const copy = {
     restoredQuestion: '(이전에 긴급 안내를 보여 드린 질문이에요)',
     error: ['답변을 만들지 못했어요. 잠시 뒤 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'], // 와이어프레임 E6 (10/20)
     errorTooMany: ['잠시 후 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'],
+    // 답 아래 피드백 (Figma). 고른 직후 인사와 이유 창 [닫기]는 신규 (임시)
+    feedbackGood: '도움 됐어요',
+    feedbackBad: '답변이 이상해요',
+    feedbackReasons: ['사실과 달라요', '질문과 달라요', '기타'],
+    feedbackThanks: '알려 주셔서 고마워요',
+    feedbackClose: '닫기',
+    // E6 다시 보내기 성공 (뒤에 대화가 있을 때, 신규 임시)
+    resent: '다시 보냈어요 ↓',
+    quoted: (q: string) => `↩ 아까 보낸 질문: ${q}`,
     contextTitle: '분석 결과를 알고 있어요',
     contextSummary: (day: string, daysAgo: number, drugs: number, warnings: number) =>
       `${day} 분석 · ${daysAgo}일 전 · 약 ${drugs}개 · 경고 ${warnings}건`,
@@ -314,11 +327,11 @@ export const copy = {
     contextFail: '분석 결과를 불러오지 못했어요',
     analysisChips: ['이번 분석에서 가장 조심할 건 뭔가요?', '같이 먹으면 안 되는 약이 있나요?'],
     // 답 아래 꼬리질문 (요구사항에 없는 새 기능, 10/22 수인 결정). 문구는 메모에 있는 것만: E1 추천 질문 + E2 약 후속 질문(임시)
+    // "먹는 걸 잊으면 어떻게 하나요?"는 뺌: 빠뜨린 약 질문이라 허가정보에 그 안내가 없으면 늘 근거 없음으로 끝남 (#126, 10/26 수인 결정)
     followTitle: '이어서 물어볼 수 있어요',
     followChips: [
       '약은 언제 먹는 게 좋나요?',
       '같이 먹으면 안 되는 음식이 있나요?',
-      '먹는 걸 잊으면 어떻게 하나요?',
       '약 먹는 동안 운동해도 되나요?',
     ],
   },
