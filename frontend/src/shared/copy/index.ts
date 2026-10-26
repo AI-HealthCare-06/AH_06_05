@@ -277,6 +277,10 @@ export const copy = {
     reload: '다시 불러오기',
     placeholder: '궁금한 점을 입력하세요',
     send: '보내기',
+    // 받아쓰기 안내 (설계 메모 4-10, 신규 임시). 버튼 이름은 와이어프레임. [마이크가 안 보여요]는 그림 안내가 생기면 (10/26)
+    dictation: '음성 입력 안내',
+    dictationTip: '키보드에 있는 🎤 버튼을 누르고 말해 보세요.',
+    dictationNever: '다시 보지 않기',
     generating: '● ● ● 답변을 만들고 있어요',
     source: (name: string) => `출처 · ${name}`,
     labels: {
@@ -306,6 +310,15 @@ export const copy = {
     restoredQuestion: '(이전에 긴급 안내를 보여 드린 질문이에요)',
     error: ['답변을 만들지 못했어요. 잠시 뒤 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'], // 와이어프레임 E6 (10/20)
     errorTooMany: ['잠시 후 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'],
+    // 답 아래 피드백 (Figma). 고른 직후 인사와 이유 창 [닫기]는 신규 (임시)
+    feedbackGood: '도움 됐어요',
+    feedbackBad: '답변이 이상해요',
+    feedbackReasons: ['사실과 달라요', '질문과 달라요', '기타'],
+    feedbackThanks: '알려 주셔서 고마워요',
+    feedbackClose: '닫기',
+    // E6 다시 보내기 성공 (뒤에 대화가 있을 때, 신규 임시)
+    resent: '다시 보냈어요 ↓',
+    quoted: (q: string) => `↩ 아까 보낸 질문: ${q}`,
     contextTitle: '분석 결과를 알고 있어요',
     contextSummary: (day: string, daysAgo: number, drugs: number, warnings: number) =>
       `${day} 분석 · ${daysAgo}일 전 · 약 ${drugs}개 · 경고 ${warnings}건`,
