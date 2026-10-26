@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { Fragment, useEffect, useRef, type ReactNode } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useChatLauncher } from '@/features/chatbot/launcher';
@@ -35,9 +35,11 @@ export default function Chat() {
   const chat = useChat(chatParams);
   const scroll = useRef<ScrollView>(null);
 
+  // 새 줄이 생기면 맨 아래로. 이미 있던 맥락 카드로 들어왔으면 그 카드에 머묾 (설계 메모 3-4 항목)
   useEffect(() => {
-    scroll.current?.scrollToEnd({ animated: true });
-  }, [chat.messages, chat.pending]);
+    if (chat.focusCard === null) scroll.current?.scrollToEnd({ animated: true });
+  }, [chat.messages, chat.pending, chat.focusCard]);
+  const toCard = (e: LayoutChangeEvent) => scroll.current?.scrollTo({ y: e.nativeEvent.layout.y, animated: true });
 
   // 서버 질문 줄 번호 → 그 질문에 걸린 실패 (답 줄이 지워졌거나 30초가 지남)
   const failedByQuestion = new Map<number, Pending>();
@@ -58,7 +60,10 @@ export default function Chat() {
   };
 
   const row = (m: Message, i: number): ReactNode => {
-    if (m.contextCard) return <ContextCard analysisId={m.contextCard.analysisId} context={m.contextCard.context} />;
+    if (m.contextCard) {
+      const card = <ContextCard analysisId={m.contextCard.analysisId} context={m.contextCard.context} />;
+      return m.id === chat.focusCard ? <View onLayout={toCard}>{card}</View> : card;
+    }
     if (m.role === 'user') {
       if (chat.hidden.includes(m.id)) return null;
       const failed = failedByQuestion.get(m.id);

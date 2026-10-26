@@ -57,6 +57,8 @@ export function useChat(params: ChatParams) {
   const [hasHistory, setHasHistory] = useState<boolean | null>(null);
   const [safetyUntil, setSafetyUntil] = useState<number | null>(null);
   const [pendingCard, setPendingCard] = useState<PendingCard | null>(null);
+  // 같은 날, 같은 대상 카드가 이미 있어 다시 붙이지 않았을 때 그 카드 줄 번호: 맨 아래 대신 그 카드로 스크롤 (설계 메모 3-4 항목)
+  const [focusCard, setFocusCard] = useState<number | null>(null);
   // 질문 줄 번호 → 원문 (1층이 잡아 서버에 원문이 없는 질문을 이 창에서는 그대로 보여 주고 다시 보낼 때 씀)
   const [texts, setTexts] = useState<Record<number, string>>({});
   // [지금은 증상이 없어요]를 누른 긴급 답 줄 번호 (안내 글을 붙이고 칩을 끔)
@@ -146,7 +148,9 @@ export function useChat(params: ChatParams) {
       setSession(sid); // 아래 단계가 실패해도 첫 질문 때 오늘 대화를 또 만들지 않게
       let list: Message[] = [];
       if (sid !== null) list = await getMessages(sid);
-      if (card && !list.some((m) => sameCard(m, card))) {
+      const existing = card ? list.find((m) => sameCard(m, card)) : undefined;
+      setFocusCard(existing?.id ?? null);
+      if (card && !existing) {
         if (sid === null && card.context) {
           sid = (await startSession(newRequestId(), card.analysisId, card.context)).sessionId;
           setSession(sid); // H-7이 실패해도 첫 질문 때 대화를 또 만들지 않게
@@ -231,6 +235,7 @@ export function useChat(params: ChatParams) {
   const ask = useCallback(
     (content: string, dismissed = false) => {
       const q: Pending = { crid: newRequestId(), content, dismissed, sentAt: Date.now() };
+      setFocusCard(null); // 질문을 보내면 다시 맨 아래를 따라감
       setPending((list) => [...list, q]);
       void deliver(q);
     },
@@ -268,6 +273,7 @@ export function useChat(params: ChatParams) {
     hasHistory,
     safetyMode: safetyUntil !== null && safetyUntil > Date.now(),
     pendingCard,
+    focusCard,
     texts,
     relieved,
     hidden,
