@@ -4,6 +4,7 @@
 // - 401 TOKEN_EXPIRED면 A-4로 출입증을 다시 받고 같은 요청을 한 번만 다시 보냄
 // - A-4도 실패하면 저장한 두 값을 지우고 로그인 화면으로 보내도록 알림 (setAuthLostHandler)
 import { copy } from '@/shared/copy';
+import { clearFailed } from '@/shared/storage/chat';
 import { tokens } from '@/shared/storage/tokens';
 
 import { mockFetch } from './mock';
@@ -39,6 +40,7 @@ export function setAuthLostHandler(handler: ((reason: AuthLostReason) => void) |
 
 async function loseAuth(reason: AuthLostReason) {
   await tokens.clear();
+  await clearFailed(); // 기기에 남긴 실패한 챗봇 질문도 (설계 메모 4-7)
   onAuthLost?.(reason);
 }
 
