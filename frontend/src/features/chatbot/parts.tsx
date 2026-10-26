@@ -353,6 +353,9 @@ export function Composer({ onSend, busy }: { onSend: (text: string) => void; bus
   const [height, setHeight] = useState<number>(L.touch); // 웹 입력칸 높이 (아래 measure)
   const seen = useRef<number | null>(null);
   const input = useRef<TextInput>(null);
+  // 입력칸을 떠나면 안내를 닫는 타이머. 🎤를 다시 누르면 웹은 누르는 순간 포커스가 빠지므로 dictate에서 취소함 (#127 채연 리뷰)
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (blurTimer.current && clearTimeout(blurTimer.current)), []);
   useEffect(() => {
     void dictationSeen().then((n) => (seen.current = n));
   }, []);
@@ -373,9 +376,10 @@ export function Composer({ onSend, busy }: { onSend: (text: string) => void; bus
     send();
   };
   const dictate = () => {
+    if (blurTimer.current) clearTimeout(blurTimer.current);
     input.current?.focus();
     const n = seen.current ?? 0;
-    if (n >= DICTATION_TIPS) return;
+    if (n >= DICTATION_TIPS) return setTip(false); // 3번이 지나면 안내 없이 키보드만 (설계 메모 4-10)
     seen.current = n + 1;
     void setDictationSeen(n + 1);
     setTip(true);
@@ -418,7 +422,7 @@ export function Composer({ onSend, busy }: { onSend: (text: string) => void; bus
           ref={input}
           value={text}
           onChangeText={change}
-          onBlur={() => setTimeout(() => setTip(false), 300)} // 바로 닫으면 안내 안 버튼을 누른 게 먹히지 않음 (웹)
+          onBlur={() => (blurTimer.current = setTimeout(() => setTip(false), 300))} // 바로 닫으면 안내 안 버튼을 누른 게 먹히지 않음 (웹)
           onKeyPress={key}
           placeholder={c.placeholder}
           placeholderTextColor={C.text3}

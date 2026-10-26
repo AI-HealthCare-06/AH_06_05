@@ -76,6 +76,7 @@ export function useChat(params: ChatParams) {
     setMessages(list);
   };
   const restored = useRef(false); // 기기에 남긴 질문을 다 불러오기 전에는 덮어쓰지 않음
+  const lastSaved = useRef(''); // 답을 기다리는 동안 2초마다 pending이 새 배열이 되므로 바뀐 게 없으면 쓰지 않음 (#127 채연 리뷰)
 
   const setSession = (id: number | null) => {
     sessionRef.current = id;
@@ -138,6 +139,9 @@ export function useChat(params: ChatParams) {
     const failed = pending
       .filter((q) => q.error && typeof q.error !== 'object')
       .map((q): SavedQuestion => ({ crid: q.crid, content: q.content, dismissed: q.dismissed, sessionId: q.sessionId ?? null, questionId: q.questionId }));
+    const key = JSON.stringify(failed);
+    if (key === lastSaved.current) return;
+    lastSaved.current = key;
     void saveFailed(failed);
   }, [pending]);
 
