@@ -17,6 +17,7 @@ from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import PrescriptionItem
 from app.models.users import ConsentType, UserConsent
 from app.services import chats, safety
+from app.services.chatbot import jev
 from app.services.chatbot.answer import DISTRESS, OUT_OF_SCOPE
 from app.services.chatbot.context import FixedInfo
 from app.services.chatbot.llm import Usage
@@ -488,6 +489,23 @@ class TestQuestionNumbersMasked(ChatCase):
         want = "제 번호 [전화번호]이고 주민번호 [주민번호]인데 혈압약은 언제 먹어요?"
         assert items[0]["content"] == want
         assert self.fake.calls[0]["question"] == want
+
+    async def test_jev_block_saves_no_raw_text(self):
+        """1층 규칙에 안 걸려도 Jev가 확신하면 저장 전에 막음: 원문 없이 저장, AI를 부르지 않음 (10/26 수인 결정)"""
+
+        async def judge(question: str) -> tuple[str, float]:
+            return "crisis", 0.05
+
+        on = {"SAFETY_JEV": True, "TYPESAFE_API_KEY": "test-key"}
+        with patch.multiple(config, **on), patch.object(jev, "_typesafe", judge):
+            async with self.client() as client:
+                headers, _ = await self.auth(client, "a9@example.com")
+                sid = await self.session(client, headers)
+                await self.ask(client, headers, sid, "요즘 사는 게 다 귀찮네요")
+                q, a = await self.items(client, headers, sid)
+        assert self.fake.calls == []
+        assert q["content"] == "" and a["answerType"] == "crisis" and a["safety"]["rule"] == "jev"
+        assert not await ChatMessage.filter(content__contains="귀찮").exists()
 
 
 class TestFixedInfo(ChatCase):

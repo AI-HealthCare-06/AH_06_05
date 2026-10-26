@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app.services.chatbot import context_check, evidence, safety_rules
+from app.services.chatbot import context_check, evidence, jev, safety_rules
 from app.services.chatbot.answer import REFER, SPEECH, clean_text, out_of_scope, write
 from app.services.chatbot.classify import (
     asks_food_to_avoid,
@@ -92,6 +92,13 @@ def _verdicts(v: Verdicts | None) -> str | None:
         return None
     a, b, c = (x if x in _VERDICT_NAMES else "?" for x in (v.a, v.b, v.c))
     return f"a={a} b={b}/{'direct' if v.b_direct else 'indirect'} c={c}"
+
+
+async def jev_layer(question: str, emergency_dismissed: bool = False) -> Route | None:
+    """질문을 저장하기 전 1층의 Jev 판단 (10/26 수인 결정). 규칙에 걸렸거나 문맥 파악이 정상으로 푼 문장은 호출한 쪽이 걸러서
+    이 함수를 부르지 않음. Jev가 잡은 응급은 과다 복용인지 몰라 2층처럼 [지금은 증상이 없어요]를 늘 숨김"""
+    kind = await jev.check(question, emergency_dismissed)
+    return _safety([kind], 1, ["jev"], kind == "emergency") if kind else None
 
 
 async def route(
