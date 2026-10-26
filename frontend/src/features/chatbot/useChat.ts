@@ -2,9 +2,11 @@
 // - 보내기: 대화가 없으면 H-1, (분석 번호만 받고 들어왔으면 H-7), H-3. 202 뒤 H-2를 2초마다 불러 답 줄이 done이 되면 그림
 // - 보낸 때부터 30초가 지나거나 답 줄이 없어지면 E6. [다시 시도]는 같은 clientRequestId (서버가 같은 답 줄을 주거나 새로 만듦)
 // - 질문 원문은 메모리에만 둠 (1층이 잡은 질문은 서버에 원문이 없음). 앱 로그에 남기지 않음
+// - 예외: 실패한 질문은 기기에 남겨 창을 다시 열어도 E6 카드와 함께 보임 (설계 메모 4-7, shared/storage/chat.ts)
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '@/shared/api/client';
+import { loadFailed, saveFailed, type SavedQuestion } from '@/shared/storage/chat';
 
 import { addContext, findToday, getMessages, sendQuestion, startSession } from './api';
 import { newRequestId, nextKstMidnight } from './time';
@@ -21,6 +23,7 @@ export type Pending = {
   content: string;
   dismissed: boolean; // [지금은 증상이 없어요] 뒤 다시 보낸 질문
   sentAt: number;
+  sessionId?: number | null; // 실패한 때의 대화 (기기에 남길 때)
   answerId?: number;
   questionId?: number; // 서버 질문 줄 번호 (답 줄의 replyTo로 알게 됨)
   error?: ErrorKind;
@@ -64,6 +67,7 @@ export function useChat(params: ChatParams) {
   const pendingRef = useRef<Pending[]>([]);
   pendingRef.current = pending;
   const cardRef = useRef<PendingCard | null>(null);
+  const restored = useRef(false); // 기기에 남긴 질문을 다 불러오기 전에는 덮어쓰지 않음
 
   const setSession = (id: number | null) => {
     sessionRef.current = id;
@@ -96,7 +100,7 @@ export function useChat(params: ChatParams) {
         if (q.answerId === undefined || q.error) return [q];
         const a = byId.get(q.answerId);
         if (a?.status === 'done') return [];
-        if (!a || now - q.sentAt > TIMEOUT_MS) return [{ ...q, error: 'general' as ErrorKind }];
+        if (!a || now - q.sentAt > TIMEOUT_MS) return [{ ...q, error: 'general' as ErrorKind, sessionId: sid }];
         return [{ ...q, questionId: a.replyTo }];
       }),
     );
@@ -107,6 +111,27 @@ export function useChat(params: ChatParams) {
       }
     }
   }, []);
+
+  // 기기에 남긴 실패한 질문을 E6로 되살림. 다른 대화의 것이나 이미 답이 난 것은 버림
+  const restore = async (sid: number | null, list: Message[]) => {
+    const saved = await loadFailed();
+    const answered = new Set(list.filter((m) => m.role === 'assistant' && m.status === 'done').map((m) => m.replyTo));
+    const back = saved
+      .filter((q) => q.sessionId === null || q.sessionId === sid)
+      .filter((q) => q.questionId === undefined || !answered.has(q.questionId))
+      .map((q): Pending => ({ ...q, sentAt: 0, error: 'general' }));
+    setPending((cur) => [...cur, ...back.filter((q) => !cur.some((p) => p.crid === q.crid))]);
+    restored.current = true;
+  };
+
+  // 실패한 질문을 기기에 맞춰 둠 (다시 시도로 풀리지 않는 403은 남기지 않음)
+  useEffect(() => {
+    if (!restored.current) return;
+    const failed = pending
+      .filter((q) => q.error && typeof q.error !== 'object')
+      .map((q): SavedQuestion => ({ crid: q.crid, content: q.content, dismissed: q.dismissed, sessionId: q.sessionId ?? null, questionId: q.questionId }));
+    void saveFailed(failed);
+  }, [pending]);
 
   // 열 때: H-8 → H-2. 분석에서 들어왔으면 맥락 카드 (1단계 하루 한 대화, 설계 메모 3-4 항목)
   const open = useCallback(async () => {
@@ -141,12 +166,14 @@ export function useChat(params: ChatParams) {
       }
       setSession(sid);
       setMessages(list);
+      await restore(sid, list);
     } catch {
       setTodayFailed(true); // 빈 새 대화 화면으로 열고 위에 [다시 불러오기] (설계 메모 3-6 항목)
       if (card) {
         cardRef.current = card;
         setPendingCard(card);
       }
+      // 지난 대화를 못 불러왔으면 기기에 남긴 질문은 그대로 둠 (어느 대화 것인지 맞춰 볼 수 없음). [다시 불러오기] 때 되살림
     } finally {
       setLoading(false);
     }
@@ -195,7 +222,7 @@ export function useChat(params: ChatParams) {
         pendingRef.current = pendingRef.current.map((p) => (p.crid === q.crid ? { ...p, answerId } : p));
         await refresh();
       } catch (e) {
-        patch(q.crid, { error: toErrorKind(e) });
+        patch(q.crid, { error: toErrorKind(e), sessionId: sessionRef.current });
       }
     },
     [refresh],
