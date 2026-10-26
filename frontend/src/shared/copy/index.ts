@@ -277,6 +277,10 @@ export const copy = {
     reload: '다시 불러오기',
     placeholder: '궁금한 점을 입력하세요',
     send: '보내기',
+    // 받아쓰기 안내 (설계 메모 4-10, 신규 임시). 버튼 이름은 와이어프레임. [마이크가 안 보여요]는 그림 안내가 생기면 (10/26)
+    dictation: '음성 입력 안내',
+    dictationTip: '키보드에 있는 🎤 버튼을 누르고 말해 보세요.',
+    dictationNever: '다시 보지 않기',
     generating: '● ● ● 답변을 만들고 있어요',
     source: (name: string) => `출처 · ${name}`,
     labels: {

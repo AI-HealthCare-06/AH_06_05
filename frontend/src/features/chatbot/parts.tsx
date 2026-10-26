@@ -6,7 +6,9 @@ import { getAnalysis } from '@/features/rag/api';
 import type { AnalysisResult } from '@/features/rag/types';
 import { copy } from '@/shared/copy';
 import { C, L, R, T } from '@/shared/theme';
+import { dictationSeen, setDictationSeen } from '@/shared/storage/chat';
 import { Btn, Card, Chip } from '@/shared/ui';
+import { MicIcon } from '@/shared/ui/icons';
 
 import { analyzedAt } from './time';
 import type { ErrorKind } from './useChat';
@@ -14,6 +16,7 @@ import type { AnswerType, ChatContext, Message, SafetyInfo } from './types';
 
 const c = copy.chatbot;
 const MAX_LENGTH = 500; // 명세서 H-3
+const DICTATION_TIPS = 3; // 받아쓰기 안내는 처음 3번까지 (설계 메모 4-10 항목)
 
 // 답변 라벨 색 (설계 메모 3-1 항목)
 const LABEL_TONE: Record<Exclude<AnswerType, 'normal'>, 'info' | 'neutral' | 'caution' | 'danger'> = {
@@ -322,35 +325,83 @@ export function Empty({ hasHistory, onPick, disabled }: { hasHistory: boolean | 
   );
 }
 
-// 입력창 (설계 메모 4-8 항목): 여러 줄, 500자, 보낼 글자가 있고 답을 기다리지 않을 때만 보냄. 첨부, 받아쓰기는 뒤에
+// 입력창 (설계 메모 4-8, 4-10 항목): 여러 줄, 500자, 보낼 글자가 있고 답을 기다리지 않을 때만 보냄. 첨부는 2단계
+// 보낼 글자가 없으면 전송 자리에 🎤: 누르면 입력칸에 포커스가 가서 키보드가 올라옴 (키보드 마이크를 앱이 대신 누를 수는 없음)
 export function Composer({ onSend, busy }: { onSend: (text: string) => void; busy: boolean }) {
   const [text, setText] = useState('');
-  const ready = text.trim().length > 0 && !busy;
+  const [tip, setTip] = useState(false);
+  const seen = useRef<number | null>(null);
+  const input = useRef<TextInput>(null);
+  useEffect(() => {
+    void dictationSeen().then((n) => (seen.current = n));
+  }, []);
+  const hasText = text.trim().length > 0;
+  const ready = hasText && !busy;
   const send = () => {
     if (!ready) return;
     onSend(text.trim());
     setText('');
   };
+  const dictate = () => {
+    input.current?.focus();
+    const n = seen.current ?? 0;
+    if (n >= DICTATION_TIPS) return;
+    seen.current = n + 1;
+    void setDictationSeen(n + 1);
+    setTip(true);
+  };
+  const never = () => {
+    seen.current = DICTATION_TIPS;
+    void setDictationSeen(DICTATION_TIPS);
+    setTip(false);
+  };
+  const change = (t: string) => {
+    setText(t);
+    if (t) setTip(false);
+  };
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
-      <TextInput
-        value={text}
-        onChangeText={setText}
-        placeholder={c.placeholder}
-        placeholderTextColor={C.text3}
-        multiline
-        maxLength={MAX_LENGTH}
-        style={{ flex: 1, minHeight: L.touch, maxHeight: 140, borderWidth: 1, borderColor: C.border, borderRadius: R.control, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: C.text, backgroundColor: C.card }}
-      />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={c.send}
-        accessibilityState={{ disabled: !ready }}
-        onPress={send}
-        style={{ width: L.touch, height: L.touch, borderRadius: L.touch / 2, backgroundColor: ready ? C.p600 : C.muted, alignItems: 'center', justifyContent: 'center' }}
-      >
-        <Text style={{ fontSize: 20, fontWeight: '700', color: ready ? C.onPrimary : C.text3 }}>↑</Text>
-      </Pressable>
+    <View style={{ gap: 8 }}>
+      {tip && (
+        <Card tone="info" style={{ gap: 6 }}>
+          <Text style={T.body} accessibilityLiveRegion="polite">
+            {c.dictationTip}
+          </Text>
+          <Btn label={c.dictationNever} kind="ghost" onPress={never} />
+        </Card>
+      )}
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
+        <TextInput
+          ref={input}
+          value={text}
+          onChangeText={change}
+          onBlur={() => setTimeout(() => setTip(false), 300)} // 바로 닫으면 안내 안 버튼을 누른 게 먹히지 않음 (웹)
+          placeholder={c.placeholder}
+          placeholderTextColor={C.text3}
+          multiline
+          maxLength={MAX_LENGTH}
+          style={{ flex: 1, minHeight: L.touch, maxHeight: 140, borderWidth: 1, borderColor: C.border, borderRadius: R.control, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: C.text, backgroundColor: C.card }}
+        />
+        {hasText ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={c.send}
+            accessibilityState={{ disabled: !ready }}
+            onPress={send}
+            style={{ width: L.touch, height: L.touch, borderRadius: L.touch / 2, backgroundColor: ready ? C.p600 : C.muted, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Text style={{ fontSize: 20, fontWeight: '700', color: ready ? C.onPrimary : C.text3 }}>↑</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={c.dictation}
+            onPress={dictate}
+            style={{ width: L.touch, height: L.touch, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <MicIcon />
+          </Pressable>
+        )}
+      </View>
     </View>
   );
 }
