@@ -104,7 +104,7 @@ export default function Chat() {
     return (
       <>
         {from && <QuoteLine text={from} />}
-        <AnswerBubble m={m} />
+        <AnswerBubble m={m} reveal={chat.isFresh(m.id)} />
       </>
     );
   };
@@ -122,7 +122,13 @@ export default function Chat() {
   return (
     <Screen title={c.title} onBack={() => router.back()} scroll={false}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.side, gap: S.gap }}>
+        <ScrollView
+          ref={scroll}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ padding: S.side, gap: S.gap }}
+          // 새 답이 글자 차례로 길어지고 출처, 피드백이 뒤에 붙어도 맨 아래를 따라감 (맥락 카드로 들어왔을 때는 그 카드에 머묾)
+          onContentSizeChange={() => chat.focusCard === null && scroll.current?.scrollToEnd({ animated: false })}
+        >
           {chat.todayFailed && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Text style={[T.caption, { flex: 1 }]}>{c.todayFail}</Text>

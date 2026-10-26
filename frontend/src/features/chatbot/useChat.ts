@@ -69,6 +69,12 @@ export function useChat(params: ChatParams) {
   const pendingRef = useRef<Pending[]>([]);
   pendingRef.current = pending;
   const cardRef = useRef<PendingCard | null>(null);
+  // 이 창에서 만드는 중(generating)으로 본 답 줄: 완성되면 글자를 차례로 보여 줌. 다시 불러온 예전 답은 한 번에 (설계 메모 4-3 항목)
+  const seenGenerating = useRef(new Set<number>());
+  const show = (list: Message[]) => {
+    for (const m of list) if (m.status === 'generating') seenGenerating.current.add(m.id);
+    setMessages(list);
+  };
   const restored = useRef(false); // 기기에 남긴 질문을 다 불러오기 전에는 덮어쓰지 않음
 
   const setSession = (id: number | null) => {
@@ -84,7 +90,7 @@ export function useChat(params: ChatParams) {
     const sid = sessionRef.current;
     if (sid === null) return;
     const list = await getMessages(sid);
-    setMessages(list);
+    show(list);
     const byId = new Map(list.map((m) => [m.id, m]));
     const now = Date.now();
     const learned: Record<number, string> = {};
@@ -169,7 +175,7 @@ export function useChat(params: ChatParams) {
         }
       }
       setSession(sid);
-      setMessages(list);
+      show(list);
       await restore(sid, list);
     } catch {
       setTodayFailed(true); // 빈 새 대화 화면으로 열고 위에 [다시 불러오기] (설계 메모 3-6 항목)
@@ -274,6 +280,7 @@ export function useChat(params: ChatParams) {
     safetyMode: safetyUntil !== null && safetyUntil > Date.now(),
     pendingCard,
     focusCard,
+    isFresh: (id: number) => seenGenerating.current.has(id),
     texts,
     relieved,
     hidden,

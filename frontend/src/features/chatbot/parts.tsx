@@ -1,6 +1,6 @@
 // CB-01 화면 부품 (설계 메모 4-2 ~ 4-8 항목). 문구는 copy.chatbot (설계 메모 6장)
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Linking, Modal, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { Linking, Modal, Platform, Pressable, Text, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 
 import { getAnalysis } from '@/features/rag/api';
 import type { AnalysisResult } from '@/features/rag/types';
@@ -16,7 +16,11 @@ import type { AnswerType, ChatContext, Message, SafetyInfo } from './types';
 
 const c = copy.chatbot;
 const MAX_LENGTH = 500; // 명세서 H-3
+const REVEAL_MS = 1500; // 새 답은 길이와 상관없이 이 시간 안에 다 보임 (시작값, 10/26 수인 결정)
+const REVEAL_STEP_MS = 30;
 const DICTATION_TIPS = 3; // 받아쓰기 안내는 처음 3번까지 (설계 메모 4-10 항목)
+const INPUT_MAX = 140; // 입력창 높이 48 ~ 140, 넘으면 안에서 스크롤 (설계 메모 4-8 항목)
+const isWeb = Platform.OS === 'web';
 
 // 답변 라벨 색 (설계 메모 3-1 항목)
 const LABEL_TONE: Record<Exclude<AnswerType, 'normal'>, 'info' | 'neutral' | 'caution' | 'danger'> = {
@@ -49,18 +53,34 @@ export function Generating() {
 // 피드백을 붙이는 답: 실제 답만 (재질문, 긴급, 자해, 오류에는 없음, 설계 메모 4-3 항목)
 const FEEDBACK_ON: AnswerType[] = ['normal', 'partial', 'no_evidence', 'refer'];
 
-export function AnswerBubble({ m }: { m: Message }) {
+// 답은 서버가 검사를 마친 뒤 한 번에 받고, 화면만 글자를 차례로 보여 줌 (와이어프레임 CB-01, 설계 메모 4-3 항목)
+// 화면 읽기에는 처음부터 전체 글. 다 보인 뒤에 출처와 피드백
+function useReveal(full: string, on: boolean) {
+  const [n, setN] = useState(on ? 0 : full.length);
+  useEffect(() => {
+    if (n >= full.length) return;
+    const step = Math.max(1, Math.ceil(full.length / (REVEAL_MS / REVEAL_STEP_MS)));
+    const t = setTimeout(() => setN((x) => Math.min(full.length, x + step)), REVEAL_STEP_MS);
+    return () => clearTimeout(t);
+  }, [n, full]);
+  return { text: full.slice(0, n), done: n >= full.length };
+}
+
+export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boolean }) {
   const type = m.answerType ?? 'normal';
+  const shown = useReveal(m.content, reveal);
   return (
     <Card style={{ alignSelf: 'flex-start', maxWidth: '92%', gap: 8 }}>
       {type !== 'normal' && <Chip label={c.labels[type]} tone={LABEL_TONE[type]} />}
-      <Text style={T.body}>{m.content}</Text>
-      {m.sources?.map((s) => (
+      <Text style={T.body} accessibilityLabel={m.content}>
+        {shown.text}
+      </Text>
+      {shown.done && m.sources?.map((s) => (
         <Text key={s.title} style={T.caption}>
           {c.source(s.title)}
         </Text>
       ))}
-      {FEEDBACK_ON.includes(type) && <Feedback />}
+      {shown.done && FEEDBACK_ON.includes(type) && <Feedback />}
     </Card>
   );
 }
@@ -330,6 +350,7 @@ export function Empty({ hasHistory, onPick, disabled }: { hasHistory: boolean | 
 export function Composer({ onSend, busy }: { onSend: (text: string) => void; busy: boolean }) {
   const [text, setText] = useState('');
   const [tip, setTip] = useState(false);
+  const [height, setHeight] = useState<number>(L.touch); // 웹 입력칸 높이 (아래 measure)
   const seen = useRef<number | null>(null);
   const input = useRef<TextInput>(null);
   useEffect(() => {
@@ -341,6 +362,15 @@ export function Composer({ onSend, busy }: { onSend: (text: string) => void; bus
     if (!ready) return;
     onSend(text.trim());
     setText('');
+    setHeight(L.touch);
+  };
+  // 웹: Enter = 보내기, Shift+Enter = 줄바꿈, 한글 조합 중 Enter는 보내지 않음 (마지막 글자 중복 방지). 앱은 Enter = 줄바꿈
+  const key = (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+    if (!isWeb || e.nativeEvent.key !== 'Enter') return;
+    const k = e.nativeEvent as unknown as KeyboardEvent; // react-native-web은 DOM KeyboardEvent를 그대로 넘김
+    if (k.shiftKey || k.isComposing || k.keyCode === 229) return;
+    e.preventDefault();
+    send();
   };
   const dictate = () => {
     input.current?.focus();
@@ -355,9 +385,23 @@ export function Composer({ onSend, busy }: { onSend: (text: string) => void; bus
     void setDictationSeen(DICTATION_TIPS);
     setTip(false);
   };
+  // 웹은 textarea가 저절로 커지거나 줄지 않아, 글이 바뀔 때마다 높이를 잠깐 0으로 두고 글 높이를 잼 (+ 위아래 테두리 2)
+  const measure = () => {
+    if (!isWeb) return;
+    requestAnimationFrame(() => {
+      const el = input.current as unknown as HTMLTextAreaElement | null;
+      if (!el) return;
+      const before = el.style.height;
+      el.style.height = '0px'; // auto는 textarea 기본 두 줄 높이가 남음
+      const h = el.scrollHeight + 2;
+      el.style.height = before; // 높이가 같으면 다시 그리지 않으므로 되돌려 둠
+      setHeight(h);
+    });
+  };
   const change = (t: string) => {
     setText(t);
     if (t) setTip(false);
+    measure();
   };
   return (
     <View style={{ gap: 8 }}>
@@ -375,11 +419,12 @@ export function Composer({ onSend, busy }: { onSend: (text: string) => void; bus
           value={text}
           onChangeText={change}
           onBlur={() => setTimeout(() => setTip(false), 300)} // 바로 닫으면 안내 안 버튼을 누른 게 먹히지 않음 (웹)
+          onKeyPress={key}
           placeholder={c.placeholder}
           placeholderTextColor={C.text3}
           multiline
           maxLength={MAX_LENGTH}
-          style={{ flex: 1, minHeight: L.touch, maxHeight: 140, borderWidth: 1, borderColor: C.border, borderRadius: R.control, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: C.text, backgroundColor: C.card }}
+          style={{ flex: 1, minHeight: L.touch, maxHeight: INPUT_MAX, ...(isWeb ? { height: Math.min(INPUT_MAX, Math.max(L.touch, height)) } : null), borderWidth: 1, borderColor: C.border, borderRadius: R.control, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: C.text, backgroundColor: C.card }}
         />
         {hasText ? (
           <Pressable
