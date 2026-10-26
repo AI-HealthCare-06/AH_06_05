@@ -306,6 +306,12 @@ export const copy = {
     restoredQuestion: '(이전에 긴급 안내를 보여 드린 질문이에요)',
     error: ['답변을 만들지 못했어요. 잠시 뒤 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'], // 와이어프레임 E6 (10/20)
     errorTooMany: ['잠시 후 다시 시도해 주세요.', '보낸 질문은 그대로 남아 있어요.'],
+    // 답 아래 피드백 (Figma). 고른 직후 인사와 이유 창 [닫기]는 신규 (임시)
+    feedbackGood: '도움 됐어요',
+    feedbackBad: '답변이 이상해요',
+    feedbackReasons: ['사실과 달라요', '질문과 달라요', '기타'],
+    feedbackThanks: '알려 주셔서 고마워요',
+    feedbackClose: '닫기',
     // E6 다시 보내기 성공 (뒤에 대화가 있을 때, 신규 임시)
     resent: '다시 보냈어요 ↓',
     quoted: (q: string) => `↩ 아까 보낸 질문: ${q}`,

@@ -1,6 +1,6 @@
 // CB-01 화면 부품 (설계 메모 4-2 ~ 4-8 항목). 문구는 copy.chatbot (설계 메모 6장)
-import { useCallback, useEffect, useState } from 'react';
-import { Linking, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Linking, Modal, Platform, Pressable, Text, TextInput, View } from 'react-native';
 
 import { getAnalysis } from '@/features/rag/api';
 import type { AnalysisResult } from '@/features/rag/types';
@@ -43,6 +43,9 @@ export function Generating() {
   );
 }
 
+// 피드백을 붙이는 답: 실제 답만 (재질문, 긴급, 자해, 오류에는 없음, 설계 메모 4-3 항목)
+const FEEDBACK_ON: AnswerType[] = ['normal', 'partial', 'no_evidence', 'refer'];
+
 export function AnswerBubble({ m }: { m: Message }) {
   const type = m.answerType ?? 'normal';
   return (
@@ -54,7 +57,74 @@ export function AnswerBubble({ m }: { m: Message }) {
           {c.source(s.title)}
         </Text>
       ))}
+      {FEEDBACK_ON.includes(type) && <Feedback />}
     </Card>
+  );
+}
+
+function Pill({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: on }}
+      onPress={onPress}
+      style={{ minHeight: L.touch, paddingHorizontal: 12, borderRadius: R.chip, borderWidth: 1, borderColor: on ? C.p600 : C.border, backgroundColor: on ? C.p50 : C.card, justifyContent: 'center' }}
+    >
+      <Text style={[T.label, { fontSize: 14, color: on ? C.p700 : C.text2 }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+// [도움 됐어요] [답변이 이상해요]: 누르면 바로 바뀌고, 같은 것을 다시 누르면 취소, 반대쪽을 누르면 바뀜 (설계 메모 4-3 항목)
+// "이상해요"는 이유 창을 띄우고 이유를 안 골라도 닫을 수 있음. 피드백 API가 없어 이 창에서만 기억함
+type Choice = { kind: 'good' } | { kind: 'bad'; reason?: string } | null;
+
+function Feedback() {
+  const [choice, setChoice] = useState<Choice>(null);
+  const [asking, setAsking] = useState(false);
+  const [thanks, setThanks] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+  const thank = () => {
+    setThanks(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setThanks(false), 2000);
+  };
+  const pickGood = () => {
+    if (choice?.kind === 'good') return setChoice(null);
+    setChoice({ kind: 'good' }); // "이상해요"에서 바꾸면 골랐던 이유는 지움
+    thank();
+  };
+  const pickBad = () => {
+    if (choice?.kind === 'bad') return setChoice(null);
+    setChoice({ kind: 'bad' });
+    setAsking(true);
+  };
+  const close = (reason?: string) => {
+    setAsking(false);
+    if (reason) setChoice({ kind: 'bad', reason });
+    thank();
+  };
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+      <Pill label={c.feedbackGood} on={choice?.kind === 'good'} onPress={pickGood} />
+      <Pill label={c.feedbackBad} on={choice?.kind === 'bad'} onPress={pickBad} />
+      {thanks && (
+        <Text style={T.caption} accessibilityLiveRegion="polite">
+          {c.feedbackThanks}
+        </Text>
+      )}
+      <Modal visible={asking} transparent animationType="slide" onRequestClose={() => close()}>
+        <Pressable style={{ flex: 1, backgroundColor: C.dim, justifyContent: 'flex-end' }} onPress={() => close()}>
+          <Pressable style={{ backgroundColor: C.card, borderTopLeftRadius: R.card, borderTopRightRadius: R.card, padding: 20, gap: 10 }} accessibilityViewIsModal>
+            {c.feedbackReasons.map((r) => (
+              <Btn key={r} label={r} kind="secondary" onPress={() => close(r)} />
+            ))}
+            <Btn label={c.feedbackClose} kind="ghost" onPress={() => close()} />
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </View>
   );
 }
 
