@@ -29,6 +29,7 @@ app = [
     "pyjwt>=2.10.1",
     "tortoise-orm>=0.25.3,<1.0.0",  # 1.x부터 generate_config가 tortoise 최상위 export에서 빠짐 (conftest.py 호환 안 됨)
     "uvicorn>=0.40.0",
+    "typesafe-sdk>=0.7.5",
 ]
 dev = [
     "coverage>=7.13.2",

@@ -153,8 +153,8 @@ async def ask(
             await repo.delete_message(last.id)
         return (await repo.create_generating(question)).id, True
 
-    blocked, _ = pipeline.first_layer(content, emergency_dismissed)
-    if blocked:  # 1층이 잡고 문맥 파악이 풀지 않음: 원문을 저장하지 않고 긴급 답을 바로 (설계 메모 4-6)
+    blocked = await pipeline.screen(content, emergency_dismissed)
+    if blocked:  # 1층(규칙이나 Jev)이 잡고 문맥 파악이 풀지 않음: 원문을 저장하지 않고 긴급 답을 바로 (설계 메모 4-6)
         answer = await repo.create_question_and_answer(
             s, "", client_request_id, answer_type=AnswerType(blocked.kind), safety=_safety(blocked)
         )

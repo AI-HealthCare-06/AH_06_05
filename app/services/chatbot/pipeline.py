@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.chatbot import context_check, evidence, safety_rules
+from app.services.chatbot import context_check, evidence, jev, safety_rules
 from app.services.chatbot.answer import write
 from app.services.chatbot.classify import check_classification, classify, classify_message
 from app.services.chatbot.context import FixedInfo, recent, resolve_ordinal
@@ -62,6 +62,17 @@ def first_layer(question: str, emergency_dismissed: bool = False) -> tuple[Route
     if rule.hit and release is None:
         return _safety(rule.types, 1, rule.rules, rule.overdose), None
     return None, release
+
+
+async def screen(question: str, emergency_dismissed: bool = False) -> Route | None:
+    """질문을 저장하기 전 1층: 규칙과 문맥 파악, 그다음 Jev (10/26 수인 결정). 막을 질문이면 긴급, 자해 갈래.
+    규칙에 걸렸거나 문맥 파악이 정상으로 푼 문장은 Jev를 부르지 않음. Jev가 잡은 응급은 과다 복용인지 몰라
+    2층처럼 [지금은 증상이 없어요]를 늘 숨김"""
+    blocked, release = first_layer(question, emergency_dismissed)
+    if blocked or release:
+        return blocked
+    kind = await jev.check(question, emergency_dismissed)
+    return _safety([kind], 1, ["jev"], kind == "emergency") if kind else None
 
 
 async def route(
