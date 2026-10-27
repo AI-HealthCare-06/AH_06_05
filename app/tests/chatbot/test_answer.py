@@ -5,7 +5,7 @@ from typing import Any
 from app.services.chatbot.answer import NO_EVIDENCE, REFER, clean_text, output_guard
 from app.services.chatbot.context import FixedInfo, UserDrug
 from app.services.chatbot.llm import LLMError, Usage
-from app.services.chatbot.pipeline import answer
+from app.services.chatbot.pipeline import ANALYSIS_GUIDE, answer
 from app.services.rag.gate import Verdicts
 from app.services.rag.pipeline import Evidence, SearchResult
 from app.tests.chatbot.test_route import classified, sync
@@ -537,3 +537,39 @@ async def test_meal_skip_in_permit_is_not_missed_dose_guide():
         meal = Evidence("D:644300010:P5", "drug_permit", "644300010", None, "P", "주의", text)
         r = await answer("다이아벡스를 깜빡했어요", S0, [], FakeChat(reply=reply), search=FakeSearch(found(meal)))
         assert r.answer_type == "no_evidence", text
+
+
+@sync
+async def test_this_drug_in_permit_becomes_drug_name():
+    """허가 원문의 "이 약"은 AI에게 넘길 때 그 약 이름으로 (다른 약 근거의 "이 약"을 엉뚱한 약으로 옮긴 문제, 10/26 채연 Q1)"""
+    texts = ("로바가정과 병용하는 경우, 이 약의 혈중 농도가 증가", "이약을 투여 받는 동안", "이 약물을 투여받는 동안")
+    rows = [
+        Evidence(f"D:641900040:S{i}", "drug_permit", "641900040", None, "S", "주의", t) for i, t in enumerate(texts)
+    ]
+    rows.append(
+        Evidence("D:641900040:S9", "drug_permit", "641900040", None, "S", "주의", "효과가 있는 것이 약효를 높임")
+    )
+    rows.append(Evidence("D:641900040:S8", "drug_permit", "641900040", None, "S", "주의", "이 약국, 이 약사, 이 약제"))
+    chat = FakeChat()
+    await answer("노바스크 주의할 점 있어요?", S0, [], chat, search=FakeSearch(found(*rows)))
+    sent = chat.seen["answer"]
+    assert "노바스크정5밀리그람의 혈중 농도" in sent and "노바스크정5밀리그람을 투여" in sent
+    assert sent.count("노바스크정5밀리그람을 투여받는") == 1 and "것이 약효" in sent
+    assert not any(w in sent for w in ("이 약의", "이약을", "이 약물"))
+    assert "이 약국, 이 약사, 이 약제" in sent
+
+
+@sync
+async def test_analysis_chip_answers_with_guide_without_ai():
+    """분석 칩은 근거 검색과 답 AI 없이 분석 결과 화면 안내로. AI가 허가정보를 분석 결론처럼 말함 (10/27 측정 3번 중 3번)"""
+    chat, search = FakeChat(classify=classified(category="out_of_scope")), FakeSearch()
+    r = await answer("이번 분석에서 가장 조심할 건 뭔가요?", S0, [], chat, search=search)
+    assert (r.answer_type, r.content) == ("normal", ANALYSIS_GUIDE)
+    assert "answer" not in chat.calls and search.calls == [] and r.sources == []
+
+
+@sync
+async def test_analysis_question_for_doctor_stays_refer():
+    chat = FakeChat(classify=classified(category="refer", refer_kind="next_visit"))
+    r = await answer("이번 분석 보고 약을 끊어도 되나요?", S0, [], chat, search=FakeSearch())
+    assert r.answer_type == "refer"

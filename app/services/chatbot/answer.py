@@ -183,6 +183,11 @@ def _no_evidence(cls: dict[str, Any]) -> Draft:
     return Draft("refer", tail) if tail else Draft("no_evidence", NO_EVIDENCE)
 
 
+# 허가 원문의 "이 약"은 그 약 이름으로 바꿔 넘김. 다른 약 근거 속 "이 약"을 AI가 엉뚱한 약으로 옮김 (10/26 채연 Q1).
+# 앞 글자가 한글이면 낱말 끝("것이 약효")이라, 뒤가 국, 사, 제("이 약국")면 다른 낱말이라 그대로. 저장된 원문과 출처는 바꾸지 않음
+_THIS_DRUG = re.compile(r"(?<![가-힣])이\s?약(?:물)?(?![국사제])")
+
+
 def _evidence_json(evidence: list[Evidence], info: FixedInfo) -> str:
     names = {d.code: d.name for d in info.drugs if d.code}
     rows = [
@@ -190,7 +195,9 @@ def _evidence_json(evidence: list[Evidence], info: FixedInfo) -> str:
             "번호": e.sentence_id,
             "무엇에 대한 글": names.get(e.drug_code or "", e.drug_code) or e.disease_code or "질환이 겹칠 때",
             "제목": e.heading,
-            "글": e.text,
+            "글": _THIS_DRUG.sub(names[e.drug_code], e.text)
+            if e.source == "drug_permit" and e.drug_code in names
+            else e.text,
         }
         for e in evidence
     ]

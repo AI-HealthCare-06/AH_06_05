@@ -16,6 +16,9 @@ from app.services.chatbot.prompts import CLASSIFY_SCHEMA, CLASSIFY_SYSTEM
 CATEGORIES = ("medication", "lifestyle", "refer", "clarify", "out_of_scope")
 _REFERS_BACK = re.compile(r"(그\s*약|그거|그것|아까|방금|처음|번째|물어본|물어봤던|얘기한|말한)")
 _PREGNANCY = re.compile(r"(임신|임산부|수유|모유)")
+# 앱 추천 칩. 분류가 범위 밖으로 보내 막다른 답이 나옴 (10/26 채연 서버 시험, 10/27 실제 분류 3번 중 3번)
+_FOOD_AVOID = re.compile(r"((같이|함께)\s*먹으면\s*안\s*되는|피해야\s*할)\s*음식")
+_THIS_ANALYSIS = re.compile(r"이번\s*분석")
 
 
 def classify_message(
@@ -70,7 +73,16 @@ def check_classification(
             cls["target_source"] = "guess"
     if resolved and resolved[:3] not in (cls["target_drug"] or ""):
         cls["target_drug"], cls["target_source"] = resolved, "history"  # 코드로 찾은 순서를 따름
+    if _FOOD_AVOID.search(question) and cls["category"] == "out_of_scope":
+        cls["category"] = "medication"  # 음식과 약 (설계 메모 7-12 ③)
+    if _THIS_ANALYSIS.search(question) and cls["category"] in ("out_of_scope", "medication"):
+        cls["category"], cls["about_user_drugs"] = "medication", True  # 답은 pipeline의 분석 안내
     # 임신, 수유 중 복용은 분류가 흔들려도 의사 판단으로 보냄 (R2를 범위 밖으로 본 문제)
     if _PREGNANCY.search(question) and cls["category"] != "refer":
         cls["category"], cls["refer_kind"] = "refer", "next_visit"
     return cls
+
+
+def asks_this_analysis(question: str) -> bool:
+    """분석 칩("이번 분석에서 가장 조심할 건 뭔가요?")처럼 이번 분석 결과를 묻는지"""
+    return bool(_THIS_ANALYSIS.search(question))
