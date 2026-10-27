@@ -121,6 +121,20 @@ class Reply:
     # 근거 검색이 빈 목록일 때 이유 (rag.search reason), 출력 가드레일이면 output_guard:<종류>
     evidence_reason: str | None = None
     usage: Usage = field(default_factory=Usage)
+    safety_card: dict[str, Any] | None = None  # ⑤ { analysisId, warningIds } (명세서 v1.5 초안 H-2, H-3)
+
+
+# ⑤ 점검 결과로 답할 때의 앞뒤 문장 (화면 문구, 신규 임시, 10/26 수인 결정. 와이어프레임에는 나중에 맞춤)
+SAFETY_HEAD = "분석에서 확인된, 같이 먹을 때 주의할 점이에요."
+SAFETY_TAIL = "위 내용은 분석 결과에서 자세히 볼 수 있어요. 약사에게 확인해 주세요."
+
+
+def _check_result(info: FixedInfo) -> str:
+    """경고마다 "약A, 약B: 점검 문장" 한 줄. 약 이름 뒤 조사는 괄호로 끝나는 이름이 많아 쉼표로 이음 (10/26 수인 결정).
+    경고 사이와 끝 문장 앞은 빈 줄. 좁은 화면에서 한 경고가 여러 줄로 접히면 다음 경고나 끝 문장과 구분되지 않음.
+    끝 문장의 "위 내용은"은 경고 전체에 대한 말임을 글로도 밝힘 (읽어주기). 머리 문장은 목록의 제목이라 붙임 (10/27 수인 결정)"""
+    warnings = "\n\n".join(f"{', '.join(w.names)}: {w.summary}" for w in info.pair_warnings)
+    return f"{SAFETY_HEAD}\n{warnings}\n\n{SAFETY_TAIL}"
 
 
 async def answer(
@@ -142,6 +156,11 @@ async def answer(
         return Reply(r.kind, None, r, usage=usage)  # 긴급, 자해, 오류는 화면 고정 카드
 
     cls = r.classification or {}
+    # ⑤ 먹는 약끼리 같이 먹어도 되는지 물으면 분석의 경고를 그대로 보여 주고 AI가 다시 판단하지 않음 (설계 메모 7-12, NFR-032).
+    # 경고가 없으면 "걸린 항목이 없어요"가 안전하다는 말로 읽힐 수 있어 지금처럼 근거 검색 (10/26 수인 결정)
+    if cls.get("about_user_drugs") and r.kind in ("medication", "refer") and info.pair_warnings:
+        card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in info.pair_warnings]}
+        return Reply("normal", _check_result(info), r, usage=usage, safety_card=card)
     found = None
     if r.kind != "out_of_scope":
         found = await evidence.gather(question, cls, info, search, time.perf_counter() - started)
