@@ -121,6 +121,11 @@ else
   scp -i ~/.ssh/${ssh_key_file} infra/nginx/prod_https.conf ubuntu@${ec2_ip}:~/project/nginx/default.conf
 fi
 
+# ---------- 웹 화면은 이 스크립트가 올리지 않음 ----------
+# 서버 ~/project/web 에 직접 올려야 함. 웹은 꼭 EXPO_PUBLIC_API_BASE_URL=/api/v1 (상대 주소)로 빌드할 것.
+# 안드로이드 앱(APK)은 반대로 절대 주소(https://도메인/api/v1)로 빌드함.
+# 주소는 빌드할 때 박히므로 둘을 섞으면 안 됨 (섞으면 https 화면에서 로그인이 막힘).
+
 # ---------- EC2 배포 자동화  ----------
 echo "${COLOR_BLUE}EC2 인스턴스에 SSH 접속을 시도합니다.${COLOR_NC}"
 chmod 400 ~/.ssh/${ssh_key_file}

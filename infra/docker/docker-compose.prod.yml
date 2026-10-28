@@ -81,6 +81,7 @@ services:
     restart: always
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./web:/usr/share/nginx/html:ro  # 웹 화면 빌드 결과 (서버 ~/project/web). 없으면 / 는 404
       - static_volume:/vol/web/static
       - media_volume:/vol/web/media
       - certbot-conf:/etc/letsencrypt
