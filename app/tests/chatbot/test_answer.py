@@ -569,6 +569,13 @@ async def test_analysis_chip_answers_with_guide_without_ai():
     assert "answer" not in chat.calls and search.calls == [] and r.sources == []
 
 
+@sync
+async def test_analysis_guide_takes_reworded_chip():
+    chat = FakeChat(classify=classified(category="out_of_scope"))
+    r = await answer("이번 분석에서 제일 주의할 약이 뭐예요?", S0, [], chat, search=FakeSearch())
+    assert r.content == ANALYSIS_GUIDE
+
+
 # ⑤ 이미 계산된 점검 결과로 답하기 (설계 메모 7-12, #116 safetyCard, 10/26 수인 결정)
 NSAID = PairWarning(
     31, ("낙센에프서방정1000밀리그램(나프록센)", "스로펜정(이부프로펜)"), "효과가 비슷한 약을 함께 드시고 있어요"
@@ -658,3 +665,22 @@ async def test_non_drug_intake_question_skips_check_result():
     chat = FakeChat(classify=classified(about_user_drugs=True))
     r = await answer("수술 전에 이 약들 같이 먹어도 돼요?", S_WARN, [], chat, search=FakeSearch())
     assert r.safety_card is not None  # "수술"의 "술"은 술이 아님
+
+
+@sync
+async def test_analysis_chip_with_warnings_answers_with_check_result():
+    """경고가 있는 분석의 분석 칩은 분석 안내보다 ⑤ 점검 결과가 먼저 (#134와 합칠 때 채연 리뷰)"""
+    chat = FakeChat(classify=classified(category="out_of_scope"))
+    r = await answer("이번 분석에서 가장 조심할 건 뭔가요?", S_WARN, [], chat, search=FakeSearch())
+    assert r.safety_card == {"analysisId": 7, "warningIds": [31, 32]} and "answer" not in chat.calls
+
+
+@sync
+async def test_this_analysis_drug_question_answers_from_evidence():
+    """질문에 "이번 분석"이 들어가도 약 하나의 복용법이나 부작용을 물으면 분석 안내나 점검 결과가 아니라 근거로 답함
+    (#135 채연 리뷰: 실제 분류 10번 중 10번 분석 안내만 나옴)"""
+    for q in ("이번 분석에 나온 노바스크는 어떻게 먹어야 하나요?", "이번 분석 결과에 나온 다이아벡스 부작용이 뭐예요?"):
+        for info in (S0, S_WARN):
+            chat = FakeChat(classify=classified(category="medication"))
+            r = await answer(q, info, [], chat, search=FakeSearch())
+            assert r.content != ANALYSIS_GUIDE and r.safety_card is None and "answer" in chat.calls, q
