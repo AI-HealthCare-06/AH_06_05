@@ -30,6 +30,24 @@ REFER = {
     "next_visit": "다음 진료 때 처방한 의사에게 꼭 물어봐 주세요.",
     "soon": "며칠 안에 진료를 받아 보시길 권해요.",
 }
+# 범위 밖, 욕설, 지시 무시 요청에 늘 같은 응대: 사과, 챗봇이 하는 일, 다시 물어봐 달라는 말 (5회차 멘토링 시연에서 응대가 섞여 나옴, #99).
+# 화면 문구라 신규 임시 (10/28 수인 결정)
+OUT_OF_SCOPE = (
+    "죄송해요, 그 질문에는 답해 드리기 어려워요. 저는 드시는 약과 생활습관을 안내해 드리는 챗봇이에요. "
+    "약이나 생활습관에 대해 다시 물어봐 주세요."
+)
+# 범위 밖인데 약을 골라 달라는 것처럼 약 이야기면 의사와 약사가 정한다는 문장을 더함 (골든셋 O3, 10/28 수인 결정, 신규 임시)
+OUT_OF_SCOPE_DRUG = (
+    "죄송해요, 그 질문에는 답해 드리기 어려워요. 저는 드시는 약과 생활습관을 안내해 드리는 챗봇이에요. "
+    "어떤 약을 드실지는 의사와 약사가 정해요. 약이나 생활습관에 대해 다시 물어봐 주세요."
+)
+# 인사와 감사만 한 말은 범위 밖이어도 사과하지 않음 (#140 채연 리뷰, 10/28 수인 결정, 신규 임시)
+GREETING = "안녕하세요. 드시는 약이나 생활습관에 대해 궁금한 게 있으면 편하게 물어봐 주세요."
+THANKS = "도움이 되었다니 다행이에요. 드시는 약이나 생활습관에 대해 궁금한 게 있으면 편하게 물어봐 주세요."
+_GREET = r"안녕(?:하세요|하십니까)?|반가워요?|반갑습니다|하이|헬로"
+_THANK = r"고마워요?|고맙습니다|감사(?:합니다|해요|드려요)|땡큐|수고(?:하셨어요|하셨습니다|하세요|많으셨어요)"
+# 인사나 감사로만 된 말 (문장부호, ㅎㅎ, ㅋㅋ 정도만 더 붙음). 다른 말이 섞이면 범위 밖 문구 그대로
+_SMALL_TALK = re.compile(rf"(?:(?:{_GREET}|{_THANK})[\s!.,~^ㅎㅋ]*)+")
 
 # 약을 빠뜨린 말 (질문과 허가정보에 같이 씀). "잊", "까먹"은 약을 먹는 말 뒤, "놓쳤"은 먹는 시간 뒤만
 # ("약을 잊지 않으려면", "잊을까 봐", "버스를 놓쳤어요"는 아님, 10/25, 10/26 점검). 먹었는지 모르는 질문도 두 번 먹을 수 있어 같이 봄 (10/25 수인 결정)
@@ -183,6 +201,24 @@ def _no_evidence(cls: dict[str, Any]) -> Draft:
     return Draft("refer", tail) if tail else Draft("no_evidence", NO_EVIDENCE)
 
 
+def _drug_question(question: str, cls: dict[str, Any], info: FixedInfo) -> bool:
+    """약 이야기인지: 분류가 약이나 상담, 또는 질문에 약이나 먹는 약 이름이 있음"""
+    names = [d.name[:3] for d in info.drugs if d.name]
+    about = cls.get("category") in ("medication", "refer") or bool(_MED_WORDS.search(question))
+    return about or any(n in question for n in names)
+
+
+def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
+    """범위 밖은 답 AI 없이 고정 문구. 다만 약을 빠뜨린 질문이면 근거 없음 (분류가 범위 밖으로 흔들려도, 10/25 점검).
+    인사나 감사로만 된 말이면 인사 문구, 감사 문구. 약 이야기면 의사와 약사가 정한다는 문장이 든 문구 ("아무 약이나 추천해 줘", 골든셋 O3)"""
+    drug = _drug_question(question, cls, info)
+    if _missed_question(question) and drug:
+        return _no_evidence(cls)
+    if _SMALL_TALK.fullmatch(question.strip()):
+        return Draft("normal", THANKS if re.search(_THANK, question) else GREETING)
+    return Draft("normal", OUT_OF_SCOPE_DRUG if drug else OUT_OF_SCOPE)
+
+
 # 허가 원문의 "이 약"은 그 약 이름으로 바꿔 넘김. 다른 약 근거 속 "이 약"을 AI가 엉뚱한 약으로 옮김 (10/26 채연 Q1).
 # 앞 글자가 한글이면 낱말 끝("것이 약효")이라 그대로. 뒤가 조사나 한글이 아닌 글자일 때만 바꿈 ("이 약국", "이 약효"는 다른 낱말).
 # "가"는 받침 뒤에 오지 않고 "이 약가"(약값)와 겹쳐서 뺌
@@ -253,13 +289,8 @@ async def _write(
     # 약 이야기일 때만 (질문에 약이나 약 이름, 또는 분류가 약, 상담): "끼니를 거르면"은 팩트표로 답함 (10/25 점검)
     # 범위 밖 응대보다 먼저 봄: 분류가 범위 밖으로 나와도 빠뜨린 약 답이 그대로 나가지 않게 (10/25 점검)
     permit = [e for e in evidence if e.source == "drug_permit"]
-    names = [d.name[:3] for d in info.drugs if d.name]
-    about_drug = cls.get("category") in ("medication", "refer") or bool(_MED_WORDS.search(question))
-    about_drug = about_drug or any(n in question for n in names)
+    about_drug = _drug_question(question, cls, info)
     missed = _missed_question(question) and about_drug and not any(_MISSED_DOSE.search(e.text) for e in permit)
-    if cls.get("category") == "out_of_scope" and isinstance(gen.get("content"), str) and gen["content"].strip():
-        # 범위 밖은 짧게 응대하는 normal (설계 메모 7-12 ③). 근거가 없으니 AI가 no_evidence라고 해도 응대 글을 씀
-        return _no_evidence(cls) if missed else Draft("normal", clean_text(gen["content"]))
     kind = gen.get("answer_type")
     if kind not in ANSWER_SCHEMA["properties"]["answer_type"]["enum"] or not isinstance(gen.get("content"), str):
         kind = "no_evidence"

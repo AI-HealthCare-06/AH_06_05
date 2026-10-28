@@ -87,8 +87,13 @@ class ChatMessage(models.Model):
         description="답 줄만. 어느 질문의 답인지",
     )  # fmt: skip
     context_card: Any = fields.JSONField(null=True, description="H-7 맥락 카드 { analysisId, context }")
-    safety_card: Any = fields.JSONField(null=True, description="{ analysisId, warningIds }. 답은 normal")
+    safety_card: Any = fields.JSONField(
+        null=True, description="{ analysisId, warningIds }. 답은 normal, 상담 갈래(next_visit, soon)면 refer"
+    )
     safety: Any = fields.JSONField(null=True, description="{ types, overdose, rule }. 원문 없음")
+    route_kind = fields.CharField(
+        max_length=20, null=True, description="답 줄만. 답을 만든 갈래(Route.kind). out_of_scope면 대화 기억에서 뺌"
+    )
     status = fields.CharEnumField(enum_type=MessageStatus, max_length=20, default=MessageStatus.DONE)
     model = fields.CharField(max_length=50, null=True, description="답 줄만")
     prompt_tokens = fields.IntField(null=True)
