@@ -23,6 +23,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.5 초안 추가 | 2026-10-20 | R-4 `lifestyle.diseases[].origin`에 `profile`(내 정보 질환) 추가. 분석 질환은 처방전 질환과 내 정보 질환을 합쳐 씀 (#101, 10/19 합의) | 이수인 |
 | v1.5 초안 추가 | 2026-10-22 | H-3 응답을 `202` `{ messageId }`로 바꾸고 답은 H-2로 받음(2초마다 조회, 30초 지나면 E6). H-3 `content` 1~500자, 벗어나면 `400 VALIDATION_ERROR`. 답 만들기가 실패하면 만드는 중이던 답 줄을 지우고, 30초를 넘긴 줄은 다시 시도 때 지움. H-2 답 줄에 `safety`, ERD 반영 14번. H-3 요청 `emergencyDismissed`, 1층은 저장 전에 보고 걸린 질문은 원문 없이(`content` 빈 글), H-1과 H-7 `firstMessage`는 아직 보내지 않음(#116), H-8 `safetyModeUntil`은 그날 자정, H-2 답 줄 `replyTo`(ERD 반영 15번), H-1 `analysisId`는 맥락 카드 줄을 만들지 않음, H-7 같은 요청은 카드 줄을 한 번만. O-4의 `drugMatch` 줄을 H-2로, R-8은 대화의 분석 연결만 비움(채연과 정할 것) (#100) | 이수인 |
 | v1.5 초안 추가 | 2026-10-23 | R-8: 분석을 지우면 그 분석으로 시작한 챗봇 대화와 그 분석의 맥락 카드가 붙은 대화를 지움(10/22의 "분석 연결만 비움"을 바꿈, 채연 리뷰). FK는 `set null` 그대로 두고 R-8 코드에서 지움(마이그레이션 없음) (#100) | 이수인 |
+| v1.5 초안 추가 | 2026-10-28 | H-2 답 줄 `safetyCard`: 상담 갈래(끊거나 바꾸려는 질문, 증상)에서 카드가 붙으면 `answerType`은 `refer`. 새 유형이 아니라 있던 유형이라 화면 라벨은 그대로 (#134 리뷰) | 이수인 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -1159,7 +1160,7 @@ H-2 답 줄에 더하는 칸 (10/12 수인 확정, 10/22 H-3 응답에서 옮김
 
 | 칸 | 언제 | 모양 |
 |---|---|---|
-| `safetyCard` | 안전성 점검 결과를 전하는 답에만 | `{ analysisId, warningIds }`. 경고 문구는 R-4 `warnings[]`를 그대로 그림 (AI가 새로 쓰지 않음). 카드가 붙는 답도 `answerType`은 `normal` |
+| `safetyCard` | 안전성 점검 결과를 전하는 답에만 | `{ analysisId, warningIds }`. 경고 문구는 R-4 `warnings[]`를 그대로 그림 (AI가 새로 쓰지 않음). 카드가 붙는 답도 `answerType`은 `normal`. 끊거나 바꾸려는 질문과 증상(상담 갈래 `next_visit`, `soon`)이면 `refer` (10/28, #134 리뷰) |
 | `drugMatch` | 질문에서 약 이름을 찾았을 때만 | O-4와 같은 `{ status, items }`. `status`가 `candidates` 또는 `not_found`면 `answerType`은 `clarify`. 지금 코드에서 만들지 않아 만들 때 저장 방법을 정함 (확정 전) |
 | `safety` | 서버가 긴급이나 자해를 감지했을 때만 (`answerType`이 `emergency` 또는 `crisis`) | `{ types, overdose, rule }`. `types`는 동시에 해당하면 둘 다 담고, `overdose`가 참이면 [지금은 증상이 없어요] 칩을 숨김. 질문 원문은 담지 않음 |
 
