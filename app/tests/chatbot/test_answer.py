@@ -550,14 +550,21 @@ async def test_this_drug_in_permit_becomes_drug_name():
     rows.append(
         Evidence("D:641900040:S9", "drug_permit", "641900040", None, "S", "주의", "효과가 있는 것이 약효를 높임")
     )
-    rows.append(Evidence("D:641900040:S8", "drug_permit", "641900040", None, "S", "주의", "이 약국, 이 약사, 이 약제"))
+    other_words, comma_end = (
+        "이 약국, 이 약사, 이 약제, 이 약효, 이 약품, 이 약리작용, 이 약가 인하",
+        "다른 약과 이 약, 함께 두지 말 것: 이 약",
+    )
+    rows.append(Evidence("D:641900040:S8", "drug_permit", "641900040", None, "S", "주의", other_words))
+    rows.append(Evidence("D:641900040:S7", "drug_permit", "641900040", None, "S", "주의", comma_end))
     chat = FakeChat()
     await answer("노바스크 주의할 점 있어요?", S0, [], chat, search=FakeSearch(found(*rows)))
     sent = chat.seen["answer"]
     assert "노바스크정5밀리그람의 혈중 농도" in sent and "노바스크정5밀리그람을 투여" in sent
     assert sent.count("노바스크정5밀리그람을 투여받는") == 1 and "것이 약효" in sent
     assert not any(w in sent for w in ("이 약의", "이약을", "이 약물"))
-    assert "이 약국, 이 약사, 이 약제" in sent
+    # 뒤가 조사나 한글이 아닌 글자일 때만 바꿈. 다른 낱말("이 약효", "이 약리작용")은 그대로 (#135 채연 리뷰 참고)
+    assert other_words in sent
+    assert "다른 약과 노바스크정5밀리그람, 함께 두지 말 것: 노바스크정5밀리그람" in sent
 
 
 @sync
