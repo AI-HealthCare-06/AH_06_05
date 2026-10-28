@@ -23,7 +23,6 @@ export default function Me() {
   const router = useRouter();
   const [me, setMe] = useState<MeInfo | null>(null);
   const [failed, setFailed] = useState(false);
-  const [preparing, setPreparing] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -73,11 +72,16 @@ export default function Me() {
           </Section>
           <Section title={c.consentAccount}>
             <Card style={{ gap: 4 }}>
-              {[c.consentHistory, c.withdraw].map((label) => (
+              {(
+                [
+                  [c.consentHistory, '/consents'],
+                  [c.withdraw, '/withdraw'],
+                ] as const
+              ).map(([label, href]) => (
                 <Pressable
                   key={label}
                   accessibilityRole="button"
-                  onPress={() => setPreparing(true)}
+                  onPress={() => router.push(href)}
                   style={{ minHeight: L.touch, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
                 >
                   <Text style={T.body}>{label}</Text>
@@ -85,7 +89,6 @@ export default function Me() {
                 </Pressable>
               ))}
             </Card>
-            {preparing && <Text style={T.caption}>{copy.preparing}</Text>}
           </Section>
         </>
       )}

@@ -44,6 +44,9 @@ async function loseAuth(reason: AuthLostReason) {
   onAuthLost?.(reason);
 }
 
+// 탈퇴한 뒤: 서버가 이 계정을 이미 지웠으므로 저장한 값을 지우고 로그인 화면으로 보냄
+export const forgetLogin = () => loseAuth('unauthorized');
+
 async function send(method: Method, path: string, body: unknown, auth: boolean): Promise<Response> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   // 업로드(O-1 처방전 사진)는 FormData 그대로. Content-Type은 fetch가 경계값과 함께 넣음

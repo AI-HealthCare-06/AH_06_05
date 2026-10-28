@@ -19,6 +19,8 @@ function RootStack({ signedIn }: { signedIn: boolean }) {
         <Stack.Screen name="warning" />
         <Stack.Screen name="history" />
         <Stack.Screen name="me-edit" />
+        <Stack.Screen name="consents" />
+        <Stack.Screen name="withdraw" />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="login" />

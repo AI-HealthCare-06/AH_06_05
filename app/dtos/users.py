@@ -1,4 +1,4 @@
-"""내 정보 (API U-1 · U-2) — JSON은 camelCase"""
+"""내 정보 (API U-1 ~ U-5) — JSON은 camelCase"""
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -8,7 +8,17 @@ from pydantic import ConfigDict, Field
 
 from app.core.validators import optional_after_validator, validate_birth_year
 from app.dtos.base import CamelModel
-from app.models.users import Dialysis, Drinking, Pregnant, Sex, Smoking, User, UserHealthProfile
+from app.models.users import (
+    ConsentType,
+    Dialysis,
+    Drinking,
+    Pregnant,
+    Sex,
+    Smoking,
+    User,
+    UserConsent,
+    UserHealthProfile,
+)
 
 # 생활습관 팩트표의 질환 10개 (lifestyle_diseases.id, 10/14 회의 3번). 팩트표와 같은지는 test_health_ids.py가 확인
 DiseaseId = Literal["HTN", "DM2", "DLP", "CKD", "IHD", "STROKE", "AF", "COPD", "OP", "OA"]
@@ -97,3 +107,40 @@ class UserInfoResponse(CamelModel):
             created_at=user.created_at,
             health=HealthResponse.from_profile(profile),
         )
+
+
+class WithdrawRequest(CamelModel):
+    """U-3 요청. confirmed가 true가 아니면 거절"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirmed: bool
+
+
+CONSENT_TYPE_NAMES = {
+    ConsentType.TERMS: "terms",
+    ConsentType.PRIVACY: "privacy",
+    ConsentType.SENSITIVE_HEALTH: "sensitiveHealth",
+}
+
+
+class ConsentItem(CamelModel):
+    """U-4 한 줄. 철회했으면 withdrawnAt이 있음 (동의 기록은 철회 시각까지 남김)"""
+
+    type: str
+    agreed: bool
+    agreed_at: datetime | None
+    withdrawn_at: datetime | None
+
+    @classmethod
+    def from_consent(cls, consent: UserConsent) -> "ConsentItem":
+        return cls(
+            type=CONSENT_TYPE_NAMES[consent.consent_type],
+            agreed=consent.agreed,
+            agreed_at=consent.agreed_at,
+            withdrawn_at=consent.withdrawn_at,
+        )
+
+
+class ConsentsResponse(CamelModel):
+    items: list[ConsentItem]
