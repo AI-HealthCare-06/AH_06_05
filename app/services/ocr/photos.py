@@ -2,7 +2,7 @@
 
 - upload_job_photos + record_job_photos (= save_job_photos): O-1에서 올린 사진을 저장하고 ocr_jobs.photos에 위치(키)를 적는다
 - purge_expired: 올린 지 PHOTO_RETENTION_HOURS가 지난 사진을 지운다 (성공 · 실패 모두, 시간으로만 지움)
-- delete_user_photos: 한 사용자의 사진을 모두 바로 지운다 (회원 탈퇴 U-3가 만들어지면 사용자를 지우기 전에 부른다.
+- delete_user_photos: 한 사용자의 사진을 모두 바로 지운다 (회원 탈퇴 U-3와 동의 철회 U-5가 부른다.
   사용자를 먼저 지우면 ocr_jobs 행이 함께 지워져 사진 위치를 잃는다)
 
 지우기는 한 장이 실패해도 나머지를 계속 지우고, 실패한 사진은 위치를 남겨 다음에 다시 지운다.
@@ -53,12 +53,15 @@ async def _remove_keys(job_id: int, saved: list[dict[str, Any]]) -> None:
 
 
 async def record_job_photos(job_id: int, saved: list[dict[str, Any]]) -> None:
-    """올린 사진의 위치를 ocr_jobs.photos에 적는다. 적지 못하면 올린 사진을 지운다 (위치를 모르는 사진이 남지 않게)"""
+    """올린 사진의 위치를 ocr_jobs.photos에 적는다. 적지 못하면 올린 사진을 지운다 (위치를 모르는 사진이 남지 않게).
+    사진을 올리는 사이에 작업이 지워졌으면(그 사이 탈퇴 등) 위치를 적을 곳이 없으므로 올린 사진도 바로 지운다"""
     try:
-        await OcrJob.filter(id=job_id).update(photos=saved)
+        updated = await OcrJob.filter(id=job_id).update(photos=saved)
     except Exception:
         await _remove_keys(job_id, saved)
         raise
+    if not updated:
+        await _remove_keys(job_id, saved)
 
 
 async def save_job_photos(job_id: int, user_id: int, blobs: "list[Blob]") -> int:
