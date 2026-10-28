@@ -28,12 +28,15 @@
 //
 // [v1.5 초안 추가, 2026-10-22, 수인] chat_messages.safety 추가(이슈 #100). H-3이 202로 바뀌어 답을 H-2로 받으므로, 서버가 감지한 긴급, 자해 결과를
 //   답 줄에 남겨 카드를 그림. 원문은 담지 않음. 답 만들기가 실패하면 만드는 중이던 줄을 지우고, 30초를 넘긴 줄은 다시 시도 때 지움(status에 failed는 두지 않음).
-//
-// [v1.5 초안 추가, 2026-10-28, 수인] chat_messages.safety_card 노트: 상담 갈래(끊거나 바꾸려는 질문, 증상)에서 카드가 붙으면 answer_type은 refer (#134 리뷰).
-//   표와 칸은 그대로(마이그레이션 없음).
 //   chat_messages.reply_to_id 추가: 답 줄이 어느 질문의 답인지. client_request_id는 질문 줄에만 둘 수 있어서 다시 시도 때 답 줄을 찾으려면 필요함.
 //   chat_sessions.analysis_id: 분석을 지우면(R-8) 비움. 하루 한 대화를 통째로 지우지 않으려고. 대화까지 지울지는 채연과 정함.
 //   (10/23 바꿈) R-8은 그 분석으로 시작한 대화와 그 분석의 맥락 카드가 붙은 대화를 지움(#119 채연 리뷰). FK는 set null 그대로 두고 R-8 코드가 지움.
+//
+// [v1.5 초안 추가, 2026-10-28, 수인] chat_messages.safety_card 노트: 상담 갈래(끊거나 바꾸려는 질문, 증상)에서 카드가 붙으면 answer_type은 refer (#134 리뷰).
+//   표와 칸은 그대로(마이그레이션 없음).
+//
+// [v1.5 초안 추가, 2026-10-28, 수인] users.deleted_at 노트: 탈퇴하면 개인정보 칸은 자리 값(login_id withdrawn-{id}, birth_year 0, sex M)으로 덮어씀 (#136, #137).
+//   표와 칸은 그대로(마이그레이션 없음).
 //
 // [v1.4, 2026-10-08, 채연] 팩트표 v0.12 반영. lifestyle_guides에 group_type(위험 신호, 교차 규칙을 같은 표에 담음),
 //   requires_clinician, goal_eligible, applies_when, show_when_unknown, condition, user_message 추가. lifestyle_guide_actions에 kind(fact 또는
@@ -71,7 +74,7 @@ Table users {
   locked_until       timestamp    [note: 'v1.0 · 잠금 해제 시각 (CM-01-E2)']
   created_at         timestamp    [default: `now()`]
   updated_at         timestamp
-  deleted_at         timestamp    [note: '탈퇴 시 개인정보 파기 후 시각만 남김 (CM-07)']
+  deleted_at         timestamp    [note: '탈퇴 시 개인정보 파기 후 시각을 남김 (CM-07). 개인정보 칸은 자리 값(login_id withdrawn-{id}, birth_year 0, sex M)으로 덮어씀 (#136)']
 
   Note: '성명 · 주민번호 · 연락처 미수집'
 }
