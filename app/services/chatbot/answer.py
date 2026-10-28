@@ -41,6 +41,13 @@ OUT_OF_SCOPE_DRUG = (
     "죄송해요, 그 질문에는 답해 드리기 어려워요. 저는 드시는 약과 생활습관을 안내해 드리는 챗봇이에요. "
     "어떤 약을 드실지는 의사와 약사가 정해요. 약이나 생활습관에 대해 다시 물어봐 주세요."
 )
+# 인사와 감사만 한 말은 범위 밖이어도 사과하지 않음 (#140 채연 리뷰, 10/28 수인 결정, 신규 임시)
+GREETING = "안녕하세요. 드시는 약이나 생활습관에 대해 궁금한 게 있으면 편하게 물어봐 주세요."
+THANKS = "도움이 되었다니 다행이에요. 드시는 약이나 생활습관에 대해 궁금한 게 있으면 편하게 물어봐 주세요."
+_GREET = r"안녕(?:하세요|하십니까)?|반가워요?|반갑습니다|하이|헬로"
+_THANK = r"고마워요?|고맙습니다|감사(?:합니다|해요|드려요)|땡큐|수고(?:하셨어요|하셨습니다|하세요|많으셨어요)"
+# 인사나 감사로만 된 말 (문장부호, ㅎㅎ, ㅋㅋ 정도만 더 붙음). 다른 말이 섞이면 범위 밖 문구 그대로
+_SMALL_TALK = re.compile(rf"(?:(?:{_GREET}|{_THANK})[\s!.,~^ㅎㅋ]*)+")
 
 # 약을 빠뜨린 말 (질문과 허가정보에 같이 씀). "잊", "까먹"은 약을 먹는 말 뒤, "놓쳤"은 먹는 시간 뒤만
 # ("약을 잊지 않으려면", "잊을까 봐", "버스를 놓쳤어요"는 아님, 10/25, 10/26 점검). 먹었는지 모르는 질문도 두 번 먹을 수 있어 같이 봄 (10/25 수인 결정)
@@ -203,10 +210,12 @@ def _drug_question(question: str, cls: dict[str, Any], info: FixedInfo) -> bool:
 
 def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
     """범위 밖은 답 AI 없이 고정 문구. 다만 약을 빠뜨린 질문이면 근거 없음 (분류가 범위 밖으로 흔들려도, 10/25 점검).
-    약 이야기면 의사와 약사가 정한다는 문장이 든 문구 ("아무 약이나 추천해 줘", 골든셋 O3)"""
+    인사나 감사로만 된 말이면 인사 문구, 감사 문구. 약 이야기면 의사와 약사가 정한다는 문장이 든 문구 ("아무 약이나 추천해 줘", 골든셋 O3)"""
     drug = _drug_question(question, cls, info)
     if _missed_question(question) and drug:
         return _no_evidence(cls)
+    if _SMALL_TALK.fullmatch(question.strip()):
+        return Draft("normal", THANKS if re.search(_THANK, question) else GREETING)
     return Draft("normal", OUT_OF_SCOPE_DRUG if drug else OUT_OF_SCOPE)
 
 
