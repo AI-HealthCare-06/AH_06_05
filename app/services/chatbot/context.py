@@ -22,6 +22,15 @@ class UserDrug:
 
 
 @dataclass
+class PairWarning:
+    """분석의 약 두 개짜리 경고 (병용금기, 동일성분, 효능군 중복). 문장은 점검 템플릿 그대로 (NFR-032)"""
+
+    id: int  # analysis_warnings.id (safetyCard warningIds)
+    names: tuple[str, str]  # 분석 화면과 같은 처방 이름
+    summary: str
+
+
+@dataclass
 class FixedInfo:
     """답을 만들 때 늘 넣는 고정 정보 (먹는 약, 진단받은 질환, 나이)"""
 
@@ -30,6 +39,9 @@ class FixedInfo:
     # 근거 검색 범위의 질환 (팩트표 질환 id, 예: HTN). 처방전 질환과 내 정보 질환을 합친 것 (#101, 10/20)
     disease_ids: list[str] = field(default_factory=list)
     drugs: list[UserDrug] = field(default_factory=list)
+    analysis_id: int | None = None  # 고정 정보를 가져온 분석
+    # ⑤ 먹는 약끼리 묻는 질문에 그대로 보여 줄 경고 (AI에게는 보내지 않음, 설계 메모 7-12)
+    pair_warnings: list[PairWarning] = field(default_factory=list)
 
 
 def fixed_info_text(info: FixedInfo) -> str:
