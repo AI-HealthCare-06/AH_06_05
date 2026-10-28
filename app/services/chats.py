@@ -163,7 +163,12 @@ async def ask(
     blocked, _ = pipeline.first_layer(content, emergency_dismissed)
     if blocked:  # 1층이 잡고 문맥 파악이 풀지 않음: 원문을 저장하지 않고 긴급 답을 바로 (설계 메모 4-6)
         answer = await repo.create_question_and_answer(
-            s, "", client_request_id, answer_type=AnswerType(blocked.kind), safety=_safety(blocked)
+            s,
+            "",
+            client_request_id,
+            answer_type=AnswerType(blocked.kind),
+            safety=_safety(blocked),
+            route_kind=blocked.kind,
         )
         if "crisis" in blocked.safety_types:
             await repo.set_safety_mode(s.id, _next_midnight())
@@ -200,8 +205,14 @@ def _sources(ids: list[str]) -> list[dict[str, str]]:
 
 
 def _history(rows: list[ChatMessage]) -> list[dict[str, str]]:
-    """빈 글 줄(1층이 잡은 질문, 긴급 답, 맥락 카드)은 대화 기억에 넣지 않음"""
-    return [{"role": m.role.value, "content": m.content} for m in rows if m.content]
+    """빈 글 줄(1층이 잡은 질문, 긴급 답, 맥락 카드)은 대화 기억에 넣지 않음.
+    범위 밖으로 걸러진 질문과 그 답도 뺌. 앞 대화가 다음 답의 노이즈가 됨 (5회차 멘토링 시연, #99)"""
+    skip = {m.reply_to_id for m in rows if m.route_kind == "out_of_scope"}
+    return [
+        {"role": m.role.value, "content": m.content}
+        for m in rows
+        if m.content and m.route_kind != "out_of_scope" and m.id not in skip
+    ]
 
 
 async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
@@ -240,6 +251,7 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         sources=_sources(reply.sources),
         safety=_safety(r) if r.safety_types else None,
         safety_card=reply.safety_card,
+        route_kind=r.kind,
         model=config.OPENAI_CHAT_MODEL if reply.usage.calls else None,
         prompt_tokens=reply.usage.prompt_tokens,
         completion_tokens=reply.usage.completion_tokens,

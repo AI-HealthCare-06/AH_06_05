@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.chatbot import context_check, evidence, safety_rules
-from app.services.chatbot.answer import REFER, write
+from app.services.chatbot.answer import REFER, out_of_scope, write
 from app.services.chatbot.classify import check_classification, classify, classify_message
 from app.services.chatbot.context import FixedInfo, recent, resolve_ordinal
 from app.services.chatbot.guard import guard
@@ -174,9 +174,11 @@ async def answer(
         if kind in ("next_visit", "soon"):
             return Reply("refer", _check_result(info, REFER[kind]), r, usage=usage, safety_card=card)
         return Reply("normal", _check_result(info), r, usage=usage, safety_card=card)
-    found = None
-    if r.kind != "out_of_scope":
-        found = await evidence.gather(question, cls, info, search, time.perf_counter() - started)
+    if r.kind == "out_of_scope":
+        # 범위 밖은 답 AI 없이 늘 같은 문구 (5회차 멘토링 시연, #99). 다음 질문의 대화 기억에서도 뺌 (chats._history)
+        draft = out_of_scope(question, cls, info)
+        return Reply(draft.answer_type, draft.content, r, usage=usage)
+    found = await evidence.gather(question, cls, info, search, time.perf_counter() - started)
     past, first_turn = _turns(history)
     try:
         draft = await write(question, cls, info, past, first_turn, found, client, usage)

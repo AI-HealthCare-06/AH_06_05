@@ -16,6 +16,7 @@ from app.models.analysis import DrugGuide, ReviewStatus
 from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.users import ConsentType, UserConsent
 from app.services import chats, safety
+from app.services.chatbot.answer import OUT_OF_SCOPE
 from app.services.chatbot.context import FixedInfo
 from app.services.chatbot.llm import Usage
 from app.services.chatbot.pipeline import Reply, Route
@@ -440,3 +441,35 @@ class TestFixedInfo(ChatCase):
             await self.ask(client, headers, sid, EMERGENCY_TEXT)
             await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?", crid="q-2")
         assert self.fake.calls[0]["history"] == []
+
+    async def test_history_skips_out_of_scope_turn(self):
+        """범위 밖으로 걸러진 질문과 그 답은 다음 질문의 대화 기억에 넣지 않음. 앞 대화가 노이즈가 됨
+        (5회차 멘토링 시연 "마이클 잭슨 누구야" 다음 "내가 먹는 약이 뭐야?", #99)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f8@example.com")
+            sid = await self.session(client, headers)
+            self.fake.reply = Reply("normal", OUT_OF_SCOPE, Route(kind="out_of_scope"))
+            await self.ask(client, headers, sid, "마이클 잭슨이 누구야?")
+            self.fake.reply = normal_reply()
+            await self.ask(client, headers, sid, "내가 먹는 약이 뭐야?", crid="q-2")
+            await self.ask(client, headers, sid, "그럼 아침에 먹어?", crid="q-3")
+        assert self.fake.calls[1]["history"] == []
+        assert self.fake.calls[2]["history"] == [
+            {"role": "user", "content": "내가 먹는 약이 뭐야?"},
+            {"role": "assistant", "content": "식사 직후에 드시는 게 좋아요."},
+        ]
+
+    async def test_answer_row_keeps_route_kind(self):
+        """답 줄에 답을 만든 갈래를 남김. 질문 줄은 비움 (1층이 잡은 긴급 답 포함)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f9@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+            await self.ask(client, headers, sid, EMERGENCY_TEXT, crid="q-2")
+        rows = await ChatMessage.filter(session_id=sid).order_by("id")
+        assert [(m.role.value, m.route_kind) for m in rows] == [
+            ("user", None),
+            ("assistant", "medication"),
+            ("user", None),
+            ("assistant", "emergency"),
+        ]
