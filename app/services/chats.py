@@ -15,14 +15,21 @@ from starlette import status
 
 from app.core import config
 from app.core.errors import AppError
-from app.models.analysis import Analysis, AnalysisDisease, AnalysisPrescription, DrugGuide, ReviewStatus
+from app.models.analysis import (
+    Analysis,
+    AnalysisDisease,
+    AnalysisPrescription,
+    AnalysisWarning,
+    DrugGuide,
+    ReviewStatus,
+)
 from app.models.chat import AnswerType, ChatMessage, ChatSession, MessageStatus
 from app.models.ocr import MatchStatus, PrescriptionItem
 from app.models.users import User
 from app.repositories.chat import ChatRepository
 from app.services import safety
 from app.services.chatbot import pipeline
-from app.services.chatbot.context import FixedInfo, UserDrug
+from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
 from app.services.chatbot.evidence import JOB_LIMIT_SEC
 from app.services.chatbot.llm import make_client
 from app.services.chatbot.pipeline import Reply, Route
@@ -232,6 +239,7 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         content=reply.content or "",
         sources=_sources(reply.sources),
         safety=_safety(r) if r.safety_types else None,
+        safety_card=reply.safety_card,
         model=config.OPENAI_CHAT_MODEL if reply.usage.calls else None,
         prompt_tokens=reply.usage.prompt_tokens,
         completion_tokens=reply.usage.completion_tokens,
@@ -239,6 +247,27 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
     )
     if saved and "crisis" in r.safety_types:
         await repo.set_safety_mode(s.id, _next_midnight())
+
+
+# 약 두 개짜리 경고 (⑤ 먹는 약끼리 묻는 질문, 노인주의, 연령금기, 용량, 여러 약 복용은 약 하나짜리라 뺌)
+PAIR_WARNINGS = ("interaction", "duplicate_ingredient", "duplicate_efficacy")
+
+
+def _item_name(it: PrescriptionItem) -> str:
+    return base_name(it.drug.item_name) if it.drug else it.raw_name  # 분석 화면(R-4)과 같은 이름
+
+
+async def _pair_warnings(aid: int) -> list[PairWarning]:
+    rows = (
+        await AnalysisWarning.filter(analysis_id=aid, warning_type__in=PAIR_WARNINGS)
+        .order_by("id")
+        .prefetch_related("item_a__drug", "item_b__drug")
+    )
+    return [
+        PairWarning(w.id, (_item_name(w.item_a), _item_name(w.item_b)), w.summary or "")
+        for w in rows
+        if w.item_a and w.item_b  # 처방을 지워 약이 빠진 경고는 뺌
+    ]
 
 
 # ── 고정 정보 (설계 메모 7-11) ─────────────────────────────────────────────────────────────
@@ -258,6 +287,8 @@ async def fixed_info(user: User, s: ChatSession) -> FixedInfo:
     aid = await _analysis_for(user, s)
     if aid is None:
         return info
+    info.analysis_id = aid
+    info.pair_warnings = await _pair_warnings(aid)
 
     rx_ids = await AnalysisPrescription.filter(analysis_id=aid).values_list("prescription_id", flat=True)
     items = (

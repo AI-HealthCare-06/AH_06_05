@@ -1,9 +1,10 @@
 """질문부터 답까지 (#99 PR 2-1). 근거 검색과 OpenAI는 가짜로 바꿔 흐름만 확인 (CI에서 부르지 않음)."""
 
+from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot.answer import NO_EVIDENCE, REFER, clean_text, output_guard
-from app.services.chatbot.context import FixedInfo, UserDrug
+from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
 from app.services.chatbot.llm import LLMError, Usage
 from app.services.chatbot.pipeline import answer
 from app.services.rag.gate import Verdicts
@@ -537,3 +538,87 @@ async def test_meal_skip_in_permit_is_not_missed_dose_guide():
         meal = Evidence("D:644300010:P5", "drug_permit", "644300010", None, "P", "주의", text)
         r = await answer("다이아벡스를 깜빡했어요", S0, [], FakeChat(reply=reply), search=FakeSearch(found(meal)))
         assert r.answer_type == "no_evidence", text
+
+
+# ⑤ 이미 계산된 점검 결과로 답하기 (설계 메모 7-12, #116 safetyCard, 10/26 수인 결정)
+NSAID = PairWarning(
+    31, ("낙센에프서방정1000밀리그램(나프록센)", "스로펜정(이부프로펜)"), "효과가 비슷한 약을 함께 드시고 있어요"
+)
+STATIN = PairWarning(
+    32,
+    ("아토르스타정10밀리그램(아토르바스타틴칼슘삼수화물)", "로바가정10밀리그램(로수바스타틴칼슘)"),
+    "효과가 비슷한 약을 함께 드시고 있어요",
+)
+S_WARN = replace(S0, analysis_id=7, pair_warnings=[NSAID, STATIN])
+
+
+@sync
+async def test_own_drugs_question_answers_with_check_result_without_ai():
+    """먹는 약끼리 묻는 질문은 분석의 경고를 템플릿으로 답하고 근거 검색과 답 AI를 부르지 않음 (NFR-032).
+    경고 사이와 끝 문장 앞은 빈 줄 (좁은 화면에서 접힌 줄과 다음 덩어리가 구분되지 않아서)"""
+    chat, search = FakeChat(classify=classified(about_user_drugs=True)), FakeSearch()
+    r = await answer("같이 먹으면 안 되는 약 있어?", S_WARN, [], chat, search=search)
+    assert r.answer_type == "normal" and r.safety_card == {"analysisId": 7, "warningIds": [31, 32]}
+    assert r.content == (
+        "분석에서 확인된, 같이 먹을 때 주의할 점이에요.\n"
+        "낙센에프서방정1000밀리그램(나프록센), 스로펜정(이부프로펜): 효과가 비슷한 약을 함께 드시고 있어요\n\n"
+        "아토르스타정10밀리그램(아토르바스타틴칼슘삼수화물), 로바가정10밀리그램(로수바스타틴칼슘): "
+        "효과가 비슷한 약을 함께 드시고 있어요\n\n"
+        "위 내용은 분석 결과에서 자세히 볼 수 있어요. 약사에게 확인해 주세요."
+    )
+    assert "answer" not in chat.calls and search.calls == [] and r.sources == []
+
+
+@sync
+async def test_own_drugs_question_without_warning_goes_to_search():
+    """경고가 없으면 "걸린 항목이 없어요"로 답하지 않고 지금처럼 근거 검색 (안전하다고 읽힐 수 있어서)"""
+    chat, search = FakeChat(classify=classified(about_user_drugs=True)), FakeSearch()
+    r = await answer("같이 먹으면 안 되는 약 있어?", replace(S0, analysis_id=7), [], chat, search=search)
+    assert r.safety_card is None and "answer" in chat.calls and search.calls
+
+
+@sync
+async def test_other_questions_do_not_use_check_result():
+    """먹는 약끼리 묻지 않으면 경고가 있어도 지금처럼 근거로 답함"""
+    chat = FakeChat(classify=classified(about_user_drugs=False))
+    r = await answer("자몽주스 마셔도 돼요?", S_WARN, [], chat, search=FakeSearch())
+    assert r.safety_card is None and "answer" in chat.calls
+
+
+@sync
+async def test_check_result_for_doctor_question_ends_with_refer_guide():
+    """끊거나 바꾸려는 질문(next_visit)과 증상(soon)은 경고를 보여 주고 끝 문장을 그 상담 문구로 (#134 리뷰 1번, 10/27 수인 결정).
+    약을 끊는 건 의사 판단이라 약사 안내로 끝나면 상담 대상이 바뀜"""
+    for kind in ("next_visit", "soon"):
+        chat = FakeChat(classify=classified(category="refer", refer_kind=kind, about_user_drugs=True))
+        r = await answer("이 약들 끊어도 되는지, 같이 먹어도 되는지 궁금해요", S_WARN, [], chat, search=FakeSearch())
+        assert r.answer_type == "refer" and r.safety_card == {"analysisId": 7, "warningIds": [31, 32]}, kind
+        assert r.content.startswith("분석에서 확인된, 같이 먹을 때 주의할 점이에요.\n낙센에프"), kind
+        assert r.content.endswith("드시고 있어요\n\n" + REFER[kind]) and "약사에게" not in r.content, kind
+        assert "answer" not in chat.calls, kind
+
+
+@sync
+async def test_check_result_for_pharmacist_question_keeps_tail():
+    chat = FakeChat(classify=classified(category="refer", refer_kind="pharmacist", about_user_drugs=True))
+    r = await answer("낙센에프랑 스로펜 같이 먹어도 돼요?", S_WARN, [], chat, search=FakeSearch())
+    assert r.answer_type == "normal" and r.content.endswith(
+        "위 내용은 분석 결과에서 자세히 볼 수 있어요. 약사에게 확인해 주세요."
+    )
+
+
+@sync
+async def test_non_drug_intake_question_skips_check_result():
+    """술, 음식, 영양제처럼 점검에 없는 것을 같이 물으면 분류가 먹는 약끼리로 흔들려도 템플릿을 쓰지 않음.
+    약끼리 경고만 나가면 술은 괜찮다고 읽힐 수 있음 (#134 리뷰 2번, 실제 분류 10번 중 3번, 10/27 수인 결정)"""
+    for q in (
+        "다이아벡스랑 술 같이 마셔도 돼요?",
+        "이 약들 먹으면서 자몽주스 마셔도 돼요?",
+        "영양제랑 같이 먹어도 돼요?",
+    ):
+        chat, search = FakeChat(classify=classified(about_user_drugs=True)), FakeSearch()
+        r = await answer(q, S_WARN, [], chat, search=search)
+        assert r.safety_card is None and "answer" in chat.calls and search.calls, q
+    chat = FakeChat(classify=classified(about_user_drugs=True))
+    r = await answer("수술 전에 이 약들 같이 먹어도 돼요?", S_WARN, [], chat, search=FakeSearch())
+    assert r.safety_card is not None  # "수술"의 "술"은 술이 아님

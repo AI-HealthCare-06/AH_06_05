@@ -19,7 +19,8 @@ from app.services import chats, safety
 from app.services.chatbot.context import FixedInfo
 from app.services.chatbot.llm import Usage
 from app.services.chatbot.pipeline import Reply, Route
-from app.tests.analysis_apis.test_analysis_apis import AnalysisCase
+from app.services.drug_names import base_name
+from app.tests.analysis_apis.test_analysis_apis import PRODUCTS, AnalysisCase
 
 API = "/api/v1/chat/sessions"
 EMERGENCY_TEXT = "약 먹고 나서 가슴이 조여요"  # 1층 chest
@@ -390,6 +391,33 @@ class TestFixedInfo(ChatCase):
                 await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
             items = await self.items(client, headers, sid)
         assert self.fake.calls[0]["info"].drugs[0].ingredient == "" and items[-1]["status"] == "done"
+
+    async def test_pair_warnings_of_the_analysis_are_passed(self):
+        """⑤에 쓰는 약 두 개짜리 경고. 이름은 분석 화면과 같은 처방 이름 그대로 (10/26 수인 결정)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f6@example.com")
+            rx = await self.prescription(user, ["645600020", "648800030"])  # 시험용 병용금기
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            sid = await self.session(client, headers, analysisId=aid)
+            await self.ask(client, headers, sid, "같이 먹으면 안 되는 약 있어?")
+        info = self.fake.calls[0]["info"]
+        assert info.analysis_id == aid and len(info.pair_warnings) == 1
+        w = info.pair_warnings[0]
+        assert set(w.names) == {base_name(PRODUCTS[2][1]), base_name(PRODUCTS[3][1])}
+        assert w.summary == "함께 드시면 안 되는 약이에요"
+
+    async def test_safety_card_is_saved_and_returned(self):
+        """점검 결과로 답하면 answerType은 normal, safetyCard는 H-2에 그대로 (명세서 v1.5 초안 H-2)"""
+        card = {"analysisId": 7, "warningIds": [31, 32]}
+        self.fake.reply = Reply("normal", "분석에서 확인된, 같이 먹을 때 주의할 점이에요.", Route(kind="medication"))
+        self.fake.reply.safety_card = card
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f7@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "같이 먹으면 안 되는 약 있어?")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["answerType"] == "normal" and items[-1]["safetyCard"] == card
+        assert "safetyCard" not in items[0]  # 카드가 없는 줄은 칸을 생략
 
     async def test_no_consent_means_general_info_only(self):
         async with self.client() as client:
