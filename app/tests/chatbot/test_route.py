@@ -168,6 +168,43 @@ async def test_pregnancy_goes_to_refer():
 
 
 @sync
+async def test_food_chip_goes_to_medication():
+    """추천 칩 "같이 먹으면 안 되는 음식"을 분류가 범위 밖으로 봐도 약 갈래로 (10/27 실제 분류 3번 중 3번 범위 밖)"""
+    for q in (
+        "같이 먹으면 안 되는 음식이 있나요?",
+        "약이랑 함께 먹으면 안 되는 음식 있어?",
+        "피해야 할 음식이 있나요?",
+    ):
+        r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+        assert r.kind == "medication", q
+
+
+@sync
+async def test_analysis_chip_asks_about_user_drugs():
+    """분석 칩은 먹는 약끼리 묻는 질문으로 (분석의 경고가 있으면 점검 결과로 답함)"""
+    r = await route(
+        "이번 분석에서 가장 조심할 건 뭔가요?", S0, [], FakeChat(classify=classified(category="out_of_scope"))
+    )
+    assert r.kind == "medication" and r.classification["about_user_drugs"] is True
+
+
+@sync
+async def test_this_analysis_rule_keeps_classification_for_drug_questions():
+    """질문에 "이번 분석"만 있으면 먹는 약끼리로 바꾸지 않음. 분석 칩처럼 가장 조심할 것을 물을 때만 (#135 채연 리뷰)"""
+    r = await route("이번 분석에 나온 노바스크는 어떻게 먹어야 하나요?", S0, [], FakeChat(classify=classified()))
+    assert r.kind == "medication" and r.classification["about_user_drugs"] is False
+
+
+@sync
+async def test_chip_rules_do_not_override_refer_or_other_questions():
+    chat = FakeChat(classify=classified(category="refer", refer_kind="pharmacist"))
+    assert (await route("같이 먹으면 안 되는 음식이 있나요?", S0, [], chat)).kind == "refer"
+    for q in ("마이클 잭슨이 누구야?", "오늘 저녁 음식 추천해 줘", "분석이 뭐예요?"):
+        r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+        assert r.kind == "out_of_scope" and not r.classification["about_user_drugs"], q
+
+
+@sync
 async def test_refer_passes_through():
     chat = FakeChat(classify=classified(category="refer", refer_kind="next_visit"))
     r = await route("혈압이 정상이 됐는데 약을 끊어도 되나요?", S0, [], chat)
