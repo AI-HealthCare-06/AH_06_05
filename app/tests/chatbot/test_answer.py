@@ -6,7 +6,7 @@ from typing import Any
 from app.services.chatbot.answer import NO_EVIDENCE, OUT_OF_SCOPE, OUT_OF_SCOPE_DRUG, REFER, clean_text, output_guard
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
 from app.services.chatbot.llm import LLMError, Usage
-from app.services.chatbot.pipeline import answer
+from app.services.chatbot.pipeline import ANALYSIS_GUIDE, answer
 from app.services.rag.gate import Verdicts
 from app.services.rag.pipeline import Evidence, SearchResult
 from app.tests.chatbot.test_route import classified, sync
@@ -547,6 +547,59 @@ async def test_meal_skip_in_permit_is_not_missed_dose_guide():
         assert r.answer_type == "no_evidence", text
 
 
+@sync
+async def test_this_drug_name_is_used_as_plain_text():
+    """약 이름은 바꿀 글자 그대로 넣음. 이름에 역슬래시가 있어도 정규식 치환 문법으로 읽지 않음 (#135 채연 리뷰)"""
+    odd = replace(S0, drugs=[UserDrug("가짜\\1정\\g<0>", "성분", "", "", code="641900040")])
+    row = Evidence("D:641900040:S1", "drug_permit", "641900040", None, "S", "주의", "이 약의 혈중 농도가 증가")
+    chat = FakeChat()
+    await answer("가짜 약 주의할 점 있어요?", odd, [], chat, search=FakeSearch(found(row)))
+    assert "가짜\\\\1정\\\\g<0>의 혈중 농도" in chat.seen["answer"]
+
+
+@sync
+async def test_this_drug_in_permit_becomes_drug_name():
+    """허가 원문의 "이 약"은 AI에게 넘길 때 그 약 이름으로 (다른 약 근거의 "이 약"을 엉뚱한 약으로 옮긴 문제, 10/26 채연 Q1)"""
+    texts = ("로바가정과 병용하는 경우, 이 약의 혈중 농도가 증가", "이약을 투여 받는 동안", "이 약물을 투여받는 동안")
+    rows = [
+        Evidence(f"D:641900040:S{i}", "drug_permit", "641900040", None, "S", "주의", t) for i, t in enumerate(texts)
+    ]
+    rows.append(
+        Evidence("D:641900040:S9", "drug_permit", "641900040", None, "S", "주의", "효과가 있는 것이 약효를 높임")
+    )
+    other_words, comma_end = (
+        "이 약국, 이 약사, 이 약제, 이 약효, 이 약품, 이 약리작용, 이 약가 인하",
+        "다른 약과 이 약, 함께 두지 말 것: 이 약",
+    )
+    rows.append(Evidence("D:641900040:S8", "drug_permit", "641900040", None, "S", "주의", other_words))
+    rows.append(Evidence("D:641900040:S7", "drug_permit", "641900040", None, "S", "주의", comma_end))
+    chat = FakeChat()
+    await answer("노바스크 주의할 점 있어요?", S0, [], chat, search=FakeSearch(found(*rows)))
+    sent = chat.seen["answer"]
+    assert "노바스크정5밀리그람의 혈중 농도" in sent and "노바스크정5밀리그람을 투여" in sent
+    assert sent.count("노바스크정5밀리그람을 투여받는") == 1 and "것이 약효" in sent
+    assert not any(w in sent for w in ("이 약의", "이약을", "이 약물"))
+    # 뒤가 조사나 한글이 아닌 글자일 때만 바꿈. 다른 낱말("이 약효", "이 약리작용")은 그대로 (#135 채연 리뷰 참고)
+    assert other_words in sent
+    assert "다른 약과 노바스크정5밀리그람, 함께 두지 말 것: 노바스크정5밀리그람" in sent
+
+
+@sync
+async def test_analysis_chip_answers_with_guide_without_ai():
+    """분석 칩은 근거 검색과 답 AI 없이 분석 결과 화면 안내로. AI가 허가정보를 분석 결론처럼 말함 (10/27 측정 3번 중 3번)"""
+    chat, search = FakeChat(classify=classified(category="out_of_scope")), FakeSearch()
+    r = await answer("이번 분석에서 가장 조심할 건 뭔가요?", S0, [], chat, search=search)
+    assert (r.answer_type, r.content) == ("normal", ANALYSIS_GUIDE)
+    assert "answer" not in chat.calls and search.calls == [] and r.sources == []
+
+
+@sync
+async def test_analysis_guide_takes_reworded_chip():
+    chat = FakeChat(classify=classified(category="out_of_scope"))
+    r = await answer("이번 분석에서 제일 주의할 약이 뭐예요?", S0, [], chat, search=FakeSearch())
+    assert r.content == ANALYSIS_GUIDE
+
+
 # ⑤ 이미 계산된 점검 결과로 답하기 (설계 메모 7-12, #116 safetyCard, 10/26 수인 결정)
 NSAID = PairWarning(
     31, ("낙센에프서방정1000밀리그램(나프록센)", "스로펜정(이부프로펜)"), "효과가 비슷한 약을 함께 드시고 있어요"
@@ -574,6 +627,13 @@ async def test_own_drugs_question_answers_with_check_result_without_ai():
         "위 내용은 분석 결과에서 자세히 볼 수 있어요. 약사에게 확인해 주세요."
     )
     assert "answer" not in chat.calls and search.calls == [] and r.sources == []
+
+
+@sync
+async def test_analysis_question_for_doctor_stays_refer():
+    chat = FakeChat(classify=classified(category="refer", refer_kind="next_visit"))
+    r = await answer("이번 분석 보고 약을 끊어도 되나요?", S0, [], chat, search=FakeSearch())
+    assert r.answer_type == "refer"
 
 
 @sync
@@ -629,3 +689,22 @@ async def test_non_drug_intake_question_skips_check_result():
     chat = FakeChat(classify=classified(about_user_drugs=True))
     r = await answer("수술 전에 이 약들 같이 먹어도 돼요?", S_WARN, [], chat, search=FakeSearch())
     assert r.safety_card is not None  # "수술"의 "술"은 술이 아님
+
+
+@sync
+async def test_analysis_chip_with_warnings_answers_with_check_result():
+    """경고가 있는 분석의 분석 칩은 분석 안내보다 ⑤ 점검 결과가 먼저 (#134와 합칠 때 채연 리뷰)"""
+    chat = FakeChat(classify=classified(category="out_of_scope"))
+    r = await answer("이번 분석에서 가장 조심할 건 뭔가요?", S_WARN, [], chat, search=FakeSearch())
+    assert r.safety_card == {"analysisId": 7, "warningIds": [31, 32]} and "answer" not in chat.calls
+
+
+@sync
+async def test_this_analysis_drug_question_answers_from_evidence():
+    """질문에 "이번 분석"이 들어가도 약 하나의 복용법이나 부작용을 물으면 분석 안내나 점검 결과가 아니라 근거로 답함
+    (#135 채연 리뷰: 실제 분류 10번 중 10번 분석 안내만 나옴)"""
+    for q in ("이번 분석에 나온 노바스크는 어떻게 먹어야 하나요?", "이번 분석 결과에 나온 다이아벡스 부작용이 뭐예요?"):
+        for info in (S0, S_WARN):
+            chat = FakeChat(classify=classified(category="medication"))
+            r = await answer(q, info, [], chat, search=FakeSearch())
+            assert r.content != ANALYSIS_GUIDE and r.safety_card is None and "answer" in chat.calls, q

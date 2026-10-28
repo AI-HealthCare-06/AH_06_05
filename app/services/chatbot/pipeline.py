@@ -20,7 +20,7 @@ from typing import Any
 
 from app.services.chatbot import context_check, evidence, safety_rules
 from app.services.chatbot.answer import REFER, out_of_scope, write
-from app.services.chatbot.classify import check_classification, classify, classify_message
+from app.services.chatbot.classify import asks_this_analysis, check_classification, classify, classify_message
 from app.services.chatbot.context import FixedInfo, recent, resolve_ordinal
 from app.services.chatbot.guard import guard
 from app.services.chatbot.llm import ChatClient, LLMError, Usage
@@ -28,6 +28,9 @@ from app.services.rag.pipeline import search as rag_search
 
 CLARIFY_GUESS = "앞에서 말씀하신 약이 어떤 약인지 다시 알려 주시겠어요?"  # 기억 밖의 약을 단정하지 않음
 CLARIFY_DEFAULT = "어떤 약을 말씀하시는지 알려 주시겠어요?"
+# 분석 칩에 근거로 답하면 AI가 허가정보를 분석 결론처럼 말함 (10/27 측정 3번 중 3번). 분석 결과는 분석 화면이 보여 줌.
+# "확인된 경고가 없어요"라고 하지 않음 (안전하다는 말로 읽힐 수 있어서, 10/26 수인 결정). 화면 문구라 신규 임시 (10/27 수인 결정)
+ANALYSIS_GUIDE = "이번 분석에서 가장 조심할 점은 분석 결과 화면에서 확인해 주세요. 궁금한 점은 약사에게 확인해 주세요."
 
 
 @dataclass
@@ -174,6 +177,8 @@ async def answer(
         if kind in ("next_visit", "soon"):
             return Reply("refer", _check_result(info, REFER[kind]), r, usage=usage, safety_card=card)
         return Reply("normal", _check_result(info), r, usage=usage, safety_card=card)
+    if r.kind == "medication" and asks_this_analysis(question):
+        return Reply("normal", ANALYSIS_GUIDE, r, usage=usage)
     if r.kind == "out_of_scope":
         # 범위 밖은 답 AI 없이 늘 같은 문구 (5회차 멘토링 시연, #99). 다음 질문의 대화 기억에서도 뺌 (chats._history)
         draft = out_of_scope(question, cls, info)
