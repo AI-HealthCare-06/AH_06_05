@@ -541,6 +541,16 @@ async def test_meal_skip_in_permit_is_not_missed_dose_guide():
 
 
 @sync
+async def test_this_drug_name_is_used_as_plain_text():
+    """약 이름은 바꿀 글자 그대로 넣음. 이름에 역슬래시가 있어도 정규식 치환 문법으로 읽지 않음 (#135 채연 리뷰)"""
+    odd = replace(S0, drugs=[UserDrug("가짜\\1정\\g<0>", "성분", "", "", code="641900040")])
+    row = Evidence("D:641900040:S1", "drug_permit", "641900040", None, "S", "주의", "이 약의 혈중 농도가 증가")
+    chat = FakeChat()
+    await answer("가짜 약 주의할 점 있어요?", odd, [], chat, search=FakeSearch(found(row)))
+    assert "가짜\\\\1정\\\\g<0>의 혈중 농도" in chat.seen["answer"]
+
+
+@sync
 async def test_this_drug_in_permit_becomes_drug_name():
     """허가 원문의 "이 약"은 AI에게 넘길 때 그 약 이름으로 (다른 약 근거의 "이 약"을 엉뚱한 약으로 옮긴 문제, 10/26 채연 Q1)"""
     texts = ("로바가정과 병용하는 경우, 이 약의 혈중 농도가 증가", "이약을 투여 받는 동안", "이 약물을 투여받는 동안")

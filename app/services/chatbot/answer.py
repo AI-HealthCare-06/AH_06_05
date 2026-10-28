@@ -197,7 +197,7 @@ def _evidence_json(evidence: list[Evidence], info: FixedInfo) -> str:
             "번호": e.sentence_id,
             "무엇에 대한 글": names.get(e.drug_code or "", e.drug_code) or e.disease_code or "질환이 겹칠 때",
             "제목": e.heading,
-            "글": _THIS_DRUG.sub(names[e.drug_code], e.text)
+            "글": _THIS_DRUG.sub(lambda _, name=names[e.drug_code]: name, e.text)
             if e.source == "drug_permit" and e.drug_code in names
             else e.text,
         }
