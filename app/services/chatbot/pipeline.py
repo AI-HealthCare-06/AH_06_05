@@ -24,6 +24,7 @@ from app.services.chatbot.classify import asks_this_analysis, check_classificati
 from app.services.chatbot.context import FixedInfo, recent, resolve_ordinal
 from app.services.chatbot.guard import guard
 from app.services.chatbot.llm import ChatClient, LLMError, Usage
+from app.services.rag.gate import Verdicts
 from app.services.rag.pipeline import search as rag_search
 
 CLARIFY_GUESS = "앞에서 말씀하신 약이 어떤 약인지 다시 알려 주시겠어요?"  # 기억 밖의 약을 단정하지 않음
@@ -66,6 +67,17 @@ def first_layer(question: str, emergency_dismissed: bool = False) -> tuple[Route
     if rule.hit and release is None:
         return _safety(rule.types, 1, rule.rules, rule.overdose), None
     return None, release
+
+
+_VERDICT_NAMES = {"ENOUGH", "PARTIAL", "INSUFFICIENT", "FULL", "NONE"}
+
+
+def _verdicts(v: Verdicts | None) -> str | None:
+    """판정 세 가지를 로그 한 줄로. 판정 AI가 돌려준 값이라 알려진 이름만 남기고 나머지는 ? (글이 섞이지 않게)"""
+    if v is None:
+        return None
+    a, b, c = (x if x in _VERDICT_NAMES else "?" for x in (v.a, v.b, v.c))
+    return f"a={a} b={b}/{'direct' if v.b_direct else 'indirect'} c={c}"
 
 
 async def route(
@@ -126,6 +138,8 @@ class Reply:
     evidence_reason: str | None = None
     usage: Usage = field(default_factory=Usage)
     safety_card: dict[str, Any] | None = None  # ⑤ { analysisId, warningIds } (명세서 v1.5 초안 H-2, H-3)
+    # 판정에서 막혔을 때(insufficient, risk_blocked) 어느 판정이 막았는지 로그용 요약 (#124 채연 리뷰)
+    evidence_verdicts: str | None = None
 
 
 # ⑤ 점검 결과로 답할 때의 앞뒤 문장 (화면 문구, 신규 임시, 10/26 수인 결정. 와이어프레임에는 나중에 맞춤)
@@ -191,4 +205,5 @@ async def answer(
         return Reply("error", None, r, evidence_reason=found.reason if found else None, usage=usage)
     # 출력 가드레일에 걸렸으면 그 이유를 근거 없음 이유 자리에 (#124가 병합되면 대화 API가 메시지 번호와 같이 로그에 남김)
     reason = f"output_guard:{draft.blocked}" if draft.blocked else (found.reason if found else None)
-    return Reply(draft.answer_type, draft.content, r, draft.sources, reason, usage)
+    verdicts = _verdicts(found.verdicts) if found and found.reason in ("insufficient", "risk_blocked") else None
+    return Reply(draft.answer_type, draft.content, r, draft.sources, reason, usage, evidence_verdicts=verdicts)

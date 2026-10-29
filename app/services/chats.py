@@ -241,8 +241,9 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         # 근거 없음 원인(no_candidate 등)을 서버 로그로 찾게 (10/25). 질문 글과 약 이름은 남기지 않고 개수만.
         # 서버는 이 로거에 출력 설정이 없어 WARNING부터 보이므로 warning으로 남김
         logger.warning(
-            "챗봇 근거 없음 message=%s answer=%s kind=%s reason=%s drugs=%s diseases=%s",
-            answer.id, reply.answer_type, r.kind, reply.evidence_reason, len(info.drugs), len(info.disease_ids),
+            "챗봇 근거 없음 message=%s answer_type=%s kind=%s reason=%s verdicts=%s drugs=%s diseases=%s",
+            answer.id, reply.answer_type, r.kind, reply.evidence_reason, reply.evidence_verdicts,
+            len(info.drugs), len(info.disease_ids),
         )  # fmt: skip
     saved = await repo.finish(
         answer.id,
