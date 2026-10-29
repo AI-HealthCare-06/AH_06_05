@@ -58,10 +58,15 @@ DISTRESS = (
     "많이 힘드셨겠어요. 말씀해 주셔서 고마워요. 지금 마음을 전문 상담사와 이야기해 볼 수 있어요. "
     "자살예방상담전화 109는 24시간 연결돼요. 복약에 관한 질문은 언제든 다시 하실 수 있어요."
 )
+# "지치"는 "지치지 않는 영양제"처럼 바라는 말에도 걸려 지쳐, 지쳤만 봄 (#144 채연 리뷰)
 _DISTRESS = re.compile(
-    r"사는\s*게\s*(?:너무\s*|정말\s*)?(?:힘들|재미없|괴롭)|너무\s*힘들|우울|외로|지쳐|지쳤|지치"
-    r"|그동안\s*(?:정말\s*|너무\s*)?고마웠"
+    r"사는\s*게\s*(?:너무\s*|정말\s*)?(?:힘들|재미없|괴롭)|우울|외로|지쳐|지쳤"
+    r"|그동안\s*(?:정말\s*|너무\s*)?(?:고마웠|감사했)"
 )
+# "너무 힘들"은 약 먹는 일이 힘들다는 말("약 먹기가 너무 힘들어요")이면 빼고 봄.
+# 약 이야기 전체를 빼면 "너무 힘들어서 약도 먹기 싫어요"를 놓쳐서 그 꼴만 지움 (#144 채연 리뷰, 수인 결정)
+_HARD = re.compile(r"너무\s*힘들")
+_MED_CHORE = re.compile(r"(?:먹기|먹는\s*(?:게|것)|복용|챙기기|챙기는\s*(?:게|것))\s*(?:가|이|도|는)?\s*너무\s*힘들")
 
 # 약을 빠뜨린 말 (질문과 허가정보에 같이 씀). "잊", "까먹"은 약을 먹는 말 뒤, "놓쳤"은 먹는 시간 뒤만
 # ("약을 잊지 않으려면", "잊을까 봐", "버스를 놓쳤어요"는 아님, 10/25, 10/26 점검). 먹었는지 모르는 질문도 두 번 먹을 수 있어 같이 봄 (10/25 수인 결정)
@@ -228,7 +233,7 @@ def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
     drug = _drug_question(question, cls, info)
     if _missed_question(question) and drug:
         return _no_evidence(cls)
-    if _DISTRESS.search(question):
+    if _DISTRESS.search(question) or _HARD.search(_MED_CHORE.sub("", question)):
         return Draft("normal", DISTRESS)
     if _SMALL_TALK.fullmatch(question.strip()):
         if re.search(_BYE, question):

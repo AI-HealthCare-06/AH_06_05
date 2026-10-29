@@ -257,6 +257,11 @@ async def test_distress_gets_help_line_instead_of_apology():
         "혼자라 외로워요",
         "다 지쳤어요",
         "너무 지쳐요",
+        # 괴로움과 약이 같이 나와도 도움 연결 (2층 지시문은 약 먹기 싫다는 말을 none으로 봄, #144 점검)
+        "요즘 너무 힘들어서 약도 먹기 싫어요",
+        # "그동안 고마웠어요"와 짝 (#144 채연 리뷰)
+        "그동안 감사했어요",
+        "그동안 정말 감사했습니다",
     ):
         chat = FakeChat(classify=cls)
         r = await answer(q, S0, [], chat, search=FakeSearch())
@@ -267,6 +272,10 @@ async def test_distress_gets_help_line_instead_of_apology():
         ("요즘 피곤해서 힘들어요", OUT_OF_SCOPE),
         ("약 사는 게 어디가 싸요?", OUT_OF_SCOPE_DRUG),
         ("그 드라마 재미없어요", OUT_OF_SCOPE),
+        # 약 먹는 일이 힘들다는 말, 지치지 않게 해 달라는 말은 괴로움이 아님 (#144 채연 리뷰, 실제 분류가 범위 밖으로 보냄)
+        ("약 먹기가 너무 힘들어요", OUT_OF_SCOPE_DRUG),
+        ("약 챙기는 게 너무 힘들어요", OUT_OF_SCOPE_DRUG),
+        ("지치지 않는 영양제 추천해 줘", OUT_OF_SCOPE),
     ):
         r = await answer(q, S0, [], FakeChat(classify=cls), search=FakeSearch())
         assert r.content == want, q
