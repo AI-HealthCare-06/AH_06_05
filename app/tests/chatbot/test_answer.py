@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot.answer import (
+    FAREWELL,
     GREETING,
     NO_EVIDENCE,
     OUT_OF_SCOPE,
@@ -210,6 +211,32 @@ async def test_greeting_and_thanks_get_their_own_fixed_text():
             assert "answer" not in chat.calls, q
     # 인사나 감사 말고 다른 말이 섞이면 범위 밖 문구 그대로
     for q in ("고마워요 근데 마이클 잭슨이 누구야?", "안녕 바보야"):
+        r = await answer(q, S0, [], FakeChat(classify=cls), search=FakeSearch())
+        assert r.content == OUT_OF_SCOPE, q
+
+
+@sync
+async def test_farewell_gets_its_own_fixed_text():
+    """작별 인사도 사과 문구 대신 작별 문구. 감사가 섞여도 작별 문구 (#140 채연 리뷰, 10/29 수인 결정)"""
+    cls = classified(category="out_of_scope")
+    for q in (
+        "안녕히 계세요",
+        "안녕히 가세요~",
+        "안녕히 계십시오",
+        "좋은 하루 되세요!",
+        "좋은 하루 보내세요",
+        "수고하세요",
+        "다음에 또 올게요",
+        "감사합니다 안녕히 계세요",
+        "고마워요. 수고하세요 ㅎㅎ",
+    ):
+        chat = FakeChat(classify=cls)
+        r = await answer(q, S0, [], chat, search=FakeSearch())
+        assert (r.answer_type, r.content) == ("normal", FAREWELL), q
+        assert "answer" not in chat.calls, q
+    # 마지막 인사로도 읽히는 말은 작별 문구로 보내지 않음. "그동안 고마웠어요", "작별 인사 하고 싶어요"는 1층이 2층으로 넘긴 말
+    # (10/16 수인 결정), "잘 있어요", "이제 갈게요"는 같은 이유로 뺌 (10/29 수인 결정)
+    for q in ("그동안 고마웠어요", "잘 있어요", "이제 갈게요", "작별 인사 하고 싶어요"):
         r = await answer(q, S0, [], FakeChat(classify=cls), search=FakeSearch())
         assert r.content == OUT_OF_SCOPE, q
 
