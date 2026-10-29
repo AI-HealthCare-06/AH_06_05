@@ -2,7 +2,7 @@
 // 화면을 만들 때 그 화면 문구를 여기에 이어서 옮김
 
 export const copy = {
-  appName: '[서비스명]', // 이름 확정 전 자리표시
+  appName: '약봄',
   common: {
     back: '뒤로',
     cancel: '취소',
