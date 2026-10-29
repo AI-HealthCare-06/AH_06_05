@@ -107,6 +107,27 @@ async def test_no_evidence_uses_fixed_copy_without_calling_answer():
 
 
 @sync
+async def test_blocked_verdicts_are_kept_for_log():
+    """판정에서 막히면 어느 판정이 막았는지 로그용으로 남김 (#124 채연 리뷰). 판정 이름만 담고 모르는 값은 ?로"""
+    bad = Verdicts(a="INSUFFICIENT", b="PARTIAL", b_direct=False, c="질문 글이 섞인 값")
+    r = await answer(
+        "자몽주스 마셔도 돼요?",
+        S0,
+        [],
+        FakeChat(),
+        search=FakeSearch(SearchResult(reason="insufficient", verdicts=bad)),
+    )
+    assert (r.evidence_reason, r.evidence_verdicts) == ("insufficient", "a=INSUFFICIENT b=PARTIAL/indirect c=?")
+    # 검색 전에 끝난 이유(no_candidate 등)와 근거가 있는 답에는 판정이 없음
+    r = await answer(
+        "자몽주스 마셔도 돼요?", S0, [], FakeChat(), search=FakeSearch(SearchResult(reason="no_candidate"))
+    )
+    assert r.evidence_verdicts is None
+    r = await answer("자몽주스 마셔도 돼요?", S0, [], FakeChat(), search=FakeSearch())
+    assert (r.evidence_reason, r.evidence_verdicts) == (None, None)
+
+
+@sync
 async def test_ai_no_evidence_also_uses_fixed_copy():
     reply = {"answer_type": "no_evidence", "content": "아마 괜찮을 거예요", "used_sources": []}
     r = await answer("자몽주스 마셔도 돼요?", S0, [], FakeChat(reply=reply), search=FakeSearch())
