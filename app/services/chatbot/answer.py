@@ -66,7 +66,11 @@ _DISTRESS = re.compile(
 # "너무 힘들"은 약 먹는 일이 힘들다는 말("약 먹기가 너무 힘들어요")이면 빼고 봄.
 # 약 이야기 전체를 빼면 "너무 힘들어서 약도 먹기 싫어요"를 놓쳐서 그 꼴만 지움 (#144 채연 리뷰, 수인 결정)
 _HARD = re.compile(r"너무\s*힘들")
-_MED_CHORE = re.compile(r"(?:먹기|먹는\s*(?:게|것)|복용|챙기기|챙기는\s*(?:게|것))\s*(?:가|이|도|는)?\s*너무\s*힘들")
+# 먹기, 먹는 거, 삼키기, 복용하기, 챙겨 먹는 게처럼 약 먹는 일 자체를 말할 때만 빼고 봄 (#144 채연 승인 참고).
+# "약 먹고 나서", "먹으면", "먹었더니 너무 힘들어요"처럼 먹은 뒤가 힘들다는 말은 그대로
+_MED_CHORE = re.compile(
+    r"(?:(?:먹|삼키|복용하|챙기|챙겨\s*먹)(?:기[가-힣]?|는\s*(?:거|게|것)[가-힣]?)|복용[가-힣]?)\s*너무\s*힘들"
+)
 
 # 약을 빠뜨린 말 (질문과 허가정보에 같이 씀). "잊", "까먹"은 약을 먹는 말 뒤, "놓쳤"은 먹는 시간 뒤만
 # ("약을 잊지 않으려면", "잊을까 봐", "버스를 놓쳤어요"는 아님, 10/25, 10/26 점검). 먹었는지 모르는 질문도 두 번 먹을 수 있어 같이 봄 (10/25 수인 결정)
@@ -227,13 +231,19 @@ def _drug_question(question: str, cls: dict[str, Any], info: FixedInfo) -> bool:
     return about or any(n in question for n in names)
 
 
+def is_distress(question: str) -> bool:
+    """괴로움 낱말이 있는지. 범위 밖 도움 연결 문구와 분류의 먹어도 되는지 규칙(classify)이 같이 씀"""
+    return bool(_DISTRESS.search(question) or _HARD.search(_MED_CHORE.sub("", question)))
+
+
 def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
     """범위 밖은 답 AI 없이 고정 문구. 다만 약을 빠뜨린 질문이면 근거 없음 (분류가 범위 밖으로 흔들려도, 10/25 점검).
-    괴로움 낱말이 있으면 도움 연결 문구. 인사, 감사, 작별로만 된 말이면 인사 문구, 감사 문구, 작별 문구. 약 이야기면 의사와 약사가 정한다는 문장이 든 문구 ("아무 약이나 추천해 줘", 골든셋 O3)"""
+    괴로움 낱말이 있으면 도움 연결 문구(추천을 바라면 아님). 인사, 감사, 작별로만 된 말이면 인사 문구, 감사 문구, 작별 문구. 약 이야기면 의사와 약사가 정한다는 문장이 든 문구 ("아무 약이나 추천해 줘", 골든셋 O3)"""
     drug = _drug_question(question, cls, info)
     if _missed_question(question) and drug:
         return _no_evidence(cls)
-    if _DISTRESS.search(question) or _HARD.search(_MED_CHORE.sub("", question)):
+    # 추천을 바라면 괴로움 낱말이 있어도 의사와 약사가 정한다는 문구 쪽으로 ("우울증 약 아무거나 추천해 줘", 골든셋 O3)
+    if is_distress(question) and "추천" not in question:
         return Draft("normal", DISTRESS)
     if _SMALL_TALK.fullmatch(question.strip()):
         if re.search(_BYE, question):
