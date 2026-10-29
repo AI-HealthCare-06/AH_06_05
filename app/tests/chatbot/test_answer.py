@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot.answer import (
+    DISTRESS,
     FAREWELL,
     GREETING,
     NO_EVIDENCE,
@@ -259,7 +260,46 @@ async def test_farewell_gets_its_own_fixed_text():
     # (10/16 수인 결정), "잘 있어요", "이제 갈게요"는 같은 이유로 뺌 (10/29 수인 결정)
     for q in ("그동안 고마웠어요", "잘 있어요", "이제 갈게요", "작별 인사 하고 싶어요"):
         r = await answer(q, S0, [], FakeChat(classify=cls), search=FakeSearch())
-        assert r.content == OUT_OF_SCOPE, q
+        assert r.content != FAREWELL, q
+
+
+@sync
+async def test_distress_gets_help_line_instead_of_apology():
+    """2층이 위기로 보지 않은 괴로움이 범위 밖으로 가면 사과 대신 E5 도움 연결 문구 (#143, 10/29 실제 답 6번 중 6번 사과, 수인 결정)"""
+    cls = classified(category="out_of_scope")
+    for q in (
+        "요즘 사는 게 너무 힘들어요",
+        "요즘 사는 게 재미없어요",
+        "사는게 힘들다",
+        "요즘 너무 힘들어요",
+        "그동안 고마웠어요",
+        "그동안 정말 고마웠어요",
+        "우울해요",
+        "혼자라 외로워요",
+        "다 지쳤어요",
+        "너무 지쳐요",
+        # 괴로움과 약이 같이 나와도 도움 연결 (2층 지시문은 약 먹기 싫다는 말을 none으로 봄, #144 점검)
+        "요즘 너무 힘들어서 약도 먹기 싫어요",
+        # "그동안 고마웠어요"와 짝 (#144 채연 리뷰)
+        "그동안 감사했어요",
+        "그동안 정말 감사했습니다",
+    ):
+        chat = FakeChat(classify=cls)
+        r = await answer(q, S0, [], chat, search=FakeSearch())
+        assert (r.answer_type, r.content) == ("normal", DISTRESS), q
+        assert "answer" not in chat.calls, q
+    # 몸이 피곤한 말, 약을 사는 말, 남의 이야기는 범위 밖 문구 그대로 ("요즘 피곤해서 힘들어요"는 2층 시험 문장에서도 정상)
+    for q, want in (
+        ("요즘 피곤해서 힘들어요", OUT_OF_SCOPE),
+        ("약 사는 게 어디가 싸요?", OUT_OF_SCOPE_DRUG),
+        ("그 드라마 재미없어요", OUT_OF_SCOPE),
+        # 약 먹는 일이 힘들다는 말, 지치지 않게 해 달라는 말은 괴로움이 아님 (#144 채연 리뷰, 실제 분류가 범위 밖으로 보냄)
+        ("약 먹기가 너무 힘들어요", OUT_OF_SCOPE_DRUG),
+        ("약 챙기는 게 너무 힘들어요", OUT_OF_SCOPE_DRUG),
+        ("지치지 않는 영양제 추천해 줘", OUT_OF_SCOPE),
+    ):
+        r = await answer(q, S0, [], FakeChat(classify=cls), search=FakeSearch())
+        assert r.content == want, q
 
 
 @sync
