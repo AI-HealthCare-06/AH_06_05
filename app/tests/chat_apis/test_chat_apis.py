@@ -420,7 +420,7 @@ class TestFixedInfo(ChatCase):
         info = self.fake.calls[0]["info"]
         assert info.analysis_id == aid and len(info.pair_warnings) == 1
         w = info.pair_warnings[0]
-        assert set(w.names) == {base_name(PRODUCTS[2][1]), base_name(PRODUCTS[3][1])}
+        assert set(w.names) == {base_name(PRODUCTS[2][1]), "아스피린프로텍트정100밀리그람"}  # 수출명은 뗌
         assert w.summary == "함께 드시면 안 되는 약이에요"
 
     async def test_safety_card_is_saved_and_returned(self):

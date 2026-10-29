@@ -13,6 +13,12 @@ def base_name(name: str) -> str:
     return re.sub(r"\s", "", name.split("_(")[0])
 
 
+def display_name(name: str) -> str:
+    """화면에 보내는 이름. base_name에서 약제급여목록 제품명의 수출명("(수출명:…)", " 수출명:…")까지 뗌.
+    이름 맞추기(base_name, normalize_name)는 DB의 item_name_norm과 맞아야 해서 그대로 둠 (10/29 배포 서버 스로펜)"""
+    return re.sub(r"\(*수출명.*$", "", base_name(name))
+
+
 def unify(name: str) -> str:
     """표기 통일: 밀리그람 · mg → 밀리그램 (통일 없이 하면 비슷한 다른 약을 1등으로 고름)"""
     # NFKC로 호환 문자를 먼저 푼다(㎎ → mg · ㎍ → μg · ㎖ → ml). 급여목록 이름 22,045개 중 234개가 이 문자를 쓰는데, 풀지 않으면 "500mg"로 읽은 약이

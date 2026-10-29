@@ -38,7 +38,7 @@ from app.models.ocr import MatchStatus, Prescription, PrescriptionDisease, Presc
 from app.models.users import User, UserHealthProfile
 from app.repositories.chat import ChatRepository
 from app.services import safety
-from app.services.drug_names import base_name
+from app.services.drug_names import display_name
 from app.services.guide import lifestyle, medication, store
 from app.services.prescriptions import has_health_consent
 
@@ -338,7 +338,7 @@ async def prepare_retry(user: User, analysis_id: int) -> tuple[Analysis, Analysi
 def _drug_ref(it: PrescriptionItem) -> dict[str, Any]:
     return {
         "ediCode": it.drug.edi_code if it.drug else None,
-        "itemName": base_name(it.drug.item_name) if it.drug else it.raw_name,
+        "itemName": display_name(it.drug.item_name) if it.drug else it.raw_name,
         "hospitalName": it.prescription.hospital_name,
     }
 
@@ -410,7 +410,7 @@ async def get_result(user: User, analysis_id: int) -> dict[str, Any]:
         {"rawName": i.raw_name, "reason": "excluded" if i.match_status == MatchStatus.EXCLUDED else "unmatched"}
         for i in items
         if i.match_status not in USABLE
-    ] + [{"rawName": base_name(i.drug.item_name), "reason": "not_oral"} for i in usable if i.drug.route != "내복"]
+    ] + [{"rawName": display_name(i.drug.item_name), "reason": "not_oral"} for i in usable if i.drug.route != "내복"]
     checked = _checked_count(items)
     med_id, med_status, med = await _guide_content(a, GuideSection.MEDICATION)
     life_id, life_status, life = await _guide_content(a, GuideSection.LIFESTYLE)
@@ -456,7 +456,7 @@ async def get_warning(user: User, analysis_id: int, warning_id: int) -> dict[str
         "title": TITLES.get(w.warning_type, "확인이 필요해요"),
         "drugs": [
             {
-                "itemName": base_name(r.drug.item_name) if r.drug else r.raw_name,
+                "itemName": display_name(r.drug.item_name) if r.drug else r.raw_name,
                 "hospitalName": r.prescription.hospital_name,
                 "category": medication.category_of(r.drug),
                 "ingredient": names.get(r.drug.edi_code) if r.drug else None,

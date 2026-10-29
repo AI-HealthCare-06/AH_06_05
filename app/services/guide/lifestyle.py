@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models.ocr import PrescriptionItem
-from app.services.drug_names import base_name
+from app.services.drug_names import display_name
 
 FACTS = Path(__file__).resolve().parent / "data" / "lifestyle_facts.json"
 CONFLICT_LABEL = "의료진 상담 필요"
@@ -128,7 +128,7 @@ def build(codes: list[str], items: list[PrescriptionItem], all_codes: list[str] 
                     links.append(
                         {
                             "itemId": it.id,
-                            "itemName": base_name(it.drug.item_name),
+                            "itemName": display_name(it.drug.item_name),
                             "requiresClinician": clinician,
                             "actions": [{"text": s, "kind": "safety_notice", "sourceIds": []} for s in advice],
                         }
