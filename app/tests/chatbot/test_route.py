@@ -33,6 +33,7 @@ S0 = FixedInfo(
         UserDrug("리피토정10밀리그램", "아토르바스타틴", "콜레스테롤", "1일 1회 저녁"),
     ],
 )
+NO_DRUGS = FixedInfo(age=72, diseases=["고혈압"], drugs=[])  # 아직 처방전을 올리지 않은 사용자
 
 
 def classified(**over: Any) -> dict[str, Any]:
@@ -177,6 +178,37 @@ async def test_food_chip_goes_to_medication():
     ):
         r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
         assert r.kind == "medication", q
+
+
+@sync
+async def test_food_or_drink_question_goes_to_medication():
+    """약 이름 없이 먹어도, 마셔도 되는지 물어도 먹는 약이 있으면 약 갈래로. 분류가 이유에는 약과의 상호작용이라 쓰고
+    갈래는 범위 밖으로 고름 (10/29 실제 분류 4번 중 4번, #145 채연 리뷰). 근거 검색은 먹는 약 전체로 찾음"""
+    for q in (
+        "자몽주스 마셔도 돼요?",
+        "커피 마셔도 되나요?",
+        "막걸리 한잔 마셔도 괜찮아요?",
+        "바나나 먹어도 돼요?",
+        "홍삼 드셔도 되나요?",
+        # 먹으면 안 되는지 묻는 꼴 (어르신이 흔히 쓰는 말투)
+        "자몽 먹으면 안 되나요?",
+        "술 마시면 안 돼요?",
+        "우유랑 같이 드시면 괜찮아요?",
+    ):
+        r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+        assert r.kind == "medication", q
+    # 먹는 약이 없으면 찾을 근거가 없어 범위 밖 그대로
+    r = await route("자몽주스 마셔도 돼요?", NO_DRUGS, [], FakeChat(classify=classified(category="out_of_scope")))
+    assert r.kind == "out_of_scope"
+    # 먹어도 되는지 묻지 않는 범위 밖 질문, 추천을 바라는 질문은 그대로 (골든셋 O3 "아무 약이나 추천해 줘")
+    for q in (
+        "아무 약이나 추천해 줘",
+        "같이 먹으면 되는 영양제 추천해 줘",
+        "오늘 저녁 뭐 먹을까요?",
+        "마이클 잭슨이 누구야?",
+    ):
+        r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+        assert r.kind == "out_of_scope", q
 
 
 @sync

@@ -18,6 +18,9 @@ _REFERS_BACK = re.compile(r"(그\s*약|그거|그것|아까|방금|처음|번째
 _PREGNANCY = re.compile(r"(임신|임산부|수유|모유)")
 # 앱 추천 칩. 분류가 범위 밖으로 보내 막다른 답이 나옴 (10/26 채연 서버 시험, 10/27 실제 분류 3번 중 3번)
 _FOOD_AVOID = re.compile(r"((같이|함께)\s*먹으면\s*안\s*되는|피해야\s*할)\s*음식")
+# 약 이름 없이 먹어도, 마셔도 되는지 물음 ("자몽주스 마셔도 돼요?", "자몽 먹으면 안 되나요?"). 분류가 이유에는 약과의 상호작용이라 쓰고 갈래는
+# 범위 밖으로 고름 (10/29 실제 분류 4번 중 4번, #145 채연 리뷰). 음식 이름 목록 대신 묻는 꼴만 봄 (10/29 수인 결정)
+_MAY_EAT = re.compile(r"(먹어도|마셔도|드셔도|먹으면|마시면|드시면)\s*(안\s*)?(돼|되|괜찮)")
 # 분석 칩처럼 분석 전체에서 가장 조심할 것을 물을 때만. "이번 분석에 나온 노바스크 복용법"처럼 약 하나를 물으면 분류대로 (#135 채연 리뷰)
 _THIS_ANALYSIS = re.compile(r"이번\s*분석.*(가장|제일).*(조심|주의)")
 
@@ -76,6 +79,9 @@ def check_classification(
         cls["target_drug"], cls["target_source"] = resolved, "history"  # 코드로 찾은 순서를 따름
     if _FOOD_AVOID.search(question) and cls["category"] == "out_of_scope":
         cls["category"] = "medication"  # 음식과 약 (설계 메모 7-12 ③)
+    # 먹는 약 전체로 근거를 찾음. 먹는 약이 없으면 찾을 근거가 없어 그대로. 추천을 바라면 범위 밖 그대로 (골든셋 O3)
+    if _MAY_EAT.search(question) and cls["category"] == "out_of_scope" and info.drugs and "추천" not in question:
+        cls["category"] = "medication"
     if _THIS_ANALYSIS.search(question) and cls["category"] in ("out_of_scope", "medication"):
         # 경고가 있으면 ⑤ 점검 결과, 없으면 pipeline의 분석 안내
         cls["category"], cls["about_user_drugs"] = "medication", True
