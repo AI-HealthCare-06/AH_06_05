@@ -52,6 +52,16 @@ _THANK = r"고마워요?|고맙습니다|감사(?:합니다|해요|드려요)|�
 _BYE = r"안녕히\s*(?:계세요|가세요|계십시오)|좋은\s*하루\s*(?:되세요|보내세요)|수고하세요|다음에\s*또\s*올게요"
 # 인사, 감사, 작별로만 된 말 (문장부호, ㅎㅎ, ㅋㅋ 정도만 더 붙음). 다른 말이 섞이면 범위 밖 문구 그대로
 _SMALL_TALK = re.compile(rf"(?:(?:{_GREET}|{_THANK}|{_BYE})[\s!.,~^ㅎㅋ]*)+")
+# 2층이 위기로 보지 않은 괴로움이 범위 밖으로 가면 사과 대신 앱 E5 도움 연결 문구(copy crisis, 전문가 검토 후 확정)를 그대로 씀.
+# 2층 판단은 바꾸지 않음. 좁게 시작: "피곤해서 힘들어요", "약 사는 게", "드라마 재미없어요"는 아님 (#143, 10/29 수인 결정)
+DISTRESS = (
+    "많이 힘드셨겠어요. 말씀해 주셔서 고마워요. 지금 마음을 전문 상담사와 이야기해 볼 수 있어요. "
+    "자살예방상담전화 109는 24시간 연결돼요. 복약에 관한 질문은 언제든 다시 하실 수 있어요."
+)
+_DISTRESS = re.compile(
+    r"사는\s*게\s*(?:너무\s*|정말\s*)?(?:힘들|재미없|괴롭)|너무\s*힘들|우울|외로|지쳐|지쳤|지치"
+    r"|그동안\s*(?:정말\s*|너무\s*)?고마웠"
+)
 
 # 약을 빠뜨린 말 (질문과 허가정보에 같이 씀). "잊", "까먹"은 약을 먹는 말 뒤, "놓쳤"은 먹는 시간 뒤만
 # ("약을 잊지 않으려면", "잊을까 봐", "버스를 놓쳤어요"는 아님, 10/25, 10/26 점검). 먹었는지 모르는 질문도 두 번 먹을 수 있어 같이 봄 (10/25 수인 결정)
@@ -214,10 +224,12 @@ def _drug_question(question: str, cls: dict[str, Any], info: FixedInfo) -> bool:
 
 def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
     """범위 밖은 답 AI 없이 고정 문구. 다만 약을 빠뜨린 질문이면 근거 없음 (분류가 범위 밖으로 흔들려도, 10/25 점검).
-    인사, 감사, 작별로만 된 말이면 인사 문구, 감사 문구, 작별 문구. 약 이야기면 의사와 약사가 정한다는 문장이 든 문구 ("아무 약이나 추천해 줘", 골든셋 O3)"""
+    괴로움 낱말이 있으면 도움 연결 문구. 인사, 감사, 작별로만 된 말이면 인사 문구, 감사 문구, 작별 문구. 약 이야기면 의사와 약사가 정한다는 문장이 든 문구 ("아무 약이나 추천해 줘", 골든셋 O3)"""
     drug = _drug_question(question, cls, info)
     if _missed_question(question) and drug:
         return _no_evidence(cls)
+    if _DISTRESS.search(question):
+        return Draft("normal", DISTRESS)
     if _SMALL_TALK.fullmatch(question.strip()):
         if re.search(_BYE, question):
             return Draft("normal", FAREWELL)  # 감사가 섞여도 대화를 끝내는 말이 우선
