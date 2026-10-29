@@ -231,6 +231,11 @@ def _drug_question(question: str, cls: dict[str, Any], info: FixedInfo) -> bool:
     return about or any(n in question for n in names)
 
 
+def is_distress(question: str) -> bool:
+    """괴로움 낱말이 있는지. 범위 밖 도움 연결 문구와 분류의 먹어도 되는지 규칙(classify)이 같이 씀"""
+    return bool(_DISTRESS.search(question) or _HARD.search(_MED_CHORE.sub("", question)))
+
+
 def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
     """범위 밖은 답 AI 없이 고정 문구. 다만 약을 빠뜨린 질문이면 근거 없음 (분류가 범위 밖으로 흔들려도, 10/25 점검).
     괴로움 낱말이 있으면 도움 연결 문구(추천을 바라면 아님). 인사, 감사, 작별로만 된 말이면 인사 문구, 감사 문구, 작별 문구. 약 이야기면 의사와 약사가 정한다는 문장이 든 문구 ("아무 약이나 추천해 줘", 골든셋 O3)"""
@@ -238,8 +243,7 @@ def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
     if _missed_question(question) and drug:
         return _no_evidence(cls)
     # 추천을 바라면 괴로움 낱말이 있어도 의사와 약사가 정한다는 문구 쪽으로 ("우울증 약 아무거나 추천해 줘", 골든셋 O3)
-    distress = _DISTRESS.search(question) or _HARD.search(_MED_CHORE.sub("", question))
-    if distress and "추천" not in question:
+    if is_distress(question) and "추천" not in question:
         return Draft("normal", DISTRESS)
     if _SMALL_TALK.fullmatch(question.strip()):
         if re.search(_BYE, question):

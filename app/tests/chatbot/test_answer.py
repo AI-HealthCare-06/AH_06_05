@@ -288,6 +288,8 @@ async def test_distress_gets_help_line_instead_of_apology():
         "약 먹으면 너무 힘들어요",
         "약 먹었더니 너무 힘들어요",
         "요즘 먹고 살기 너무 힘들어요",
+        # 먹어도 되는지 물어도 괴로움이 먼저 (#147 채연 리뷰, 10/29 수인 결정)
+        "우울한데 술 마셔도 돼요?",
     ):
         chat = FakeChat(classify=cls)
         r = await answer(q, S0, [], chat, search=FakeSearch())
