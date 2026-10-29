@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.chatbot.safety_rules import check
+from app.services.chatbot.safety_rules import asks_amount, check
 
 # (문장, 기대 범주, 과다 복용 여부)
 SHOULD_DETECT = [
@@ -172,3 +172,32 @@ def test_result_has_no_raw_text():
 @pytest.mark.parametrize("text", LEFT_TO_LAYER2)
 def test_left_to_layer2(text):
     assert not check(text).hit, text
+
+
+# 안전 모드(자해 표현 뒤 그 대화 안)에서 E5로 보내는 약의 양 질문 (설계 메모 4-6, 7-2, #116)
+ASKS_AMOUNT = [
+    "노바스크 한 번에 몇 알 먹어요?",
+    "이 약 몇 개 먹으면 돼요?",
+    "하루에 최대 몇 정까지 먹어도 돼요?",
+    "얼마나 먹어도 돼요?",
+    "한꺼번에 먹어도 되나요?",
+    "몇 mg 먹어야 해요?",
+    "가루약은 몇 포 먹어요?",
+]
+NOT_AMOUNT = [
+    "약 언제 먹어요?",
+    "하루에 몇 번 먹어요?",
+    "자몽주스 마셔도 돼요?",
+    "이 약은 무슨 약이에요?",
+    "얼마나 오래 먹어야 해요?",
+]
+
+
+@pytest.mark.parametrize("text", ASKS_AMOUNT)
+def test_asks_amount(text):
+    assert asks_amount(text), text
+
+
+@pytest.mark.parametrize("text", NOT_AMOUNT)
+def test_not_amount(text):
+    assert not asks_amount(text), text
