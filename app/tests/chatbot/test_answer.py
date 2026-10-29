@@ -283,6 +283,13 @@ async def test_distress_gets_help_line_instead_of_apology():
         # "그동안 고마웠어요"와 짝 (#144 채연 리뷰)
         "그동안 감사했어요",
         "그동안 정말 감사했습니다",
+        # 약을 먹은 뒤에 힘들다는 말은 약 먹는 일이 힘들다는 말이 아니라 그대로 도움 연결
+        "약 먹고 나서 너무 힘들어요",
+        "약 먹으면 너무 힘들어요",
+        "약 먹었더니 너무 힘들어요",
+        "요즘 먹고 살기 너무 힘들어요",
+        # 먹어도 되는지 물어도 괴로움이 먼저 (#147 채연 리뷰, 10/29 수인 결정)
+        "우울한데 술 마셔도 돼요?",
     ):
         chat = FakeChat(classify=cls)
         r = await answer(q, S0, [], chat, search=FakeSearch())
@@ -297,6 +304,13 @@ async def test_distress_gets_help_line_instead_of_apology():
         ("약 먹기가 너무 힘들어요", OUT_OF_SCOPE_DRUG),
         ("약 챙기는 게 너무 힘들어요", OUT_OF_SCOPE_DRUG),
         ("지치지 않는 영양제 추천해 줘", OUT_OF_SCOPE),
+        # 먹는 거, 삼키기, 복용하기처럼 약 먹는 일을 다르게 말해도 괴로움이 아님 (#144 채연 승인 참고)
+        ("약 먹는 거 너무 힘들어요", OUT_OF_SCOPE_DRUG),
+        ("약 삼키기가 너무 힘들어요", OUT_OF_SCOPE_DRUG),
+        ("약 복용하기가 너무 힘들어요", OUT_OF_SCOPE_DRUG),
+        ("약 챙겨 먹는 게 너무 힘들어요", OUT_OF_SCOPE_DRUG),
+        # 추천을 바라면 괴로움 낱말이 있어도 의사와 약사가 정한다는 문구 (골든셋 O3, #144 채연 승인 참고)
+        ("우울증 약 아무거나 추천해 줘", OUT_OF_SCOPE_DRUG),
     ):
         r = await answer(q, S0, [], FakeChat(classify=cls), search=FakeSearch())
         assert r.content == want, q
