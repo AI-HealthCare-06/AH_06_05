@@ -41,6 +41,11 @@
 // [v1.5 초안 추가, 2026-10-28, 수인] chat_messages.route_kind 추가(#140): 답 줄에 답을 만든 갈래를 남기고, 범위 밖으로 걸러진 질문과 답은
 //   다음 질문의 대화 기억에서 뺌(5회차 멘토링 시연, #99). 마이그레이션 17번(safety_card 칸 설명도 같이 맞춤).
 //
+// [v1.5 초안 추가, 2026-10-30, 수인] 실천 표 recommendations, habit_goals, habit_records를 서버에 만듦(마이그레이션 18번). rewards는 포인트(P-6)와 함께 뒤로.
+//   recommendations: 팩트표가 코드의 JSON 파일이라 가리킬 표가 없어 guide_id, medication_link_id, action_id 대신 challenge_key(soup, walk, alcohol),
+//   fact_refs(팩트표 "질환 id:항목 이름" 목록), desc(팩트표 글 그대로), caution_label(의료진이 정한 강도로)을 둠. (analysis_id, challenge_key)는 하나만.
+//   habit_goals.end_date는 끝낸 날(다시 고를 때 뺀 목표, 동의 철회). habit_records.value는 그날 총량. 주 단위 다시 고르기(REQ-116)는 뒤로.
+//
 // [v1.4, 2026-10-08, 채연] 팩트표 v0.12 반영. lifestyle_guides에 group_type(위험 신호, 교차 규칙을 같은 표에 담음),
 //   requires_clinician, goal_eligible, applies_when, show_when_unknown, condition, user_message 추가. lifestyle_guide_actions에 kind(fact 또는
 //   safety_notice), scope, use_in_answer 추가하고 source_id는 비워도 되게 바꿈(출처는 새 표 lifestyle_source_links로). 새 표
@@ -365,17 +370,20 @@ Table chat_messages {
 
 Table recommendations {
   id                 bigint      [pk, increment]
-  analysis_id        bigint      [ref: > analyses.id, not null]
-  guide_id           bigint      [ref: > lifestyle_guides.id, note: '질환 기준 추천일 때']
-  medication_link_id bigint      [ref: > lifestyle_medication_links.id, note: '약 기준 추천일 때']
-  action_id          bigint      [ref: > lifestyle_guide_actions.id, note: 'v1.2 · 어떤 실천 항목(출처 포함)에서 나온 추천인지']
+  analysis_id        bigint      [ref: > analyses.id, not null, note: '분석을 지우면 같이 지움 (ON DELETE CASCADE)']
+  challenge_key      varchar(20) [not null, note: 'v1.5, soup / walk / alcohol (9/23에 정한 세 가지)']
   title              varchar(100) [not null, note: '국물 남기기 등']
-  reason_label       varchar(50) [note: '고혈압 / 약과 함께 등 (화면 라벨)']
-  goal_type          varchar(20) [note: 'check / quantity']
+  desc               varchar(200) [note: 'v1.5, 팩트표 글 그대로 (예: 1일 나트륨 2,000mg 이하)']
+  reason_label       varchar(50) [not null, note: '고혈압 / 약과 함께 등 (화면 라벨)']
+  caution_label      varchar(20) [note: 'v1.5, 의료진이 정한 강도로 (허혈성심질환 걷기)']
+  goal_type          varchar(20) [not null, note: 'check / quantity']
   target_value       decimal(10,2) [note: '수량형 목표 (예: 30)']
   unit               varchar(20) [note: '분 등']
-  rank               smallint
+  fact_refs          jsonb       [not null, note: 'v1.5, 팩트표 근거 "질환 id:항목 이름" 목록. guide_id, medication_link_id, action_id 대신 (팩트표가 JSON 파일)']
+  rank               smallint    [not null]
+  created_at         timestamp   [default: `now()`]
 
+  indexes { (analysis_id, challenge_key) [unique] }
   Note: 'AI 추천만으로는 목표가 되지 않음 — 사용자가 골라야 habit_goals 생성 (REQ-110)'
 }
 
@@ -388,7 +396,7 @@ Table habit_goals {
   target_value      decimal(10,2)
   unit              varchar(20)
   start_date        date        [not null]
-  end_date          date        [note: '주 단위 (REQ-116 재선택 흐름 🟡)']
+  end_date          date        [note: 'v1.5, 끝낸 날 (뺀 목표, 동의 철회). 주 단위 다시 고르기 REQ-116은 뒤로']
   status            varchar(20) [note: 'active / ended']
   created_at        timestamp   [default: `now()`]
 
@@ -401,7 +409,7 @@ Table habit_records {
   id          bigint    [pk, increment]
   goal_id     bigint    [ref: > habit_goals.id, not null]
   record_date date      [not null]
-  value       decimal(10,2) [note: '수량형 누적값']
+  value       decimal(10,2) [note: 'v1.5, 수량형 그날 총량 (P-4에서 앱이 총량을 보내 다시 보내도 두 번 더해지지 않음)']
   completed   boolean   [not null, default: false]
   created_at  timestamp [default: `now()`]
 

@@ -579,7 +579,7 @@ async def list_analyses(user: User, cursor: str | None, size: int) -> dict[str, 
 # ── R-8 기록 삭제 ─────────────────────────────────────────────────────────────────────────────
 async def delete_analysis(user: User, analysis_id: int) -> None:
     """분석 결과 · 경고 · 안내문 · 피드백을 지우고, 이 분석에만 쓰인 처방전(약 포함)도 같이 지움 (다른 분석에도 쓰였으면 남김).
-    챗봇 대화는 이 분석으로 시작했거나 이 분석의 맥락 카드가 붙은 대화를 지움 (#100, #119 리뷰 10/23). 실천 목표는 아직 서버에 없음"""
+    챗봇 대화는 이 분석으로 시작했거나 이 분석의 맥락 카드가 붙은 대화를 지움 (#100, #119 리뷰 10/23). 실천 추천은 DB가 같이 지우고 목표와 기록은 연결만 비워 남김"""
     a = await _expire_if_stuck(await _get(user, analysis_id))
     if a.status in (AnalysisStatus.QUEUED, AnalysisStatus.RUNNING):
         raise AppError(
