@@ -13,10 +13,32 @@ def base_name(name: str) -> str:
     return re.sub(r"\s", "", name.split("_(")[0])
 
 
+_PAIR = {"(": ")", "[": "]", "<": ">"}
+
+
 def display_name(name: str) -> str:
-    """화면에 보내는 이름. base_name에서 약제급여목록 제품명의 수출명("(수출명:…)", " 수출명:…")까지 뗌.
-    이름 맞추기(base_name, normalize_name)는 DB의 item_name_norm과 맞아야 해서 그대로 둠 (10/29 배포 서버 스로펜)"""
-    return re.sub(r"\(*수출명.*$", "", base_name(name))
+    """화면에 보내는 이름. base_name에서 약제급여목록 제품명의 수출명부터 뒤를 뗌.
+    이름 맞추기(base_name, normalize_name)는 DB의 item_name_norm과 맞아야 해서 그대로 둠 (10/29 배포 서버 스로펜).
+    수출명 앞에 남는 [ < / , 와 "캄보디아" 같은 나라 이름은 짝이 안 맞는 여는 괄호부터 지움. 괄호 안 성분 뒤에 쉼표로
+    수출명이 이어지면("파무정(프랄리독심염화물,수출명:…") 성분은 남기고 괄호를 닫음 (#152 리뷰, 원본 528개에서 깨지는 이름 0개)"""
+    base = base_name(name)
+    i = base.find("수출명")
+    if i < 0:
+        return base
+    head = base[:i].rstrip()
+    after_comma = head.endswith(",")
+    head = head.rstrip(" /,:")
+    opened: list[int] = []  # 아직 닫히지 않은 여는 괄호 자리
+    for j, ch in enumerate(head):
+        if ch in _PAIR:
+            opened.append(j)
+        elif opened and ch == _PAIR[head[opened[-1]]]:
+            opened.pop()
+    if opened and after_comma:
+        head += "".join(_PAIR[head[j]] for j in reversed(opened))
+    elif opened:
+        head = head[: opened[0]].rstrip(" /,:")
+    return head or base
 
 
 def unify(name: str) -> str:
