@@ -28,7 +28,7 @@ from app.models.ocr import MatchStatus, PrescriptionItem
 from app.models.users import User
 from app.repositories.chat import ChatRepository
 from app.services import safety
-from app.services.chatbot import pipeline
+from app.services.chatbot import pipeline, safety_rules
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
 from app.services.chatbot.evidence import JOB_LIMIT_SEC
 from app.services.chatbot.llm import make_client
@@ -144,6 +144,10 @@ def _safety(r: Route) -> dict[str, Any]:
     return {"types": r.safety_types, "overdose": r.overdose, "rule": ",".join(r.safety_rules)}
 
 
+def _in_safety_mode(s: ChatSession) -> bool:
+    return bool(s.safety_mode_until and s.safety_mode_until > _now())
+
+
 async def ask(
     user: User, session_id: int, content: str, client_request_id: str, emergency_dismissed: bool
 ) -> tuple[int, bool]:
@@ -161,6 +165,9 @@ async def ask(
         return (await repo.create_generating(question)).id, True
 
     blocked, _ = pipeline.first_layer(content, emergency_dismissed)
+    if not blocked and _in_safety_mode(s) and safety_rules.asks_amount(content):
+        # 안전 모드(그 대화 안, 자정까지)에서는 약의 양 질문을 처방대로 묻더라도 E5로 (설계 메모 4-6, 7-2, #116)
+        blocked = Route(kind="crisis", layer=1, safety_types=["crisis"], safety_rules=["safety_mode_amount"])
     if blocked:  # 1층이 잡고 문맥 파악이 풀지 않음: 원문을 저장하지 않고 긴급 답을 바로 (설계 메모 4-6)
         answer = await repo.create_question_and_answer(
             s,

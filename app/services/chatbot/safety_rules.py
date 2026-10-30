@@ -251,6 +251,16 @@ def check(text: str) -> SafetyResult:
     return result
 
 
+# 안전 모드(자해 표현 뒤 그 대화 안)에서 E5로 보내는 약의 양 질문 (설계 메모 4-6, 7-2, #116).
+# 처방대로 먹으려는 질문도 걸림(수치를 답하지 않음). 횟수("하루 몇 번"), 때("언제"), 기간("얼마나 오래", "몇 개월")은 아님
+_AMOUNT = re.compile(r"몇(알|개(?!월)|정|포|캡슐|mg|밀리)|얼마나(먹|드|복용)|최대(?!한)|한번에|한꺼번에")
+
+
+def asks_amount(text: str) -> bool:
+    """약의 양을 묻는지 (띄어쓰기를 없앤 뒤 봄)"""
+    return bool(_AMOUNT.search(normalize(text)))
+
+
 def crisis_only(result: SafetyResult) -> SafetyResult:
     """[지금은 증상이 없어요] 뒤 다시 보낸 질문: 응급 규칙은 빼고 자해 검사만 남김 (명세서 H-3 emergencyDismissed)"""
     if "crisis" not in result.types:

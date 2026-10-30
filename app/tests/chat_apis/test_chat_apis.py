@@ -364,6 +364,29 @@ class TestAsk(ChatCase):
         assert items[-1]["answerType"] == "crisis" and items[0]["content"] == ""
         assert datetime.fromisoformat(today["safetyModeUntil"]) == next_midnight()
 
+    async def test_amount_question_in_safety_mode_gets_crisis_card(self):
+        """안전 모드(그 대화 안, 자정까지)에서 약의 양 질문은 원문 없이 E5로, AI를 부르지 않음 (설계 메모 4-6, #116)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "a13@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, CRISIS_TEXT)
+            await self.ask(client, headers, sid, "노바스크 한 번에 몇 알 먹어요?", crid="q-2")
+            items = await self.items(client, headers, sid)
+        assert self.fake.calls == []
+        assert [i["answerType"] for i in items if i["role"] == "assistant"] == ["crisis", "crisis"]
+        assert items[-2]["content"] == "" and items[-1]["safety"]["types"] == ["crisis"]
+        assert items[-1]["safety"]["rule"] == "safety_mode_amount"
+
+    async def test_amount_question_without_safety_mode_goes_to_answer(self):
+        """안전 모드가 아니면 같은 질문도 보통 흐름으로. 안전 모드여도 때를 묻는 질문은 보통 흐름"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "a14@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "노바스크 한 번에 몇 알 먹어요?")
+            await self.ask(client, headers, sid, CRISIS_TEXT, crid="q-2")
+            await self.ask(client, headers, sid, "약 언제 먹어요?", crid="q-3")
+        assert len(self.fake.calls) == 2
+
 
 class TestFixedInfo(ChatCase):
     async def test_uses_latest_card_analysis_with_consent(self):
