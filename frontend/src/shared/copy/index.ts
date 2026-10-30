@@ -137,7 +137,7 @@ export const copy = {
     rawLabel: (name: string) => `처방전 표기: ${name}`,
     diseaseTitle: '인식한 질병분류기호',
     diseaseBody: '사진에서 읽은 값이라 틀릴 수 있어요. 처방전과 같은지 확인해 주세요.',
-    diseaseNone: '질병분류기호를 찾지 못했어요. 약봉투에는 없는 경우가 많아요. 결과 화면에서 직접 고를 수 있어요.',
+    diseaseNone: '질병분류기호를 확실하게 읽지 못했어요. 약봉투에는 없는 경우가 많아요. 결과 화면에서 직접 고를 수 있어요.',
     start: '확인 완료 · 분석 시작하기',
     retake: '전체 다시 촬영하기',
     blocked: (names: string) => `※ ${names} 약을 확인하거나 "빼고 진행"을 골라야 시작할 수 있어요`,
