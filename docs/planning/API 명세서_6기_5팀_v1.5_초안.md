@@ -26,7 +26,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.5 초안 추가 | 2026-10-28 | H-2 답 줄 `safetyCard`: 상담 갈래(끊거나 바꾸려는 질문, 증상)에서 카드가 붙으면 `answerType`은 `refer`. 새 유형이 아니라 있던 유형이라 화면 라벨은 그대로 (#134 리뷰) | 이수인 |
 | v1.5 초안 추가 | 2026-10-28 | U-3, U-4, U-5를 #136 코드와 시험에 맞춤: U-3과 U-5 삭제에 보관 중인 사진, U-3 남는 칸(자리 값)과 쿠키, 401, U-4 `withdrawnAt`, U-5 응답 204(다시 불러도 같음)와 400, U-6 다시 동의 제안(담당자 확정 전) (#137, 10/28 수인) | 이수인 |
 | v1.5 초안 추가 | 2026-10-28 | 7장 ERD 반영 사항 16번 `chat_messages.route_kind` 추가(범위 밖 질문과 답을 대화 기억에서 뺌). API 응답 모양은 그대로 (#140, 10/28 수인) | 이수인 |
-| v1.5 초안 추가 | 2026-10-30 | 6장 P-1 ~ P-4를 서버 코드에 맞춤: 추천은 9/23에 정한 세 가지(국물 남기기, 빠르게 걷기 30분, 술 마시지 않기)를 분석 질환과 약에 팩트표 근거가 있을 때만, P-1 `hasDiseases`, `cautionLabel`, P-2 응답 `goalIds`와 다시 고르면 같은 목표는 유지, P-4 오늘 기록만, 수량형 `value`는 그날 총량, 완료 취소 허용, 포인트 칸(`todayPoints`, `allDoneBonus`, `pointsEarned`)은 P-6과 함께 뒤로. 7장 ERD 반영 17번. 담당 P-1 ~ P-4 수인 (5회차 멘토링 "고정 챌린지여도 됨", 10/30 수인) | 이수인 |
+| v1.5 초안 추가 | 2026-10-30 | 6장 P-1 ~ P-4를 서버 코드에 맞춤: 추천은 9/23에 정한 세 가지(국물 남기기, 빠르게 걷기 30분, 술 마시지 않기)를 분석 질환과 약에 팩트표 근거가 있을 때만, P-1 `hasDiseases`, `cautionLabel`, P-2 응답 `goalIds`와 다시 고르면 같은 목표는 유지, P-4 오늘 기록만, 수량형 `value`는 그날 총량, 완료 취소 허용, 포인트 칸(`todayPoints`, `allDoneBonus`, `pointsEarned`)은 P-6과 함께 뒤로. 7장 ERD 반영 17번. 담당 P-1 ~ P-4 채연 (10/30 회의) | 이수인 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -373,10 +373,10 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | H-9 | POST | `/chat/sessions/{id}/attachments` | 사진, 파일 올리기 (2단계) | CB-04 | 수인 | ⚪ |
 | H-10 | POST | `/chat/sessions/{id}/safety-events` | 앱에서 먼저 감지한 긴급, 자해 기록 (2단계) | CB-01-E4 | 수인 | ⚪ |
 | H-11 | POST | `/chat/messages/{id}/feedback` | 답변 피드백 (2단계) | CB-01 | 수인 | ⚪ |
-| P-1 | GET | `/recommendations?analysisId=` | 생활습관 추천 목록 | RG-05 | 수인 | 🟡 |
-| P-2 | POST | `/habit-goals` | 실천 목표 만들기 (최대 3개) | RW-02 | 수인 | 🟡 |
-| P-3 | GET | `/habit-goals/today` | 오늘의 실천 | CM-03 · RW-03~05 · RW-03-E2 | 수인 | 🟡 |
-| P-4 | POST | `/habit-goals/{goalId}/records` | 실천 기록 (체크 · 수량) | RW-03 · RW-04 · RW-03-E1 | 수인 | 🟡 |
+| P-1 | GET | `/recommendations?analysisId=` | 생활습관 추천 목록 | RG-05 | 채연 | 🟡 |
+| P-2 | POST | `/habit-goals` | 실천 목표 만들기 (최대 3개) | RW-02 | 채연 | 🟡 |
+| P-3 | GET | `/habit-goals/today` | 오늘의 실천 | CM-03 · RW-03~05 · RW-03-E2 | 채연 | 🟡 |
+| P-4 | POST | `/habit-goals/{goalId}/records` | 실천 기록 (체크 · 수량) | RW-03 · RW-04 · RW-03-E1 | 채연 | 🟡 |
 | P-5 | GET | `/habit-goals/history?period=week` | 주간 달성 현황 | RW-06 · RW-06-E1 | 미정 | 🟡 |
 | P-6 | GET | `/rewards/summary` | 포인트 요약 | RW-05 · RW-06 | 미정 | 🟡 |
 
@@ -1302,7 +1302,7 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 
 ---
 
-## 6. 피처 4 — 실천 · 보상 (P-1 ~ P-4 수인, P-5와 P-6은 뒤로) 🟡
+## 6. 피처 4 — 실천 · 보상 (P-1 ~ P-4 채연, P-5와 P-6은 뒤로) 🟡
 
 > 성규님 데이터 흐름 기준: Analysis → **Recommendation** → **HabitGoal** → **HabitRecord** → **Reward**
 > 추천(Recommendation)은 사용자가 골라야 목표(HabitGoal)가 됨. 아래 요청 · 응답은 화면에 필요한 최소 형식이며 담당자가 확정
