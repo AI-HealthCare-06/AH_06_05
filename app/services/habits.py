@@ -185,7 +185,7 @@ def _bad(message: str, field: str) -> AppError:
 
 
 async def record(user: User, goal_id: int, day: date, completed: bool | None, value: int | None) -> dict[str, Any]:
-    """체크형은 completed, 수량형은 그날 한 총량(목표 값에 닿으면 완료). 완료 취소는 허용 (#43, 10/30 수인):
+    """체크형은 completed, 수량형은 그날 한 총량(목표 값에 닿으면 완료). 완료 취소는 허용 (10/2 회의 결정, #43):
     체크형은 completed=false, 수량형은 줄인 총량. 총량이라 저장 실패 뒤 같은 요청을 다시 보내도 두 번 더해지지 않음 (REQ-115).
     같은 날 다시 완료하면 무시하고 그대로 200 (REQ-112). 오늘 기록만 받음 (몰아서 체크 막기)"""
     goal = await HabitGoal.get_or_none(id=goal_id, user=user, status=HabitStatus.ACTIVE)

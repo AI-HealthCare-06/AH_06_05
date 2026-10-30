@@ -160,7 +160,7 @@ class TestToday(HabitCase):
             assert view["doneCount"] == 2 and view["streakDays"] == 1
 
     async def test_undo_records(self):
-        # 완료 취소 허용 (#43 "10/2 허용", 10/30 수인). 체크형은 completed=false, 수량형은 총량을 줄임
+        # 완료 취소 허용 (10/2 회의 결정, #43). 체크형은 completed=false, 수량형은 총량을 줄임
         async with self.client() as client:
             headers, _, _, (soup, walk) = await self.start_goals(client, "t6@example.com")
             await self.record(client, headers, soup, completed=True)
