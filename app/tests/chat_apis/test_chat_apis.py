@@ -388,6 +388,20 @@ class TestAsk(ChatCase):
         assert len(self.fake.calls) == 2
 
 
+class TestQuestionNumbersMasked(ChatCase):
+    async def test_id_numbers_are_hidden_before_saving_and_answering(self):
+        """주민번호, 전화번호는 저장과 OpenAI로 가기 전에 가림. 1층은 원문을 봄 (#100 입력 정책, 10/31 수인 결정)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "m1@example.com")
+            sid = await self.session(client, headers)
+            text = "제 번호 010-1234-5678이고 주민번호 500101-1234567인데 혈압약은 언제 먹어요?"
+            await self.ask(client, headers, sid, text)
+            items = await self.items(client, headers, sid)
+        want = "제 번호 [전화번호]이고 주민번호 [주민번호]인데 혈압약은 언제 먹어요?"
+        assert items[0]["content"] == want
+        assert self.fake.calls[0]["question"] == want
+
+
 class TestFixedInfo(ChatCase):
     async def test_uses_latest_card_analysis_with_consent(self):
         async with self.client() as client:
