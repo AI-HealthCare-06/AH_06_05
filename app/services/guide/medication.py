@@ -9,7 +9,7 @@ from typing import Any
 
 from app.models.masters import DrugProduct
 from app.models.ocr import PrescriptionItem
-from app.services.drug_names import base_name
+from app.services.drug_names import display_name
 
 # 약효분류(심평원 분류 3자리) → 종류 · 쓰임. 흔한 분류만 — 없으면 종류 null, 쓰임은 약사 확인 문구
 # 한 분류 안에 쓰임이 다른 약이 섞인 분류는 넣지 않는다 (219 기타 순환계용약 · 339 기타 혈액용약 · 117 정신신경용제 ·
@@ -86,7 +86,7 @@ def build(items: list[PrescriptionItem], stored: dict[str, dict[str, Any]] | Non
             {
                 "itemId": it.id,
                 "ediCode": d.edi_code,
-                "itemName": base_name(d.item_name),
+                "itemName": display_name(d.item_name),
                 "category": base.get("category"),
                 "purpose": base.get("purpose") or PURPOSE_FALLBACK,
                 "howToTake": how_to_take(it, d),  # type: ignore[arg-type]

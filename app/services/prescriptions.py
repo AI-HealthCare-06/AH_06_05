@@ -35,7 +35,7 @@ from app.models.ocr import (
     QualityFlag,
 )
 from app.models.users import ConsentType, User, UserConsent
-from app.services.drug_names import base_name
+from app.services.drug_names import display_name
 from app.services.ocr import clova, llm_fix, numeric, photo_store, photos, precheck, queue
 from app.services.ocr.mask import mask
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
@@ -575,7 +575,7 @@ async def get_job(user: User, job_id: int) -> dict[str, Any]:
 
 
 def item_display_name(drug: DrugProduct | None) -> str | None:
-    return base_name(drug.item_name) if drug else None
+    return display_name(drug.item_name) if drug else None
 
 
 def check_fields(item: PrescriptionItem) -> list[str]:
@@ -621,7 +621,7 @@ async def get_prescription(user: User, prescription_id: int) -> dict[str, Any]:
                     {
                         "ediCode": c.drug.edi_code,
                         "itemSeq": c.drug.item_seq,
-                        "itemName": base_name(c.drug.item_name),
+                        "itemName": display_name(c.drug.item_name),
                         "score": float(c.score) if c.score is not None else None,
                     }
                     for c in by_item.get(it.id, [])
@@ -695,7 +695,7 @@ async def search_drugs(q: str, size: int) -> dict[str, Any]:
             {
                 "itemSeq": d.item_seq,
                 "ediCode": d.edi_code,
-                "itemName": base_name(d.item_name),
+                "itemName": display_name(d.item_name),
                 "entpName": d.entp_name,
                 "etcOtc": d.etc_otc,
                 "score": float(_clamp(c.score)),

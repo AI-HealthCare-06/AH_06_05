@@ -45,7 +45,7 @@ PRODUCTS = [  # (edi, 이름, 성분코드, 성분명, DUR 약 이름)
     ("641900040", "노바스크정5밀리그람(암로디핀베실산염)_(6.944mg/1정)", "C1", "암로디핀"),
     ("644300010", "다이아벡스정500밀리그램(메트포르민염산염)_(0.5g/1정)", "M1", "메트포르민"),
     ("645600020", "리피토정10밀리그램(아토르바스타틴칼슘삼수화물)_(10.85mg/1정)", "T1", "아토르바스타틴"),
-    ("648800030", "아스피린프로텍트정100밀리그람_(0.1g/1정)", "S1", "아스피린"),
+    ("648800030", "아스피린프로텍트정100밀리그람(수출명:Aspirin Protect)_(0.1g/1정)", "S1", "아스피린"),
 ]
 DISEASES = [("I10", "본태성 고혈압"), ("E11", "2형 당뇨병"), ("N18", "만성 신장병")]
 
@@ -139,7 +139,8 @@ class TestStartAndResult(AnalysisCase):
             assert r["summary"]["warningCounts"]["danger"] == 1
             w = r["warnings"][0]
             assert w["type"] == "interaction" and w["severity"] == "danger" and w["title"] == "함께 먹으면 안 되는 약"
-            assert {d["itemName"] for d in w["drugs"]} == {base_name(PRODUCTS[2][1]), base_name(PRODUCTS[3][1])}
+            # 수출명은 화면에 보내지 않음 (10/29 배포 서버 스로펜)
+            assert {d["itemName"] for d in w["drugs"]} == {base_name(PRODUCTS[2][1]), "아스피린프로텍트정100밀리그람"}
             assert {d["hospitalName"] for d in w["drugs"]} == {"○○내과", "△△의원"}
             assert len(r["checkedItems"]) == 5 and r["disclaimer"]
 

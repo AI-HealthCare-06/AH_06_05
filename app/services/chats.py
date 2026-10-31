@@ -33,7 +33,7 @@ from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
 from app.services.chatbot.evidence import JOB_LIMIT_SEC
 from app.services.chatbot.llm import make_client
 from app.services.chatbot.pipeline import Reply, Route
-from app.services.drug_names import base_name
+from app.services.drug_names import display_name
 from app.services.guide import lifestyle, medication
 from app.services.prescriptions import has_health_consent
 
@@ -274,7 +274,7 @@ PAIR_WARNINGS = ("interaction", "duplicate_ingredient", "duplicate_efficacy")
 
 
 def _item_name(it: PrescriptionItem) -> str:
-    return base_name(it.drug.item_name) if it.drug else it.raw_name  # 분석 화면(R-4)과 같은 이름
+    return display_name(it.drug.item_name) if it.drug else it.raw_name  # 분석 화면(R-4)과 같은 이름
 
 
 async def _pair_warnings(aid: int) -> list[PairWarning]:
@@ -332,7 +332,7 @@ async def fixed_info(user: User, s: ChatSession) -> FixedInfo:
         seen.add(code)
         info.drugs.append(
             UserDrug(
-                name=base_name(drug.item_name),
+                name=display_name(drug.item_name),
                 ingredient=ingredient.get(code) or "",
                 purpose=purpose.get(code, ""),
                 how=medication.how_to_take(it, drug) or "",
