@@ -35,6 +35,7 @@ from app.services.chatbot.llm import make_client
 from app.services.chatbot.pipeline import Reply, Route
 from app.services.drug_names import display_name
 from app.services.guide import lifestyle, medication
+from app.services.ocr.mask import mask_numbers
 from app.services.prescriptions import has_health_consent
 
 logger = logging.getLogger(__name__)
@@ -180,7 +181,10 @@ async def ask(
         if "crisis" in blocked.safety_types:
             await repo.set_safety_mode(s.id, _next_midnight())
         return answer.id, False
-    answer = await repo.create_question_and_answer(s, content, client_request_id, status=MessageStatus.GENERATING)
+    # 입력 정책: 주민번호, 전화번호 같은 번호는 저장과 OpenAI로 가기 전에 가림. 1층은 위에서 원문을 봄 (10/31 수인 결정)
+    answer = await repo.create_question_and_answer(
+        s, mask_numbers(content), client_request_id, status=MessageStatus.GENERATING
+    )
     return answer.id, True
 
 
