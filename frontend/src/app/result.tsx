@@ -311,6 +311,7 @@ const Actions = ({ actions }: { actions: Action[] }) => (
 );
 
 function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult; analysisId: number; onChange: (l: Lifestyle) => void; onRetried: () => void }) {
+  const router = useRouter();
   const life = data.lifestyle;
   if (life.status === 'failed') return <GuideFailed analysisId={analysisId} onRetried={onRetried} />;
   const linkCard = life.medicationLinks.length > 0 && (
@@ -381,6 +382,7 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
           ))}
         </Card>
       )}
+      <Btn label={copy.challenge.start} onPress={() => router.push('/challenge-select')} />
       {life.sources.length > 0 && (
         <View style={{ gap: 2 }}>
           <Text style={T.small}>{r.sources}</Text>
