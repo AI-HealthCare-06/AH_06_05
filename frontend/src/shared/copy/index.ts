@@ -342,7 +342,9 @@ export const copy = {
     dictation: '음성 입력 안내',
     dictationTip: '키보드에 있는 🎤 버튼을 누르고 말해 보세요.',
     dictationNever: '다시 보지 않기',
-    generating: '● ● ● 답변을 만들고 있어요',
+    // 점 세 개는 글자가 아니라 움직이는 점으로 그림 (10/31, Figma는 11/3 와이어프레임을 옮길 때 맞춤). 늦을 때 문구는 신규 임시
+    generating: '답변을 만들고 있어요',
+    generatingSlow: '답변을 만들고 있어요. 조금만 더 기다려 주세요',
     source: (name: string) => `출처 · ${name}`,
     labels: {
       clarify: '정보 확인',
@@ -533,6 +535,14 @@ export const copy = {
     consentConfirmOk: '철회하고 지우기',
     consentDone: '철회했어요. 건강 정보가 들어 있는 기록을 모두 지웠어요.',
     consentLoadFailed: '동의 내역을 불러오지 못했어요.',
+    // U-6 다시 동의 (10/31, 신규 임시). 동의 글은 가입 때 글에서 거부 문장만 지금 상황에 맞게 바꿈
+    consentAgainNote: '건강 정보 동의를 다시 켜면 처방전을 올리고 분석할 수 있어요. 철회할 때 지운 기록은 돌아오지 않아요.',
+    consentAgainBtn: '건강 정보 동의 다시 하기',
+    consentAgainTitle: '건강 정보 사용에 동의할까요?',
+    consentAgainBody:
+      '처방전·약봉투 사진에서 병원 이름, 교부일, 질병분류기호, 약 이름과 복용 방법을 읽어요. 사진은 저희 서버에 저장하지 않아요. 원하실 때 내 정보에서 질환, 임신 여부(여성만), 투석, 키와 몸무게, 예정 검사, 흡연과 음주를 받아요. 사진에서 읽은 내용은 복용 약을 정리하는 데 쓰고, 건강 정보는 앞으로 질환과 생활습관에 맞는 안내에 쓸 예정이에요. 탈퇴하거나 동의를 철회할 때까지 보관해요. 동의를 거부하실 수 있지만, 이 동의가 없으면 처방전을 올리거나 분석할 수 없어요.',
+    consentAgainOk: '동의하기',
+    consentAgainDone: '다시 동의했어요. 처방전을 올리고 분석할 수 있어요.',
     // CM-07 회원 탈퇴 (U-3)
     withdrawTitle: '회원 탈퇴',
     withdrawLead: '탈퇴하면 아래 내용이 바로 지워지고 되돌릴 수 없어요.',

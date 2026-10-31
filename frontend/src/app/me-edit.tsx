@@ -62,18 +62,24 @@ export default function MeEdit() {
     setBusy(true);
     setFieldError(null);
     setError(null);
+    // 이름과 날짜를 적고 [검사 추가] 없이 바로 저장해도 잃지 않게 같이 보냄
+    const typed = examName.trim() !== '' && examDate.trim() !== '';
     try {
       await updateMe({
         birthYear: Number(birthYear),
         sex,
         health: {
           ...health,
+          upcomingExams: typed
+            ? [...health.upcomingExams, { name: examName.trim(), date: examDate.trim() }]
+            : health.upcomingExams,
           pregnant: sex === 'F' ? health.pregnant : null,
           heightCm: height ? Number(height) : null,
           weightKg: weight ? Number(weight) : null,
         },
       });
-      router.back();
+      if (router.canGoBack()) router.back();
+      else router.replace('/(tabs)/me'); // 웹에서 새로고침하면 돌아갈 곳이 없음
     } catch (e) {
       if (e instanceof ApiError && e.field) setFieldError({ field: e.field, message: e.message });
       else setError(e instanceof ApiError ? e.message : copy.common.serverError);
@@ -199,20 +205,23 @@ export default function MeEdit() {
                 ))}
               </Card>
             )}
-            <Field
-              label={c.examName}
-              value={examName}
-              onChangeText={(v) => setExamName(v.slice(0, EXAM_NAME_MAX))}
-              helper={c.examNameHelper(EXAM_NAME_MAX)}
-            />
-            <Field
-              label={c.examDate}
-              value={examDate}
-              onChangeText={setExamDate}
-              placeholder="2026-10-27"
-              helper={c.examDateHelper}
-            />
-            <Btn label={c.examAdd} kind="secondary" onPress={addExam} />
+            {/* 검사 추가는 저장과 다른 일이라 입력칸과 버튼을 카드로 묶어 아래 [저장하기]와 나눔 (10/29 멘토님 피드백) */}
+            <Card style={{ gap: 10 }}>
+              <Field
+                label={c.examName}
+                value={examName}
+                onChangeText={(v) => setExamName(v.slice(0, EXAM_NAME_MAX))}
+                helper={c.examNameHelper(EXAM_NAME_MAX)}
+              />
+              <Field
+                label={c.examDate}
+                value={examDate}
+                onChangeText={setExamDate}
+                placeholder="2026-10-27"
+                helper={c.examDateHelper}
+              />
+              <Btn label={c.examAdd} kind="secondary" onPress={addExam} />
+            </Card>
             <Err field="health.upcomingExams" />
           </Section>
         </>

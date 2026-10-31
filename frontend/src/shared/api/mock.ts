@@ -164,6 +164,10 @@ export async function mockFetch(method: Method, path: string, init: RequestInit)
     healthWithdrawnAt ??= '2026-10-28T13:00:00+09:00';
     return new Response(null, { status: 204 });
   }
+  if (method === 'PUT' && path === '/users/me/consents/sensitiveHealth') {
+    healthWithdrawnAt = null;
+    return new Response(null, { status: 204 });
+  }
   if (method === 'DELETE' && path === '/users/me') {
     if (body.confirmed !== true) return error(400, 'VALIDATION_ERROR', '탈퇴를 확인해 주세요.');
     return new Response(null, { status: 204 });

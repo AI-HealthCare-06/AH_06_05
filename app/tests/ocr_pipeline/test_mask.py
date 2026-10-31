@@ -5,7 +5,7 @@ import json
 import pytest
 
 from app.services.ocr import clova
-from app.services.ocr.mask import NAME, PHONE, RRN, mask
+from app.services.ocr.mask import NAME, PHONE, RRN, mask, mask_numbers
 
 
 def sample_text() -> str:
@@ -367,3 +367,31 @@ def test_spaced_honorific_name_is_hidden_but_ordinary_words_are_not():
     assert mask("식후 30분 복용하세요") == "식후 30분 복용하세요"
     assert mask("1955년생 남자") == "1955년생 남자"  # 연도만 있는 생년은 남긴다
     assert mask("교부일 2026년 10월 15일") == "교부일 2026년 10월 15일"
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("제 주민번호는 500101-1234567이에요", "제 주민번호는 [주민번호]이에요"),
+        ("전화번호 010-1234-5678로 연락 주세요", "전화번호 [전화번호]로 연락 주세요"),
+        ("메일은 abc@example.com", "메일은 [이메일]"),
+        ("생년월일 1950.01.02이에요", "생년월일 [생년월일]이에요"),
+    ],
+)
+def test_mask_numbers_hides_ids_in_chat_question(text, want):
+    assert mask_numbers(text) == want
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "어머님이 갑자기 이상한 말을 하세요",  # mask()는 [이름]님으로 바꿈
+        "장모님이 갑자기 엉뚱한 말을 해요",
+        "약 이름 노바스크 맞나요?",  # "이름" 라벨 뒤
+        "1일 2회 500mg 먹어요",
+        "혈압이 130-80이에요",
+        "2026-10-27에 검사해요",
+    ],
+)
+def test_mask_numbers_leaves_chat_words(text):
+    assert mask_numbers(text) == text
