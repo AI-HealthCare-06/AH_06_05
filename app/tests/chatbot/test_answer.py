@@ -642,6 +642,26 @@ def test_output_guard_blocks_ok_to_stop():
         assert output_guard(s, [GRAPEFRUIT], S0) is None, s
 
 
+def test_output_guard_allows_question_repeated_back():
+    """사용자의 질문을 되풀이한 안전한 글은 거르지 않음. 실제 AI 답에서 막힌 4개가 모두 이 꼴 (#129 채연 리뷰 5번)"""
+    for s in (
+        "약을 그만 먹어도 되는지에 대한 결정은 의료진과 상담해야 해요.",
+        "약을 안 먹어도 되는지에 대한 질문은 의료진과 상담해야 해요.",
+        "노바스크를 안 드셔도 될지는 처방한 의사에게 물어보세요.",
+        "약을 줄여도 괜찮은지는 의사와 상의해 주세요.",
+        "노바스크를 하루 쉬어도 되는지는 의사에게 물어보세요.",
+    ):
+        assert output_guard(s, [GRAPEFRUIT], S0) is None, s
+    # 묻는 꼴이 아니거나, 같은 문장에 멈춰도 된다는 말이 따로 있으면 그대로 거름
+    for s in (
+        "노바스크를 안 드셔도 될지도 몰라요.",
+        "안 먹어도 되는지 걱정되시겠지만, 노바스크는 안 먹어도 돼요.",
+        "약을 안 먹어도 되는지 궁금하시죠? 네, 안 먹어도 돼요.",  # 묻는 말을 빼면서 생긴 구멍 (점검)
+        "노바스크는 안 드셔도 돼요.",
+    ):
+        assert output_guard(s, [GRAPEFRUIT], S0) == "change", s
+
+
 @sync
 async def test_missed_dose_question_classified_out_of_scope():
     """분류가 범위 밖으로 나와도 약을 빠뜨린 질문이면 근거 없음 (10/25 실제 답이 normal로 나간 길, 가짜 AI로 확인)"""

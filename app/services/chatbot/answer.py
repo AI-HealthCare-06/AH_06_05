@@ -135,6 +135,11 @@ _STOP_OK = re.compile(
 )
 # 약을 쉬라는 말은 "약을 (며칠) 쉬어도", "노바스크를 하루 쉬셔도"처럼 약 바로 뒤만 ("약 드시고 쉬세요"는 아님). 사이의 기간 말 목록은 제안
 _REST_TAIL = r"[을를은는]?\s*(?:하루|이틀|사흘|며칠|잠시|잠깐|당분간|한동안|일주일)?\s*쉬(?:어도|셔도|세요|시면)"
+# 바로 뒤가 묻는 말이면 사용자의 질문을 되풀이한 것 ("안 먹어도 되는지는 의사에게"). 실제 AI 답에서 막힌 4개가 모두 이 꼴 (#129 채연 리뷰).
+# "될지도 몰라요"는 멈춰도 된다는 쪽이라 그대로 거름
+# 바꾸라는 말(_CHANGE)은 "줄여도 괜찮"까지 잡아서 바로 뒤가 "은지"로 이어짐
+_OTHER_SUBJECT = re.compile(r"[가-힣]+[은는을를이가]\s")  # "커피는 안 드셔도 돼요"처럼 약이 아닌 대상이 앞에 있음
+_ASKS_BACK = re.compile(r"\s*(?:되는지|될지(?!도)|되나요|괜찮은지|좋은지)|[은는]지")
 
 # 먹는 때는 시키는 말에만 ("먹으면 졸릴 수 있어요" 같은 설명은 보지 않음, 10/25 점검)
 _TAKE = re.compile(r"(드세요|드시면\s*(?:돼|됩|좋)|드셔도|드시는\s*게\s*좋|복용하세요|복용하시면|먹으세요|드십시오)")
@@ -173,20 +178,38 @@ def _about_drug(before: str, drug_names: list[str]) -> bool:
     return bool(_MED_OBJECT.search(before)) or any(n in before for n in drug_names)
 
 
+def _asks_back(sentence: str, end: int) -> bool:
+    return bool(_ASKS_BACK.match(sentence, end))
+
+
 def _rest(sentence: str, drug_names: list[str]) -> list[str]:
     objects = "|".join(["약", "복용", *(re.escape(n) + "[가-힣]{0,6}?" for n in drug_names)])
-    return [m.group(0) for m in re.finditer(rf"(?:{objects}){_REST_TAIL}", sentence)]
+    return [
+        m.group(0) for m in re.finditer(rf"(?:{objects}){_REST_TAIL}", sentence) if not _asks_back(sentence, m.end())
+    ]
 
 
-def _changes_drug(sentence: str, drug_names: list[str], flat: str) -> bool:
-    """근거에 없는 바꾸라는 말, 먹지 말라는 말(바로 앞 몇 글자에 약), 멈춰도 된다는 말(같은 문장 앞쪽에 약), 약을 쉬라는 말"""
+def _changes_drug(sentence: str, drug_names: list[str], flat: str, prev_med: bool = False) -> bool:
+    """근거에 없는 바꾸라는 말, 먹지 말라는 말(바로 앞 몇 글자에 약), 멈춰도 된다는 말(같은 문장 앞쪽에 약), 약을 쉬라는 말.
+    바로 뒤가 묻는 말이면 질문을 되풀이한 것이라 보지 않음.
+    멈춰도 된다는 말은 앞 문장이 약 이야기이고 이 문장 앞쪽에 다른 대상("커피는")이 없어도 거름
+    ("안 먹어도 되는지 궁금하시죠? 네, 안 먹어도 돼요." 묻는 말을 빼면서 생긴 구멍, 점검에서 찾음)"""
     found = [(m, m.group(1)) for m in _CHANGE.finditer(sentence)] + [(m, m.group(0)) for m in _STOP.finditer(sentence)]
     for m, word in found:
         before = sentence[max(0, m.start() - _OBJECT_WINDOW) : m.start()]
-        if _about_drug(before, drug_names) and re.sub(r"\s+", "", word) not in flat:
+        if (
+            _about_drug(before, drug_names)
+            and re.sub(r"\s+", "", word) not in flat
+            and not _asks_back(sentence, m.end())
+        ):
             return True
     for m in _STOP_OK.finditer(sentence):
-        if _about_drug(sentence[: m.start()], drug_names) and re.sub(r"\s+", "", m.group(0)) not in flat:
+        before = sentence[: m.start()]
+        if (
+            (_about_drug(before, drug_names) or (prev_med and not _OTHER_SUBJECT.search(before)))
+            and re.sub(r"\s+", "", m.group(0)) not in flat
+            and not _asks_back(sentence, m.end())
+        ):
             return True
     return any(re.sub(r"\s+", "", w) not in flat for w in _rest(sentence, drug_names))  # 약이 말 안에 있음
 
@@ -212,7 +235,7 @@ def output_guard(content: str, evidence: list[Evidence], info: FixedInfo) -> str
         about_med, prev_med = is_med or prev_med, is_med
         if not about_med:
             continue
-        if _changes_drug(sentence, drug_names, flat):
+        if _changes_drug(sentence, drug_names, flat, prev_med=about_med):
             return "change"
         if _TAKE.search(sentence) and any(re.sub(r"\s+", "", t) not in flat for t in _TIMING.findall(sentence)):
             return "timing"
