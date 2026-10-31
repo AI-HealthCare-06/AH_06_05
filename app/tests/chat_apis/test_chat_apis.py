@@ -12,7 +12,7 @@ from unittest.mock import patch
 from starlette import status
 
 from app.core import config
-from app.models.analysis import DrugGuide, ReviewStatus
+from app.models.analysis import Analysis, AnalysisStatus, DrugGuide, ReviewStatus
 from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.users import ConsentType, UserConsent
 from app.services import chats, safety
@@ -424,6 +424,56 @@ class TestFixedInfo(ChatCase):
         assert [d.code for d in info.drugs] == ["641900040"]  # 가장 최근에 붙은 맥락 카드의 분석
         assert info.drugs[0].name.startswith("노바스크정") and info.drugs[0].purpose == "혈압 관리에 쓰는 약이에요"
         assert info.disease_ids == ["HTN"] and info.age is not None
+
+    async def test_home_chat_uses_latest_done_analysis(self):
+        """홈에서 연 대화(analysisId도 맥락 카드도 없음)는 가장 최근 완료 분석을 쓰고 대화에 적음 (#159).
+        적어 두면 그 분석을 지울 때 이 대화도 같이 지워짐 (R-8, #100)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f8@example.com")
+            await self.start(client, headers, await self.prescription(user, ["644300010"]))
+            rx = await self.prescription(user, ["641900040"], ("I10",))
+            second = (await self.start(client, headers, rx)).json()["analysisId"]
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+        info = self.fake.calls[0]["info"]
+        assert info.analysis_id == second and [d.code for d in info.drugs] == ["641900040"]
+        assert info.disease_ids == ["HTN"]
+        assert (await ChatSession.get(id=sid)).analysis_id == second
+
+    async def test_home_chat_skips_unfinished_and_others_analysis(self):
+        """끝나지 않은 분석과 다른 사람 분석은 쓰지 않음. 쓸 분석이 없으면 일반 질문 모드 (명세서 H-1)"""
+        async with self.client() as client:
+            other, other_user = await self.auth(client, "f9@example.com")
+            await self.start(client, other, await self.prescription(other_user, ["641900040"]))
+            headers, user = await self.auth(client, "f10@example.com")
+            aid = (await self.start(client, headers, await self.prescription(user, ["644300010"]))).json()["analysisId"]
+            await Analysis.filter(id=aid).update(status=AnalysisStatus.FAILED)
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+        info = self.fake.calls[0]["info"]
+        assert info.analysis_id is None and info.drugs == [] and info.age is not None
+        assert (await ChatSession.get(id=sid)).analysis_id is None
+
+    async def test_home_chat_without_consent_records_nothing(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f11@example.com")
+            await self.start(client, headers, await self.prescription(user, ["641900040"]))
+            await UserConsent.filter(user=user, consent_type=ConsentType.SENSITIVE_HEALTH).update(
+                agreed=False, withdrawn_at=datetime.now(config.TIMEZONE)
+            )
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+        assert self.fake.calls[0]["info"].drugs == []
+        assert (await ChatSession.get(id=sid)).analysis_id is None
+
+    async def test_deleting_latest_analysis_deletes_home_chat(self):
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f12@example.com")
+            aid = (await self.start(client, headers, await self.prescription(user, ["641900040"]))).json()["analysisId"]
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+            assert (await client.delete(f"/api/v1/analyses/{aid}", headers=headers)).status_code == 204
+        assert not await ChatSession.exists(id=sid)
 
     async def test_unapproved_guide_gives_no_purpose(self):
         async with self.client() as client:
