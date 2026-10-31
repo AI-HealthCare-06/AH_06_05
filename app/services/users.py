@@ -79,6 +79,27 @@ class UserManageService:
         await habits.end_goals(user)
         await UserConsent.filter(id=consent.id).update(agreed=False, withdrawn_at=datetime.now(config.TIMEZONE))
 
+    async def agree_consent(self, user: User, type_name: str, agreed: bool) -> None:
+        """U-6. sensitiveHealth만. 철회한 뒤 다시 동의하면 같은 줄을 새 시각으로 고침 (철회 이력 표는 없음, #137).
+        철회 때 지운 기록은 돌아오지 않음"""
+        if type_name != CONSENT_TYPE_NAMES[ConsentType.SENSITIVE_HEALTH]:
+            raise AppError(
+                status.HTTP_400_BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "건강 정보 동의만 다시 할 수 있어요.",
+                field="type",
+            )
+        if agreed is not True:
+            raise AppError(status.HTTP_400_BAD_REQUEST, "VALIDATION_ERROR", "동의를 확인해 주세요.", field="agreed")
+        now = datetime.now(config.TIMEZONE)
+        consent, created = await UserConsent.get_or_create(
+            user=user,
+            consent_type=ConsentType.SENSITIVE_HEALTH,
+            defaults={"agreed": True, "agreed_at": now},
+        )
+        if not created and not consent.agreed:
+            await UserConsent.filter(id=consent.id).update(agreed=True, agreed_at=now, withdrawn_at=None)
+
     async def withdraw_user(self, user: User, confirmed: bool) -> None:
         """U-3. 기록을 모두 바로 지우고, 사용자 줄은 개인정보를 지운 뒤 id와 deleted_at만 남김"""
         if confirmed is not True:
