@@ -281,7 +281,9 @@ export const copy = {
     dictation: '음성 입력 안내',
     dictationTip: '키보드에 있는 🎤 버튼을 누르고 말해 보세요.',
     dictationNever: '다시 보지 않기',
-    generating: '● ● ● 답변을 만들고 있어요',
+    // 점 세 개는 글자가 아니라 움직이는 점으로 그림 (10/31, Figma는 11/3 와이어프레임을 옮길 때 맞춤). 늦을 때 문구는 신규 임시
+    generating: '답변을 만들고 있어요',
+    generatingSlow: '답변을 만들고 있어요. 조금만 더 기다려 주세요',
     source: (name: string) => `출처 · ${name}`,
     labels: {
       clarify: '정보 확인',
