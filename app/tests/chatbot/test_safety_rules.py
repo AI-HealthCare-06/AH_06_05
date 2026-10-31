@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.chatbot.safety_rules import asks_amount, check
+from app.services.chatbot.safety_rules import asks_amount, check, odd_speech
 
 # (문장, 기대 범주, 과다 복용 여부)
 SHOULD_DETECT = [
@@ -85,6 +85,11 @@ SHOULD_DETECT = [
     # 보호자가 "이상한 소리"라고 쓰는 경우 (#139 채연 리뷰)
     ("할머니가 갑자기 이상한 소리를 해요", ["emergency"], False),
     ("아빠가 아까부터 엉뚱한 소리를 하세요", ["emergency"], False),
+    # 갑자기 생긴 말 이해 못함, 단어가 안 떠오름, 말하려는데 안 됨 (질병관리청 언어장애, 대한뇌졸중학회 증상. #132 채연 리뷰)
+    ("엄마가 갑자기 말을 이해 못 해요", ["emergency"], False),
+    ("아빠가 방금부터 알아듣지 못하세요", ["emergency"], False),
+    ("갑자기 단어가 생각이 안 나요", ["emergency"], False),
+    ("방금부터 말하려는데 안 돼요", ["emergency"], False),
 ]
 
 SHOULD_NOT_DETECT = [
@@ -99,6 +104,11 @@ SHOULD_NOT_DETECT = [
     "아까 이상한 말을 해서 죄송해요",
     "아까 엉뚱한 말을 해서 다시 물어볼게요",
     "아까 의사 선생님께 할 말을 못 하고 나왔어요",
+    # 때를 나타내는 말이 없는 말 이상은 그대로 B (답에서 고정 안내, #132)
+    "뭐라 말하고 싶은데 안 돼요.",
+    "단어가 생각이 안 나요",
+    "갑자기 생각났는데 약 이름 단어가 뭐였죠?",
+    "아까 설명을 이해 못 했어요",
     "아까 이상한 말씀을 드려서 죄송해요",
     "아까 이상한 소리를 해서 죄송해요",
     "아들이 갑자기 이상한 소리가 나요",
@@ -203,3 +213,46 @@ def test_asks_amount(text):
 @pytest.mark.parametrize("text", NOT_AMOUNT)
 def test_not_amount(text):
     assert not asks_amount(text), text
+
+
+ODD_SPEECH = [
+    # 1층이 막지 않는 말 이상 (10/26 확인표 B). 답에서 사과 대신 고정 안내 (#132 채연 리뷰, 확인표 9, 12, 16번)
+    "엄마가 이상하게 말해, 뭘 잘 못 알아들어.",
+    "아빠가 자꾸 말이 이상해, 대체 뭐지?",
+    "뭐라 말하고 싶은데 안 돼요.",
+    "할머니가 말을 잘 이해를 못 하세요",
+    "남편이 말을 못 해요",
+    "단어가 생각이 안 나요",
+    "말하려고 해도 잘 안 돼요",
+    "할머니가 이상한 말을 해요",
+    "아빠가 엉뚱한 소리를 하세요",
+    "할머니께서 말을 못 하세요",
+]
+NOT_ODD_SPEECH = [
+    # 챗봇에 대한 불만, 내가 한 말, 할 말, 설명을 이해 못함은 아님
+    "챗봇 말이 이상해요",
+    "제 말을 못 알아들으시네요",
+    "제가 이상하게 말했나요?",
+    "아까 의사 선생님께 할 말을 못 하고 나왔어요",
+    "아까 설명을 이해 못 했어요",
+    "아까 이상한 말을 해서 죄송해요",
+    "아들이 갑자기 이상한 소리가 나요",
+    "약 이름이 생각이 안 나요",
+    "그 단어가 생각이 안 나는데 혈압약 이름이 뭐였죠?",
+    "아빠한테 말을 못 하겠어요",
+    "엄마한테 약 끊었다고 말을 못 하겠어요",
+    "부모님께 말을 못 해요",
+    "남편에게 말이 이상하다고 들었어요",
+    "엄마가 말을 못 하게 해요",
+    "혈압약은 아침에 먹나요?",
+]
+
+
+@pytest.mark.parametrize("text", ODD_SPEECH)
+def test_odd_speech(text):
+    assert odd_speech(text)
+
+
+@pytest.mark.parametrize("text", NOT_ODD_SPEECH)
+def test_not_odd_speech(text):
+    assert not odd_speech(text)

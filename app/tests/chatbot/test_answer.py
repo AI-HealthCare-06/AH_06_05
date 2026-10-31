@@ -11,6 +11,7 @@ from app.services.chatbot.answer import (
     OUT_OF_SCOPE,
     OUT_OF_SCOPE_DRUG,
     REFER,
+    SPEECH,
     THANKS,
     clean_text,
     output_guard,
@@ -314,6 +315,33 @@ async def test_distress_gets_help_line_instead_of_apology():
     ):
         r = await answer(q, S0, [], FakeChat(classify=cls), search=FakeSearch())
         assert r.content == want, q
+
+
+@sync
+async def test_odd_speech_gets_fixed_guide_instead_of_apology():
+    """1층이 막지 않는 말 이상(10/26 확인표 B)은 분류가 어디로 가든 사과나 진료 문구 대신 고정 안내 (#132 채연 리뷰).
+    갑자기 생겼으면 119, 전부터였으면 진료 (질병관리청 언어장애, 대한뇌졸중학회 증상)"""
+    for category in ("out_of_scope", "refer", "medication", "lifestyle"):
+        for q in (
+            "엄마가 이상하게 말해, 뭘 잘 못 알아들어.",
+            "뭐라 말하고 싶은데 안 돼요.",
+            "아빠가 자꾸 말이 이상해, 대체 뭐지?",
+        ):
+            chat = FakeChat(classify=classified(category=category))
+            search = FakeSearch()
+            r = await answer(q, S0, [], chat, search=search)
+            assert (r.answer_type, r.content) == ("refer", SPEECH), (category, q)
+            assert "answer" not in chat.calls and not search.calls, (category, q)
+    # 되묻기로 가도 같은 안내 (약을 묻는 되묻기가 엉뚱함)
+    r = await answer(
+        "뭐라 말하고 싶은데 안 돼요.", S0, [], FakeChat(classify=classified(category="clarify")), search=FakeSearch()
+    )
+    assert (r.answer_type, r.content) == ("refer", SPEECH)
+    # 챗봇에 대한 불만은 범위 밖 문구 그대로
+    r = await answer(
+        "챗봇 말이 이상해요", S0, [], FakeChat(classify=classified(category="out_of_scope")), search=FakeSearch()
+    )
+    assert r.content == OUT_OF_SCOPE
 
 
 @sync
