@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.chatbot import context_check, evidence, safety_rules
-from app.services.chatbot.answer import REFER, out_of_scope, write
+from app.services.chatbot.answer import REFER, SPEECH, out_of_scope, write
 from app.services.chatbot.classify import asks_this_analysis, check_classification, classify, classify_message
 from app.services.chatbot.context import FixedInfo, recent, resolve_ordinal
 from app.services.chatbot.guard import guard
@@ -175,6 +175,9 @@ async def answer(
     r = await route(question, info, history, client, summary, emergency_dismissed)
     usage = Usage()
     usage.add(r.usage)
+    # 1층과 2층이 막지 않은 말 이상은 분류와 상관없이 고정 안내. 범위 밖 사과, 약 되묻기, "며칠 안에 진료"로 끝나던 것 (#132 채연 리뷰)
+    if r.kind in ("clarify", "medication", "lifestyle", "refer", "out_of_scope") and safety_rules.odd_speech(question):
+        return Reply("refer", SPEECH, r, usage=usage)
     if r.kind == "clarify":
         return Reply("clarify", r.clarify_question, r, usage=usage)
     if r.kind not in ("medication", "lifestyle", "refer", "out_of_scope"):
