@@ -32,6 +32,20 @@
 //   chat_sessions.analysis_id: 분석을 지우면(R-8) 비움. 하루 한 대화를 통째로 지우지 않으려고. 대화까지 지울지는 채연과 정함.
 //   (10/23 바꿈) R-8은 그 분석으로 시작한 대화와 그 분석의 맥락 카드가 붙은 대화를 지움(#119 채연 리뷰). FK는 set null 그대로 두고 R-8 코드가 지움.
 //
+// [v1.5 초안 추가, 2026-10-28, 수인] chat_messages.safety_card 노트: 상담 갈래(끊거나 바꾸려는 질문, 증상)에서 카드가 붙으면 answer_type은 refer (#134 리뷰).
+//   표와 칸은 그대로(마이그레이션 없음).
+//
+// [v1.5 초안 추가, 2026-10-28, 수인] users.deleted_at 노트: 탈퇴하면 개인정보 칸은 자리 값(login_id withdrawn-{id}, birth_year 0, sex M)으로 덮어씀 (#136, #137).
+//   표와 칸은 그대로(마이그레이션 없음).
+//
+// [v1.5 초안 추가, 2026-10-28, 수인] chat_messages.route_kind 추가(#140): 답 줄에 답을 만든 갈래를 남기고, 범위 밖으로 걸러진 질문과 답은
+//   다음 질문의 대화 기억에서 뺌(5회차 멘토링 시연, #99). 마이그레이션 17번(safety_card 칸 설명도 같이 맞춤).
+//
+// [v1.5 초안 추가, 2026-10-30, 수인] 실천 표 recommendations, habit_goals, habit_records를 서버에 만듦(마이그레이션 18번). rewards는 포인트(P-6)와 함께 뒤로.
+//   recommendations: 팩트표가 코드의 JSON 파일이라 가리킬 표가 없어 guide_id, medication_link_id, action_id 대신 challenge_key(soup, walk, alcohol),
+//   fact_refs(팩트표 "질환 id:항목 이름" 목록), desc(팩트표 글 그대로), caution_label(의료진이 정한 강도로)을 둠. (analysis_id, challenge_key)는 하나만.
+//   habit_goals.end_date는 끝낸 날(다시 고를 때 뺀 목표, 동의 철회). habit_records.value는 그날 총량. 주 단위 다시 고르기(REQ-116)는 뒤로.
+//
 // [v1.4, 2026-10-08, 채연] 팩트표 v0.12 반영. lifestyle_guides에 group_type(위험 신호, 교차 규칙을 같은 표에 담음),
 //   requires_clinician, goal_eligible, applies_when, show_when_unknown, condition, user_message 추가. lifestyle_guide_actions에 kind(fact 또는
 //   safety_notice), scope, use_in_answer 추가하고 source_id는 비워도 되게 바꿈(출처는 새 표 lifestyle_source_links로). 새 표
@@ -68,7 +82,7 @@ Table users {
   locked_until       timestamp    [note: 'v1.0 · 잠금 해제 시각 (CM-01-E2)']
   created_at         timestamp    [default: `now()`]
   updated_at         timestamp
-  deleted_at         timestamp    [note: '탈퇴 시 개인정보 파기 후 시각만 남김 (CM-07)']
+  deleted_at         timestamp    [note: '탈퇴 시 개인정보 파기 후 시각을 남김 (CM-07). 개인정보 칸은 자리 값(login_id withdrawn-{id}, birth_year 0, sex M)으로 덮어씀 (#136)']
 
   Note: '성명 · 주민번호 · 연락처 미수집'
 }
@@ -333,8 +347,9 @@ Table chat_messages {
   client_request_id varchar(64) [note: 'v1.3 · 다시 시도 때 같은 질문을 두 번 저장하지 않음']
   reply_to_id bigint      [ref: > chat_messages.id, note: 'v1.5, 답 줄이 어느 질문의 답인지 질문 줄 번호. 답 줄만 채움. 다시 시도 때 답 줄을 찾고, 맨 아래에 생긴 답에 질문을 인용함 (이슈 #100, 수인 10/22)']
   context_card jsonb      [note: 'v1.3 · 1단계 맥락 카드 { analysisId, context } (H-7)']
-  safety_card jsonb       [note: 'v1.5 · 안전성 점검 결과 카드 { analysisId, warningIds }. 카드가 붙는 답도 answer_type은 normal. 카드가 없으면 비어 있음 (이슈 #88, 수인 10/12 확정)']
+  safety_card jsonb       [note: 'v1.5 · 안전성 점검 결과 카드 { analysisId, warningIds }. 카드가 붙는 답도 answer_type은 normal, 상담 갈래(next_visit, soon)면 refer (#134, 10/28). 카드가 없으면 비어 있음 (이슈 #88, 수인 10/12 확정)']
   safety      jsonb       [note: 'v1.5, 서버가 감지한 긴급, 자해 결과 { types, overdose, rule }. answer_type이 emergency, crisis인 답에만. 원문은 담지 않음 (이슈 #100, 수인 10/22)']
+  route_kind  varchar(20) [note: 'v1.5, 답 줄만. 답을 만든 갈래(Route.kind: emergency, crisis, medication, lifestyle, refer, clarify, out_of_scope). out_of_scope면 다음 질문의 대화 기억에서 뺌. H-2 응답에는 내보내지 않음 (#140, 수인 10/28)']
   status      varchar(20) [not null, default: 'done', note: 'v1.5 · generating / done. 화면을 나갔다 와도 만드는 중인 답을 알 수 있게 (이슈 #88). 사용자 줄은 늘 done. 실패(failed)는 두지 않음: 서버가 실패하면 만드는 중이던 줄을 지우고 앱이 E6을 보여 줌. 30초를 넘긴 줄은 다시 시도 때 지움 (수인 10/12 확정, 줄을 지우는 것은 10/22 #100)']
   model       varchar(50) [note: 'v1.5 · 답을 만든 모델 이름 (예: gpt-4o-mini). 답변마다 비용과 시간을 재려고 둠 (이슈 #88). assistant 줄만 채움 (수인 10/12 확정)']
   prompt_tokens     int   [note: 'v1.5 · 입력 토큰 수. 답 하나에 AI를 여러 번 부르면 합친 값. assistant 줄만 채움 (이슈 #88)']
@@ -355,17 +370,20 @@ Table chat_messages {
 
 Table recommendations {
   id                 bigint      [pk, increment]
-  analysis_id        bigint      [ref: > analyses.id, not null]
-  guide_id           bigint      [ref: > lifestyle_guides.id, note: '질환 기준 추천일 때']
-  medication_link_id bigint      [ref: > lifestyle_medication_links.id, note: '약 기준 추천일 때']
-  action_id          bigint      [ref: > lifestyle_guide_actions.id, note: 'v1.2 · 어떤 실천 항목(출처 포함)에서 나온 추천인지']
+  analysis_id        bigint      [ref: > analyses.id, not null, note: '분석을 지우면 같이 지움 (ON DELETE CASCADE)']
+  challenge_key      varchar(20) [not null, note: 'v1.5, soup / walk / alcohol (9/23에 정한 세 가지)']
   title              varchar(100) [not null, note: '국물 남기기 등']
-  reason_label       varchar(50) [note: '고혈압 / 약과 함께 등 (화면 라벨)']
-  goal_type          varchar(20) [note: 'check / quantity']
+  desc               varchar(200) [note: 'v1.5, 팩트표 글 그대로 (예: 1일 나트륨 2,000mg 이하)']
+  reason_label       varchar(50) [not null, note: '고혈압 / 약과 함께 등 (화면 라벨)']
+  caution_label      varchar(20) [note: 'v1.5, 의료진이 정한 강도로 (허혈성심질환 걷기)']
+  goal_type          varchar(20) [not null, note: 'check / quantity']
   target_value       decimal(10,2) [note: '수량형 목표 (예: 30)']
   unit               varchar(20) [note: '분 등']
-  rank               smallint
+  fact_refs          jsonb       [not null, note: 'v1.5, 팩트표 근거 "질환 id:항목 이름" 목록. guide_id, medication_link_id, action_id 대신 (팩트표가 JSON 파일)']
+  rank               smallint    [not null]
+  created_at         timestamp   [default: `now()`]
 
+  indexes { (analysis_id, challenge_key) [unique] }
   Note: 'AI 추천만으로는 목표가 되지 않음 — 사용자가 골라야 habit_goals 생성 (REQ-110)'
 }
 
@@ -378,7 +396,7 @@ Table habit_goals {
   target_value      decimal(10,2)
   unit              varchar(20)
   start_date        date        [not null]
-  end_date          date        [note: '주 단위 (REQ-116 재선택 흐름 🟡)']
+  end_date          date        [note: 'v1.5, 끝낸 날 (뺀 목표, 동의 철회). 주 단위 다시 고르기 REQ-116은 뒤로']
   status            varchar(20) [note: 'active / ended']
   created_at        timestamp   [default: `now()`]
 
@@ -391,7 +409,7 @@ Table habit_records {
   id          bigint    [pk, increment]
   goal_id     bigint    [ref: > habit_goals.id, not null]
   record_date date      [not null]
-  value       decimal(10,2) [note: '수량형 누적값']
+  value       decimal(10,2) [note: 'v1.5, 수량형 그날 총량 (P-4에서 앱이 총량을 보내 다시 보내도 두 번 더해지지 않음)']
   completed   boolean   [not null, default: false]
   created_at  timestamp [default: `now()`]
 

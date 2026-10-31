@@ -30,6 +30,47 @@ REFER = {
     "next_visit": "다음 진료 때 처방한 의사에게 꼭 물어봐 주세요.",
     "soon": "며칠 안에 진료를 받아 보시길 권해요.",
 }
+# 범위 밖, 욕설, 지시 무시 요청에 늘 같은 응대: 사과, 챗봇이 하는 일, 다시 물어봐 달라는 말 (5회차 멘토링 시연에서 응대가 섞여 나옴, #99).
+# 화면 문구라 신규 임시 (10/28 수인 결정)
+OUT_OF_SCOPE = (
+    "죄송해요, 그 질문에는 답해 드리기 어려워요. 저는 드시는 약과 생활습관을 안내해 드리는 챗봇이에요. "
+    "약이나 생활습관에 대해 다시 물어봐 주세요."
+)
+# 범위 밖인데 약을 골라 달라는 것처럼 약 이야기면 의사와 약사가 정한다는 문장을 더함 (골든셋 O3, 10/28 수인 결정, 신규 임시)
+OUT_OF_SCOPE_DRUG = (
+    "죄송해요, 그 질문에는 답해 드리기 어려워요. 저는 드시는 약과 생활습관을 안내해 드리는 챗봇이에요. "
+    "어떤 약을 드실지는 의사와 약사가 정해요. 약이나 생활습관에 대해 다시 물어봐 주세요."
+)
+# 인사와 감사만 한 말은 범위 밖이어도 사과하지 않음 (#140 채연 리뷰, 10/28 수인 결정, 신규 임시)
+GREETING = "안녕하세요. 드시는 약이나 생활습관에 대해 궁금한 게 있으면 편하게 물어봐 주세요."
+THANKS = "도움이 되었다니 다행이에요. 드시는 약이나 생활습관에 대해 궁금한 게 있으면 편하게 물어봐 주세요."
+# 작별 인사도 사과하지 않음. 힘든 이야기 뒤에 끝날 수도 있어 들뜬 말은 넣지 않음 (#140 채연 리뷰, 10/29 수인 결정, 신규 임시)
+FAREWELL = "이용해 주셔서 고마워요. 드시는 약이나 생활습관에 대해 궁금한 게 생기면 언제든 다시 물어봐 주세요."
+_GREET = r"안녕(?:하세요|하십니까)?|반가워요?|반갑습니다|하이|헬로"
+_THANK = r"고마워요?|고맙습니다|감사(?:합니다|해요|드려요)|땡큐|수고(?:하셨어요|하셨습니다|많으셨어요)"
+# 뜻이 하나뿐인 작별 말만. "잘 있어요", "그동안 고마웠어요", "이제 갈게요"는 마지막 인사로도 읽혀 넣지 않음 (10/16 2층 판단, 10/29 수인 결정)
+_BYE = r"안녕히\s*(?:계세요|가세요|계십시오)|좋은\s*하루\s*(?:되세요|보내세요)|수고하세요|다음에\s*또\s*올게요"
+# 인사, 감사, 작별로만 된 말 (문장부호, ㅎㅎ, ㅋㅋ 정도만 더 붙음). 다른 말이 섞이면 범위 밖 문구 그대로
+_SMALL_TALK = re.compile(rf"(?:(?:{_GREET}|{_THANK}|{_BYE})[\s!.,~^ㅎㅋ]*)+")
+# 2층이 위기로 보지 않은 괴로움이 범위 밖으로 가면 사과 대신 앱 E5 도움 연결 문구(copy crisis, 전문가 검토 후 확정)를 그대로 씀.
+# 2층 판단은 바꾸지 않음. 좁게 시작: "피곤해서 힘들어요", "약 사는 게", "드라마 재미없어요"는 아님 (#143, 10/29 수인 결정)
+DISTRESS = (
+    "많이 힘드셨겠어요. 말씀해 주셔서 고마워요. 지금 마음을 전문 상담사와 이야기해 볼 수 있어요. "
+    "자살예방상담전화 109는 24시간 연결돼요. 복약에 관한 질문은 언제든 다시 하실 수 있어요."
+)
+# "지치"는 "지치지 않는 영양제"처럼 바라는 말에도 걸려 지쳐, 지쳤만 봄 (#144 채연 리뷰)
+_DISTRESS = re.compile(
+    r"사는\s*게\s*(?:너무\s*|정말\s*)?(?:힘들|재미없|괴롭)|우울|외로|지쳐|지쳤"
+    r"|그동안\s*(?:정말\s*|너무\s*)?(?:고마웠|감사했)"
+)
+# "너무 힘들"은 약 먹는 일이 힘들다는 말("약 먹기가 너무 힘들어요")이면 빼고 봄.
+# 약 이야기 전체를 빼면 "너무 힘들어서 약도 먹기 싫어요"를 놓쳐서 그 꼴만 지움 (#144 채연 리뷰, 수인 결정)
+_HARD = re.compile(r"너무\s*힘들")
+# 먹기, 먹는 거, 삼키기, 복용하기, 챙겨 먹는 게처럼 약 먹는 일 자체를 말할 때만 빼고 봄 (#144 채연 승인 참고).
+# "약 먹고 나서", "먹으면", "먹었더니 너무 힘들어요"처럼 먹은 뒤가 힘들다는 말은 그대로
+_MED_CHORE = re.compile(
+    r"(?:(?:먹|삼키|복용하|챙기|챙겨\s*먹)(?:기[가-힣]?|는\s*(?:거|게|것)[가-힣]?)|복용[가-힣]?)\s*너무\s*힘들"
+)
 
 # 약을 빠뜨린 말 (질문과 허가정보에 같이 씀). "잊", "까먹"은 약을 먹는 말 뒤, "놓쳤"은 먹는 시간 뒤만
 # ("약을 잊지 않으려면", "잊을까 봐", "버스를 놓쳤어요"는 아님, 10/25, 10/26 점검). 먹었는지 모르는 질문도 두 번 먹을 수 있어 같이 봄 (10/25 수인 결정)
@@ -183,6 +224,41 @@ def _no_evidence(cls: dict[str, Any]) -> Draft:
     return Draft("refer", tail) if tail else Draft("no_evidence", NO_EVIDENCE)
 
 
+def _drug_question(question: str, cls: dict[str, Any], info: FixedInfo) -> bool:
+    """약 이야기인지: 분류가 약이나 상담, 또는 질문에 약이나 먹는 약 이름이 있음"""
+    names = [d.name[:3] for d in info.drugs if d.name]
+    about = cls.get("category") in ("medication", "refer") or bool(_MED_WORDS.search(question))
+    return about or any(n in question for n in names)
+
+
+def is_distress(question: str) -> bool:
+    """괴로움 낱말이 있는지. 범위 밖 도움 연결 문구와 분류의 먹어도 되는지 규칙(classify)이 같이 씀"""
+    return bool(_DISTRESS.search(question) or _HARD.search(_MED_CHORE.sub("", question)))
+
+
+def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
+    """범위 밖은 답 AI 없이 고정 문구. 다만 약을 빠뜨린 질문이면 근거 없음 (분류가 범위 밖으로 흔들려도, 10/25 점검).
+    괴로움 낱말이 있으면 도움 연결 문구(추천을 바라면 아님). 인사, 감사, 작별로만 된 말이면 인사 문구, 감사 문구, 작별 문구. 약 이야기면 의사와 약사가 정한다는 문장이 든 문구 ("아무 약이나 추천해 줘", 골든셋 O3)"""
+    drug = _drug_question(question, cls, info)
+    if _missed_question(question) and drug:
+        return _no_evidence(cls)
+    # 추천을 바라면 괴로움 낱말이 있어도 의사와 약사가 정한다는 문구 쪽으로 ("우울증 약 아무거나 추천해 줘", 골든셋 O3)
+    if is_distress(question) and "추천" not in question:
+        return Draft("normal", DISTRESS)
+    if _SMALL_TALK.fullmatch(question.strip()):
+        if re.search(_BYE, question):
+            return Draft("normal", FAREWELL)  # 감사가 섞여도 대화를 끝내는 말이 우선
+        return Draft("normal", THANKS if re.search(_THANK, question) else GREETING)
+    return Draft("normal", OUT_OF_SCOPE_DRUG if drug else OUT_OF_SCOPE)
+
+
+# 허가 원문의 "이 약"은 그 약 이름으로 바꿔 넘김. 다른 약 근거 속 "이 약"을 AI가 엉뚱한 약으로 옮김 (10/26 채연 Q1).
+# 앞 글자가 한글이면 낱말 끝("것이 약효")이라 그대로. 뒤가 조사나 한글이 아닌 글자일 때만 바꿈 ("이 약국", "이 약효"는 다른 낱말).
+# "가"는 받침 뒤에 오지 않고 "이 약가"(약값)와 겹쳐서 뺌
+# 목록에 없는 조사("이 약까지")는 이름이 깨지지 않게 그대로 둠 (#135 채연 리뷰 참고). 저장된 원문과 출처는 바꾸지 않음
+_THIS_DRUG = re.compile(r"(?<![가-힣])이\s?약(?:물)?(?=을|를|의|은|는|이|과|와|으로|로|에|도|만|[^가-힣]|$)")
+
+
 def _evidence_json(evidence: list[Evidence], info: FixedInfo) -> str:
     names = {d.code: d.name for d in info.drugs if d.code}
     rows = [
@@ -190,7 +266,9 @@ def _evidence_json(evidence: list[Evidence], info: FixedInfo) -> str:
             "번호": e.sentence_id,
             "무엇에 대한 글": names.get(e.drug_code or "", e.drug_code) or e.disease_code or "질환이 겹칠 때",
             "제목": e.heading,
-            "글": e.text,
+            "글": _THIS_DRUG.sub(lambda _, name=names[e.drug_code]: name, e.text)
+            if e.source == "drug_permit" and e.drug_code in names
+            else e.text,
         }
         for e in evidence
     ]
@@ -244,13 +322,8 @@ async def _write(
     # 약 이야기일 때만 (질문에 약이나 약 이름, 또는 분류가 약, 상담): "끼니를 거르면"은 팩트표로 답함 (10/25 점검)
     # 범위 밖 응대보다 먼저 봄: 분류가 범위 밖으로 나와도 빠뜨린 약 답이 그대로 나가지 않게 (10/25 점검)
     permit = [e for e in evidence if e.source == "drug_permit"]
-    names = [d.name[:3] for d in info.drugs if d.name]
-    about_drug = cls.get("category") in ("medication", "refer") or bool(_MED_WORDS.search(question))
-    about_drug = about_drug or any(n in question for n in names)
+    about_drug = _drug_question(question, cls, info)
     missed = _missed_question(question) and about_drug and not any(_MISSED_DOSE.search(e.text) for e in permit)
-    if cls.get("category") == "out_of_scope" and isinstance(gen.get("content"), str) and gen["content"].strip():
-        # 범위 밖은 짧게 응대하는 normal (설계 메모 7-12 ③). 근거가 없으니 AI가 no_evidence라고 해도 응대 글을 씀
-        return _no_evidence(cls) if missed else Draft("normal", clean_text(gen["content"]))
     kind = gen.get("answer_type")
     if kind not in ANSWER_SCHEMA["properties"]["answer_type"]["enum"] or not isinstance(gen.get("content"), str):
         kind = "no_evidence"

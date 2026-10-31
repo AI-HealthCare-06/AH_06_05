@@ -23,6 +23,19 @@ let health: Record<string, unknown> = {
   upcomingExams: [],
 };
 
+// U-4 동의 내역. U-5로 철회하면 건강 정보 동의가 철회됨으로 바뀜
+let healthWithdrawnAt: string | null = null;
+function consents(): Response {
+  const at = '2026-10-19T10:00:00+09:00';
+  return json(200, {
+    items: [
+      { type: 'terms', agreed: true, agreedAt: at, withdrawnAt: null },
+      { type: 'privacy', agreed: true, agreedAt: at, withdrawnAt: null },
+      { type: 'sensitiveHealth', agreed: !healthWithdrawnAt, agreedAt: at, withdrawnAt: healthWithdrawnAt },
+    ],
+  });
+}
+
 function me(): Response {
   return json(200, { ...USER, email: EMAIL, createdAt: '2026-10-19T10:00:00+09:00', health });
 }
@@ -146,6 +159,15 @@ export async function mockFetch(method: Method, path: string, init: RequestInit)
   if (method === 'POST' && path === '/auth/signup') return signup(body);
   if (method === 'GET' && path === '/users/me') return me();
   if (method === 'PATCH' && path === '/users/me') return updateMe(body);
+  if (method === 'GET' && path === '/users/me/consents') return consents();
+  if (method === 'DELETE' && path === '/users/me/consents/sensitiveHealth') {
+    healthWithdrawnAt ??= '2026-10-28T13:00:00+09:00';
+    return new Response(null, { status: 204 });
+  }
+  if (method === 'DELETE' && path === '/users/me') {
+    if (body.confirmed !== true) return error(400, 'VALIDATION_ERROR', '탈퇴를 확인해 주세요.');
+    return new Response(null, { status: 204 });
+  }
   const r = routeFlow(method, path, body);
   if (r) return r.body === null ? new Response(null, { status: r.status }) : json(r.status, r.body);
   return error(404, 'NOT_FOUND', '가짜 응답이 아직 없는 주소예요.');

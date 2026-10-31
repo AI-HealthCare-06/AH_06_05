@@ -13,20 +13,25 @@ PR 2-2에서 더할 것: 약 이름 검색으로 되묻기, 제품 이름을 모
 """
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.chatbot import context_check, evidence, safety_rules
-from app.services.chatbot.answer import write
-from app.services.chatbot.classify import check_classification, classify, classify_message
+from app.services.chatbot.answer import REFER, out_of_scope, write
+from app.services.chatbot.classify import asks_this_analysis, check_classification, classify, classify_message
 from app.services.chatbot.context import FixedInfo, recent, resolve_ordinal
 from app.services.chatbot.guard import guard
 from app.services.chatbot.llm import ChatClient, LLMError, Usage
+from app.services.rag.gate import Verdicts
 from app.services.rag.pipeline import search as rag_search
 
 CLARIFY_GUESS = "앞에서 말씀하신 약이 어떤 약인지 다시 알려 주시겠어요?"  # 기억 밖의 약을 단정하지 않음
 CLARIFY_DEFAULT = "어떤 약을 말씀하시는지 알려 주시겠어요?"
+# 분석 칩에 근거로 답하면 AI가 허가정보를 분석 결론처럼 말함 (10/27 측정 3번 중 3번). 분석 결과는 분석 화면이 보여 줌.
+# "확인된 경고가 없어요"라고 하지 않음 (안전하다는 말로 읽힐 수 있어서, 10/26 수인 결정). 화면 문구라 신규 임시 (10/27 수인 결정)
+ANALYSIS_GUIDE = "이번 분석에서 가장 조심할 점은 분석 결과 화면에서 확인해 주세요. 궁금한 점은 약사에게 확인해 주세요."
 
 
 @dataclass
@@ -62,6 +67,17 @@ def first_layer(question: str, emergency_dismissed: bool = False) -> tuple[Route
     if rule.hit and release is None:
         return _safety(rule.types, 1, rule.rules, rule.overdose), None
     return None, release
+
+
+_VERDICT_NAMES = {"ENOUGH", "PARTIAL", "INSUFFICIENT", "FULL", "NONE"}
+
+
+def _verdicts(v: Verdicts | None) -> str | None:
+    """판정 세 가지를 로그 한 줄로. 판정 AI가 돌려준 값이라 알려진 이름만 남기고 나머지는 ? (글이 섞이지 않게)"""
+    if v is None:
+        return None
+    a, b, c = (x if x in _VERDICT_NAMES else "?" for x in (v.a, v.b, v.c))
+    return f"a={a} b={b}/{'direct' if v.b_direct else 'indirect'} c={c}"
 
 
 async def route(
@@ -121,6 +137,29 @@ class Reply:
     # 근거 검색이 빈 목록일 때 이유 (rag.search reason), 출력 가드레일이면 output_guard:<종류>
     evidence_reason: str | None = None
     usage: Usage = field(default_factory=Usage)
+    safety_card: dict[str, Any] | None = None  # ⑤ { analysisId, warningIds } (명세서 v1.5 초안 H-2, H-3)
+    # 판정에서 막혔을 때(insufficient, risk_blocked) 어느 판정이 막았는지 로그용 요약 (#124 채연 리뷰)
+    evidence_verdicts: str | None = None
+
+
+# ⑤ 점검 결과로 답할 때의 앞뒤 문장 (화면 문구, 신규 임시, 10/26 수인 결정. 와이어프레임에는 나중에 맞춤)
+SAFETY_HEAD = "분석에서 확인된, 같이 먹을 때 주의할 점이에요."
+SAFETY_TAIL = "위 내용은 분석 결과에서 자세히 볼 수 있어요. 약사에게 확인해 주세요."
+
+
+# 술, 음식, 영양제처럼 점검(DUR)에 없는 것을 같이 묻는 질문. 약끼리 경고만 나가면 술은 괜찮다고 읽힐 수 있어 ⑤를 건너뜀.
+# 분류가 먹는 약끼리로 흔들림 ("다이아벡스랑 술 같이 마셔도 돼요?" 10번 중 3번, #134 리뷰 2번). "수술"의 "술"은 빼고 (10/27 수인 결정)
+_NOT_CHECKED = re.compile(
+    r"(?<![수기])술|음주|맥주|소주|와인|막걸리|양주|음식|식사|주스|자몽|커피|우유|녹차|영양제|한약|건강식품"
+)
+
+
+def _check_result(info: FixedInfo, tail: str = SAFETY_TAIL) -> str:
+    """경고마다 "약A, 약B: 점검 문장" 한 줄. 약 이름 뒤 조사는 괄호로 끝나는 이름이 많아 쉼표로 이음 (10/26 수인 결정).
+    경고 사이와 끝 문장 앞은 빈 줄. 좁은 화면에서 한 경고가 여러 줄로 접히면 다음 경고나 끝 문장과 구분되지 않음.
+    끝 문장의 "위 내용은"은 경고 전체에 대한 말임을 글로도 밝힘 (읽어주기). 머리 문장은 목록의 제목이라 붙임 (10/27 수인 결정)"""
+    warnings = "\n\n".join(f"{', '.join(w.names)}: {w.summary}" for w in info.pair_warnings)
+    return f"{SAFETY_HEAD}\n{warnings}\n\n{tail}"
 
 
 async def answer(
@@ -142,9 +181,23 @@ async def answer(
         return Reply(r.kind, None, r, usage=usage)  # 긴급, 자해, 오류는 화면 고정 카드
 
     cls = r.classification or {}
-    found = None
-    if r.kind != "out_of_scope":
-        found = await evidence.gather(question, cls, info, search, time.perf_counter() - started)
+    # ⑤ 먹는 약끼리 같이 먹어도 되는지 물으면 분석의 경고를 그대로 보여 주고 AI가 다시 판단하지 않음 (설계 메모 7-12, NFR-032).
+    # 경고가 없으면 "걸린 항목이 없어요"가 안전하다는 말로 읽힐 수 있어 지금처럼 근거 검색 (10/26 수인 결정)
+    checked_only = not _NOT_CHECKED.search(question)
+    if cls.get("about_user_drugs") and r.kind in ("medication", "refer") and info.pair_warnings and checked_only:
+        card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in info.pair_warnings]}
+        # 끊거나 바꾸려는 질문(next_visit)과 증상(soon)은 끝 문장을 그 상담 문구로. 약을 끊는 건 의사 판단 (#134 리뷰 1번)
+        kind = cls.get("refer_kind") if r.kind == "refer" else None
+        if kind in ("next_visit", "soon"):
+            return Reply("refer", _check_result(info, REFER[kind]), r, usage=usage, safety_card=card)
+        return Reply("normal", _check_result(info), r, usage=usage, safety_card=card)
+    if r.kind == "medication" and asks_this_analysis(question):
+        return Reply("normal", ANALYSIS_GUIDE, r, usage=usage)
+    if r.kind == "out_of_scope":
+        # 범위 밖은 답 AI 없이 늘 같은 문구 (5회차 멘토링 시연, #99). 다음 질문의 대화 기억에서도 뺌 (chats._history)
+        draft = out_of_scope(question, cls, info)
+        return Reply(draft.answer_type, draft.content, r, usage=usage)
+    found = await evidence.gather(question, cls, info, search, time.perf_counter() - started)
     past, first_turn = _turns(history)
     try:
         draft = await write(question, cls, info, past, first_turn, found, client, usage)
@@ -152,4 +205,5 @@ async def answer(
         return Reply("error", None, r, evidence_reason=found.reason if found else None, usage=usage)
     # 출력 가드레일에 걸렸으면 그 이유를 근거 없음 이유 자리에 (#124가 병합되면 대화 API가 메시지 번호와 같이 로그에 남김)
     reason = f"output_guard:{draft.blocked}" if draft.blocked else (found.reason if found else None)
-    return Reply(draft.answer_type, draft.content, r, draft.sources, reason, usage)
+    verdicts = _verdicts(found.verdicts) if found and found.reason in ("insufficient", "risk_blocked") else None
+    return Reply(draft.answer_type, draft.content, r, draft.sources, reason, usage, evidence_verdicts=verdicts)

@@ -35,7 +35,7 @@ from app.models.ocr import (
     QualityFlag,
 )
 from app.models.users import ConsentType, User, UserConsent
-from app.services.drug_names import base_name
+from app.services.drug_names import display_name
 from app.services.ocr import clova, llm_fix, numeric, photo_store, photos, precheck, queue
 from app.services.ocr.mask import mask
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NameMatcher
@@ -472,9 +472,13 @@ async def remember_file(user_id: int, file_hash: str, prescription_ids: list[int
         logger.exception("파일 해시 기록 실패 (작업은 계속)")
 
 
-async def run_job(job_id: int, user_id: int, blobs: list[Blob], final: bool = True) -> bool:
+async def run_job(job_id: int, user_id: int, blobs: list[Blob], final: bool = True) -> bool:  # noqa: C901
     """백그라운드 작업. 어떤 오류가 나도 작업이 queued · running에 멈춰 있지 않게 마무리한다.
-    final=False(워커의 첫 시도)일 때 CLOVA가 전부 실패했으면 실패로 닫지 않고 queued로 되돌린 뒤 True(다시 시도해 주세요)를 돌려준다"""
+    final=False(워커의 첫 시도)일 때 CLOVA가 전부 실패했으면 실패로 닫지 않고 queued로 되돌린 뒤 True(다시 시도해 주세요)를 돌려준다.
+    작업이 지워졌으면(그 사이 탈퇴 등) 유료 OCR을 부르지 않고 멈춘다. 이미 지워진 작업에는 처방전도 저장되지 않는다(외래키)"""
+    if not await OcrJob.filter(id=job_id).exists():
+        logger.info("작업이 이미 지워져 읽지 않음 job=%s", job_id)
+        return False
     try:
         await OcrJob.filter(id=job_id).update(status=OcrJobStatus.RUNNING)
         matcher, codes = await get_matcher(), await get_codes()
@@ -501,6 +505,9 @@ async def run_job(job_id: int, user_id: int, blobs: list[Blob], final: bool = Tr
                 duplicated += [{"fileIndex": b.file_index, "prescriptionId": rx_id} for rx_id in before]
                 saved_ids[b.file_index] = before[0]
                 continue
+            if not await OcrJob.filter(id=job_id).exists():  # 읽는 도중에 지워졌으면 남은 사진은 부르지 않음
+                logger.info("읽는 도중 작업이 지워져 멈춤 job=%s", job_id)
+                return False
             outcome = await _read_file(job_id, user_id, b, matcher, codes, digest)
             failures += outcome.failures
             saved += outcome.saved
@@ -568,7 +575,7 @@ async def get_job(user: User, job_id: int) -> dict[str, Any]:
 
 
 def item_display_name(drug: DrugProduct | None) -> str | None:
-    return base_name(drug.item_name) if drug else None
+    return display_name(drug.item_name) if drug else None
 
 
 def check_fields(item: PrescriptionItem) -> list[str]:
@@ -614,7 +621,7 @@ async def get_prescription(user: User, prescription_id: int) -> dict[str, Any]:
                     {
                         "ediCode": c.drug.edi_code,
                         "itemSeq": c.drug.item_seq,
-                        "itemName": base_name(c.drug.item_name),
+                        "itemName": display_name(c.drug.item_name),
                         "score": float(c.score) if c.score is not None else None,
                     }
                     for c in by_item.get(it.id, [])
@@ -688,7 +695,7 @@ async def search_drugs(q: str, size: int) -> dict[str, Any]:
             {
                 "itemSeq": d.item_seq,
                 "ediCode": d.edi_code,
-                "itemName": base_name(d.item_name),
+                "itemName": display_name(d.item_name),
                 "entpName": d.entp_name,
                 "etcOtc": d.etc_otc,
                 "score": float(_clamp(c.score)),

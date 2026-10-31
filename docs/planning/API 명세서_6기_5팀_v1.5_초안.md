@@ -23,6 +23,10 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.5 초안 추가 | 2026-10-20 | R-4 `lifestyle.diseases[].origin`에 `profile`(내 정보 질환) 추가. 분석 질환은 처방전 질환과 내 정보 질환을 합쳐 씀 (#101, 10/19 합의) | 이수인 |
 | v1.5 초안 추가 | 2026-10-22 | H-3 응답을 `202` `{ messageId }`로 바꾸고 답은 H-2로 받음(2초마다 조회, 30초 지나면 E6). H-3 `content` 1~500자, 벗어나면 `400 VALIDATION_ERROR`. 답 만들기가 실패하면 만드는 중이던 답 줄을 지우고, 30초를 넘긴 줄은 다시 시도 때 지움. H-2 답 줄에 `safety`, ERD 반영 14번. H-3 요청 `emergencyDismissed`, 1층은 저장 전에 보고 걸린 질문은 원문 없이(`content` 빈 글), H-1과 H-7 `firstMessage`는 아직 보내지 않음(#116), H-8 `safetyModeUntil`은 그날 자정, H-2 답 줄 `replyTo`(ERD 반영 15번), H-1 `analysisId`는 맥락 카드 줄을 만들지 않음, H-7 같은 요청은 카드 줄을 한 번만. O-4의 `drugMatch` 줄을 H-2로, R-8은 대화의 분석 연결만 비움(채연과 정할 것) (#100) | 이수인 |
 | v1.5 초안 추가 | 2026-10-23 | R-8: 분석을 지우면 그 분석으로 시작한 챗봇 대화와 그 분석의 맥락 카드가 붙은 대화를 지움(10/22의 "분석 연결만 비움"을 바꿈, 채연 리뷰). FK는 `set null` 그대로 두고 R-8 코드에서 지움(마이그레이션 없음) (#100) | 이수인 |
+| v1.5 초안 추가 | 2026-10-28 | H-2 답 줄 `safetyCard`: 상담 갈래(끊거나 바꾸려는 질문, 증상)에서 카드가 붙으면 `answerType`은 `refer`. 새 유형이 아니라 있던 유형이라 화면 라벨은 그대로 (#134 리뷰) | 이수인 |
+| v1.5 초안 추가 | 2026-10-28 | U-3, U-4, U-5를 #136 코드와 시험에 맞춤: U-3과 U-5 삭제에 보관 중인 사진, U-3 남는 칸(자리 값)과 쿠키, 401, U-4 `withdrawnAt`, U-5 응답 204(다시 불러도 같음)와 400, U-6 다시 동의 제안(담당자 확정 전) (#137, 10/28 수인) | 이수인 |
+| v1.5 초안 추가 | 2026-10-28 | 7장 ERD 반영 사항 16번 `chat_messages.route_kind` 추가(범위 밖 질문과 답을 대화 기억에서 뺌). API 응답 모양은 그대로 (#140, 10/28 수인) | 이수인 |
+| v1.5 초안 추가 | 2026-10-30 | 6장 P-1 ~ P-4를 서버 코드에 맞춤: 추천은 9/23에 정한 세 가지(국물 남기기, 빠르게 걷기 30분, 술 마시지 않기)를 분석 질환과 약에 팩트표 근거가 있을 때만, P-1 `hasDiseases`, `cautionLabel`, P-2 응답 `goalIds`와 다시 고르면 같은 목표는 유지, P-4 오늘 기록만, 수량형 `value`는 그날 총량, 완료 취소 허용, 포인트 칸(`todayPoints`, `allDoneBonus`, `pointsEarned`)은 P-6과 함께 뒤로. 7장 ERD 반영 17번. 담당 P-1 ~ P-4 채연 (10/30 회의) | 이수인 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -257,6 +261,22 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 </details>
 
+<details>
+<summary><b>v1.5 초안 추가</b> 2026-10-28 탈퇴와 동의 철회를 서버에 맞춤 (수인) 세부 8건</summary>
+
+| 위치 | 현행 (As-Is) | 개정 (To-Be) |
+|---|---|---|
+| 2. 회원 / U-3 삭제 | 처방전부터 동의 기록, 건강 정보까지 | 맨 앞에 보관 중인 처방전 사진(올린 지 24시간 안) |
+| 2. 회원 / U-3 남김 | `id`, `deleted_at`만 남김 | 개인정보를 지우고 `deleted_at`을 남김, 다른 칸은 자리 값으로 덮어씀(`withdrawn-{id}`, 무작위 비밀번호, 출생연도 0, 성별 M) |
+| 2. 회원 / U-3 탈퇴 뒤 | 없음 | 재발급권 쿠키를 지움. 로그인과 API는 `401`, 재발급(A-4)은 탈퇴 여부를 보지 않음 |
+| 2. 회원 / U-3 `400` | `confirmed`가 `true`가 아님 | 본문이 없을 때도 |
+| 2. 회원 / U-4 응답 | `type`, `agreed`, `agreedAt` | `withdrawnAt` 추가 (철회하지 않았으면 `null`) |
+| 2. 회원 / U-5 삭제 | 처방전부터 챗봇 대화, 건강 정보까지 | 맨 앞에 보관 중인 처방전 사진(올린 지 24시간 안) |
+| 2. 회원 / U-5 응답 | 없음 | `204`, 이미 철회했으면 다시 불러도 `204`, `sensitiveHealth`가 아니면 `400 VALIDATION_ERROR`(`field: type`) |
+| 1. 전체 목록, 2. 회원 / U-6, 8. 남은 결정 사항 | 없음 | 다시 동의 `PUT /users/me/consents/{type}` 제안, 상태는 담당자 확정 필요, 정할 것 2가지 (#137) |
+
+</details>
+
 ---
 
 > Figma 통합 와이어프레임(50개 화면, 화면 번호표 v0.6) 요구사항 정의서 v1.5 ERD v1.3 기준입니다. (53개는 10/6 오전 결정이었고, 그날 오후 CB-05가 음성에서 받아쓰기로 바뀌면서 50개로 다시 바뀌었어요. main의 v1.3과 맞췄어요)
@@ -326,6 +346,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | U-3 | DELETE | `/users/me` | 회원 탈퇴 | CM-07 | 수인 | ✅ |
 | U-4 | GET | `/users/me/consents` | 동의 내역 조회 | CM-05 | 수인 | ✅ |
 | U-5 | DELETE | `/users/me/consents/{type}` | 동의 철회 | CM-05 | 수인 | ✅ |
+| U-6 | PUT | `/users/me/consents/{type}` | 다시 동의 (제안) | CM-05 | 수인 | 🟡 |
 | O-1 | POST | `/prescriptions` | 처방전 · 약봉투 업로드 → OCR 작업 시작 (`202`) | OC-01 | 채연 | 🟡 |
 | O-2 | GET | `/prescriptions/{id}` | 인식 결과 조회 | OC-02 | 채연 | 🟡 |
 | O-3 | PATCH | `/prescriptions/{id}/items/{itemId}` | 인식 결과 수정 · 후보 선택 | OC-02 | 채연 | 🟡 |
@@ -352,10 +373,10 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | H-9 | POST | `/chat/sessions/{id}/attachments` | 사진, 파일 올리기 (2단계) | CB-04 | 수인 | ⚪ |
 | H-10 | POST | `/chat/sessions/{id}/safety-events` | 앱에서 먼저 감지한 긴급, 자해 기록 (2단계) | CB-01-E4 | 수인 | ⚪ |
 | H-11 | POST | `/chat/messages/{id}/feedback` | 답변 피드백 (2단계) | CB-01 | 수인 | ⚪ |
-| P-1 | GET | `/recommendations?analysisId=` | 생활습관 추천 목록 | RG-05 | 미정 | 🟡 |
-| P-2 | POST | `/habit-goals` | 실천 목표 만들기 (최대 3개) | RW-02 | 미정 | 🟡 |
-| P-3 | GET | `/habit-goals/today` | 오늘의 실천 | CM-03 · RW-03~05 · RW-03-E2 | 미정 | 🟡 |
-| P-4 | POST | `/habit-goals/{goalId}/records` | 실천 기록 (체크 · 수량) | RW-03 · RW-04 · RW-03-E1 | 미정 | 🟡 |
+| P-1 | GET | `/recommendations?analysisId=` | 생활습관 추천 목록 | RG-05 | 채연 | 🟡 |
+| P-2 | POST | `/habit-goals` | 실천 목표 만들기 (최대 3개) | RW-02 | 채연 | 🟡 |
+| P-3 | GET | `/habit-goals/today` | 오늘의 실천 | CM-03 · RW-03~05 · RW-03-E2 | 채연 | 🟡 |
+| P-4 | POST | `/habit-goals/{goalId}/records` | 실천 기록 (체크 · 수량) | RW-03 · RW-04 · RW-03-E1 | 채연 | 🟡 |
 | P-5 | GET | `/habit-goals/history?period=week` | 주간 달성 현황 | RW-06 · RW-06-E1 | 미정 | 🟡 |
 | P-6 | GET | `/rewards/summary` | 포인트 요약 | RW-05 · RW-06 | 미정 | 🟡 |
 
@@ -553,15 +574,17 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 { "confirmed": true }
 ```
 
-응답 `204` · 아래 데이터를 **즉시 삭제**하고, 사용자 행은 개인정보를 지운 뒤 `deleted_at`만 남김 (10/6 확정)
+응답 `204` · 아래 데이터를 **즉시 삭제**하고, 사용자 행은 개인정보를 지우고 `deleted_at`을 남김 (10/6 확정, 남는 칸은 아래 표)
 
 | 삭제 | 남김 |
 |---|---|
-| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 · 실천 목표 · 실천 기록 · 포인트 · 동의 기록, 건강 정보 | `users` 행의 `id` · `deleted_at` (탈퇴 처리 확인용) |
+| 보관 중인 처방전 사진(올린 지 24시간 안), 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 · 실천 목표 · 실천 기록 · 포인트 · 동의 기록, 건강 정보 | `users` 행의 `id` · `deleted_at` (탈퇴 처리 확인용). 다른 칸은 비울 수 없어 자리 값으로 덮어씀: `login_id`는 `withdrawn-{id}`(같은 이메일로 다시 가입할 수 있게), 비밀번호는 무작위 값, `birth_year` 0, `sex` M. 개인정보는 남지 않음 (10/28, #136) |
+
+- 탈퇴하면 재발급권 쿠키를 지우고, 그 뒤 로그인은 `401`. 남은 출입증이나 재발급권으로 받은 출입증으로 부르는 API도 `401` (재발급 A-4는 탈퇴 여부를 보지 않음, 10/28 #136)
 
 | HTTP | code | 설명 |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | `confirmed`가 `true`가 아님 |
+| 400 | `VALIDATION_ERROR` | `confirmed`가 `true`가 아니거나 본문이 없음 |
 
 ---
 
@@ -573,12 +596,13 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 ```json
 {
   "items": [
-    { "type": "terms", "agreed": true, "agreedAt": "2026-09-20T10:00:00+09:00" },
-    { "type": "privacy", "agreed": true, "agreedAt": "2026-09-20T10:00:00+09:00" },
-    { "type": "sensitiveHealth", "agreed": true, "agreedAt": "2026-09-20T10:00:00+09:00" }
+    { "type": "terms", "agreed": true, "agreedAt": "2026-09-20T10:00:00+09:00", "withdrawnAt": null },
+    { "type": "privacy", "agreed": true, "agreedAt": "2026-09-20T10:00:00+09:00", "withdrawnAt": null },
+    { "type": "sensitiveHealth", "agreed": true, "agreedAt": "2026-09-20T10:00:00+09:00", "withdrawnAt": null }
   ]
 }
 ```
+- `withdrawnAt`: 철회한 시각, 철회하지 않았으면 `null`. 철회하면 `agreed`는 `false`이고 `agreedAt`은 처음 동의한 시각 그대로 (10/28, #136)
 
 ### U-5. 동의 철회 `DELETE /users/me/consents/{type}`
 
@@ -588,7 +612,35 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 
 | 삭제 | 남김 |
 |---|---|
-| 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 (건강 정보가 들어 있을 수 있음), 건강 정보(`user_health_profiles`) | 실천 목표(`status = ended`로 종료, 추천 연결 `recommendation_id`는 비움 — 질환 라벨 `reason_label`은 추천과 함께 삭제) · 실천 기록 · 포인트 · 동의 기록(철회 시각 포함) |
+| 보관 중인 처방전 사진(올린 지 24시간 안), 처방전 · OCR 원문 · 처방 약 · 분석 · 경고 · 안내문 · 피드백 · 챗봇 대화 (건강 정보가 들어 있을 수 있음), 건강 정보(`user_health_profiles`) | 실천 목표(`status = ended`로 종료, 추천 연결 `recommendation_id`는 비움 — 질환 라벨 `reason_label`은 추천과 함께 삭제) · 실천 기록 · 포인트 · 동의 기록(철회 시각 포함) |
+
+응답 `204`. 이미 철회했으면 다시 불러도 `204`(아무것도 바뀌지 않음) (10/28, #136)
+
+| HTTP | code | 설명 |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` (`field: type`) | `sensitiveHealth`가 아님 (terms, privacy는 철회할 수 없음) |
+
+### U-6. 다시 동의 `PUT /users/me/consents/{type}` 🟡 (제안, #137)
+
+화면 CM-05 → 동의 내역 (와이어프레임 먼저)
+
+`type = sensitiveHealth`만. U-5로 철회한 뒤 다시 동의할 때 씀. 앱은 가입 때와 같은 건강 정보 동의 글을 다시 보여 주고 [동의하기]를 눌렀을 때만 부름
+
+**요청**
+```json
+{ "agreed": true }
+```
+
+응답 `204`. 이미 동의한 상태면 다시 불러도 `204`, 동의 줄이 없으면 새로 만듦. 다시 동의하면 업로드와 분석이 다시 됨
+
+| HTTP | code | 설명 |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` (`field: type`) | `sensitiveHealth`가 아님 |
+| 400 | `VALIDATION_ERROR` (`field: agreed`) | `agreed`가 `true`가 아니거나 본문이 없음 (끄기는 U-5) |
+
+정할 것 (#137)
+- 동의 기록: (제안) 같은 줄의 `agreed`를 `true`, `agreedAt`을 새 시각으로, `withdrawnAt`은 비움. 대가: 처음 동의한 시각과 철회 기록이 남지 않음. 이력을 남기려면 동의 기록을 줄마다 쌓는 표로 바꿔야 하고 마이그레이션과 동의 확인 코드(has_health_consent)도 바뀜
+- 11/5 시연 전에 넣을지
 
 ---
 
@@ -1159,7 +1211,7 @@ H-2 답 줄에 더하는 칸 (10/12 수인 확정, 10/22 H-3 응답에서 옮김
 
 | 칸 | 언제 | 모양 |
 |---|---|---|
-| `safetyCard` | 안전성 점검 결과를 전하는 답에만 | `{ analysisId, warningIds }`. 경고 문구는 R-4 `warnings[]`를 그대로 그림 (AI가 새로 쓰지 않음). 카드가 붙는 답도 `answerType`은 `normal` |
+| `safetyCard` | 안전성 점검 결과를 전하는 답에만 | `{ analysisId, warningIds }`. 경고 문구는 R-4 `warnings[]`를 그대로 그림 (AI가 새로 쓰지 않음). 카드가 붙는 답도 `answerType`은 `normal`. 끊거나 바꾸려는 질문과 증상(상담 갈래 `next_visit`, `soon`)이면 `refer` (10/28, #134 리뷰) |
 | `drugMatch` | 질문에서 약 이름을 찾았을 때만 | O-4와 같은 `{ status, items }`. `status`가 `candidates` 또는 `not_found`면 `answerType`은 `clarify`. 지금 코드에서 만들지 않아 만들 때 저장 방법을 정함 (확정 전) |
 | `safety` | 서버가 긴급이나 자해를 감지했을 때만 (`answerType`이 `emergency` 또는 `crisis`) | `{ types, overdose, rule }`. `types`는 동시에 해당하면 둘 다 담고, `overdose`가 참이면 [지금은 증상이 없어요] 칩을 숨김. 질문 원문은 담지 않음 |
 
@@ -1250,51 +1302,66 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 
 ---
 
-## 6. 피처 4 — 실천 · 보상 (담당 미정, 챌린지는 뒤로 미룸) 🟡
+## 6. 피처 4 — 실천 · 보상 (P-1 ~ P-4 채연, P-5와 P-6은 뒤로) 🟡
 
 > 성규님 데이터 흐름 기준: Analysis → **Recommendation** → **HabitGoal** → **HabitRecord** → **Reward**
 > 추천(Recommendation)은 사용자가 골라야 목표(HabitGoal)가 됨. 아래 요청 · 응답은 화면에 필요한 최소 형식이며 담당자가 확정
 
 ### P-1. 생활습관 추천 `GET /recommendations?analysisId=5001`
 
-화면 RG-05 · REQ-110 — 분석 결과의 질환 · 약 기준, 팩트 테이블에서만 추천
+화면 RG-05 → RW-02, REQ-110. 분석 질환(처방전, 내 정보, 질환 직접 선택)과 약에 팩트표 근거가 있을 때만, 9/23에 정한 세 가지 안에서 추천 (10/30 수인)
 ```json
-{ "items": [ { "id": 1, "title": "국물 남기기", "desc": "하루 소금 5g 이하", "reasonLabel": "고혈압", "goalType": "check" },
-             { "id": 2, "title": "빠르게 걷기 30분", "reasonLabel": "고혈압 · 당뇨", "goalType": "quantity", "targetValue": 30, "unit": "분" } ] }
+{ "items": [ { "id": 1, "title": "국물 남기기", "desc": "1일 나트륨 2,000mg 이하 (소금 약 5g)", "reasonLabel": "고혈압", "goalType": "check" },
+             { "id": 2, "title": "빠르게 걷기 30분", "desc": "주 5회 이상, 회당 30분 이상 (중강도)", "reasonLabel": "고혈압", "goalType": "quantity", "targetValue": 30, "unit": "분" } ],
+  "hasDiseases": true }
 ```
+- 국물 남기기: 고혈압, 만성신장병 / 빠르게 걷기 30분: 고혈압, 이상지질혈증, 당뇨병, 골다공증, 만성폐쇄성폐질환 / 술 마시지 않기: 뇌졸중, 이상지질혈증, 당뇨병의 설포닐우레아 약, 골관절염의 아세트아미노펜 약 (금주까지 말하는 근거만, 내 정보 음주가 "안 마심"이면 뺌). 약 근거도 그 질환이 분석에 있을 때만 봄 (생활습관 탭과 같은 기준, 10/30 수인)
+- 허혈성심질환이 있으면 걷기는 제목 "걷기", 체크형, `cautionLabel: "의료진이 정한 강도로"`. `desc`는 팩트표의 "의료진이 정한 강도로 주 5회"와 시술이나 수술 뒤에는 의료진 승인 후 시작하라는 실천 문장을 고치지 않고 이어 붙임 (REQ-110. "의료진 확인"은 목표로 만들지 않는 항목의 라벨이라 쓰지 않음)
+- `desc`는 팩트표 글 그대로. `reasonLabel`은 근거가 된 질환 이름을 쉼표로, 약 근거는 "약과 함께"
+- 질환이 없으면 `items: []`, `hasDiseases: false` → 앱은 질환 고르기(RG-05-E1)로. 질환은 있는데 근거가 없으면 `items: []`, `hasDiseases: true`
+- 부를 때마다 다시 계산해 저장하고 같은 챌린지는 `id`를 그대로 둠. 남의 분석은 `404`, 분석이 끝나지 않았으면 `409 ANALYSIS_NOT_READY`
 
 ### P-2. 목표 만들기 `POST /habit-goals`
 
-화면 RW-02 · REQ-111
+화면 RW-02, REQ-111
 ```json
-{ "recommendationIds": [1, 2, 3] }
+{ "recommendationIds": [1, 2] }
 ```
-응답 `201` · 1~3개만 허용, 0개 또는 4개 이상이면 `400 VALIDATION_ERROR`
+응답 `201` `{ "goalIds": [11, 12] }`
+- 1~3개만 허용, 0개 또는 4개 이상, 같은 번호 두 번, 다른 분석의 같은 목표를 함께 고르면 `400 VALIDATION_ERROR`. 남의 추천이 섞이면 `404`
+- 다시 고르면 지금 목표 중 같은 목표(제목과 종류가 같음)는 그대로 두고 `goalIds`에 같은 번호를 돌려줌(오늘 기록이 남음). 뺀 목표만 끝내고(`ended`) 새로 고른 것만 만듦 (#43 목표 교체, 10/30 수인). 주간 다시 고르기 REQ-116은 뒤로
 
 ### P-3. 오늘의 실천 `GET /habit-goals/today`
 
-화면 CM-03 카드 · RW-03 · RW-04 · RW-05 · REQ-112
+화면 CM-03 카드, RW-03 (미실천, 일부 완료, 전체 완료), RW-03-E2, REQ-112
 ```json
 {
   "hasGoals": true,
-  "doneCount": 1, "totalCount": 3, "streakDays": 3,
+  "doneCount": 1, "totalCount": 2, "streakDays": 3,
   "items": [ { "goalId": 11, "title": "국물 남기기", "reasonLabel": "고혈압", "goalType": "check", "done": true },
-             { "goalId": 12, "title": "빠르게 걷기", "goalType": "quantity", "targetValue": 30, "currentValue": 0, "unit": "분", "done": false } ],
-  "todayPoints": 10, "allDoneBonus": 10
+             { "goalId": 12, "title": "빠르게 걷기 30분", "reasonLabel": "고혈압", "goalType": "quantity", "targetValue": 30, "currentValue": 10, "unit": "분", "done": false } ]
 }
 ```
-`hasGoals: false` → CM-03-E1 "목표 없음" · 실천 탭은 RW-03-E2
+- `hasGoals: false` → 홈 카드는 목표 없음, 실천 탭은 RW-03-E2
+- `streakDays`: 어떤 목표든 하루 1개 이상 완료한 날이 이어진 수. 목표가 바뀌어도 이어지고, 오늘 아직 안 했으면 어제까지 셈 (REQ-114)
+- 분석을 지웠으면(R-8) `reasonLabel`, `cautionLabel`이 빠짐 (질환 정보라 추천과 함께 지움)
+- 포인트 칸(`todayPoints`, `allDoneBonus`)은 P-6과 함께 뒤로
 
 ### P-4. 실천 기록 `POST /habit-goals/{goalId}/records`
 
-화면 RW-03 · RW-04 · REQ-112 · 113 · 115
+화면 RW-03, REQ-112, REQ-115
 ```json
-{ "date": "2026-09-24", "completed": true }
-{ "date": "2026-09-24", "value": 10 }
+{ "date": "2026-10-30", "completed": true }
+{ "date": "2026-10-30", "value": 10 }
 ```
-- 같은 날 같은 목표를 다시 완료하면 무시하고 `200` (포인트 중복 지급 없음)
-- 응답에 `pointsEarned`, `allDone` 포함 → `allDone: true`면 RW-05로 이동
-- 저장 실패 시 프론트는 RW-03-E1 배너 + 같은 요청 재시도
+응답 `200` `{ "goalId": 11, "done": true, "allDone": false }` (수량형은 `currentValue`도)
+- 체크형은 `completed`. `false`면 완료 취소 (10/2 회의 결정 "완료 취소", #43)
+- 수량형은 `value`(0~600, 상한 600분은 제안)가 그날 한 총량이고 목표에 닿으면 완료, 줄여서 목표 아래로 내려가면 완료가 풀림. 총량이라 같은 요청을 다시 보내도 두 번 더해지지 않음
+- 오늘 날짜만 받음, 다른 날이면 `400 VALIDATION_ERROR` (몰아서 체크 막기)
+- 같은 날 같은 목표를 다시 완료하면 무시하고 `200`
+- 남의 목표나 끝난 목표는 `404`
+- `allDone: true`면 RW-03 전체 완료 상태로. 저장 실패 시 앱은 RW-03-E1 배너와 같은 요청 다시 보내기
+- `pointsEarned`는 P-6과 함께 뒤로
 
 ### P-5. 주간 달성 현황 `GET /habit-goals/history?period=week`
 
@@ -1313,7 +1380,7 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 
 ---
 
-## 7. ERD 반영 사항 — ✅ 1~9 ERD v1.0 · 10~11 ERD v1.2 · 12 ERD v1.3에 반영 완료 · 13 ~ 15는 ERD v1.5 초안에 반영 (확정 전)
+## 7. ERD 반영 사항 — ✅ 1~9 ERD v1.0 · 10~11 ERD v1.2 · 12 ERD v1.3에 반영 완료 · 13 ~ 16은 ERD v1.5 초안에 반영 (확정 전)
 
 | # | 내용 | 이유 | 관련 API |
 |---|---|---|---|
@@ -1332,6 +1399,8 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 | 13 | `chat_messages`에 `safety_card`, `status`, `model`, `prompt_tokens`, `completion_tokens`, `latency_ms` 추가, `chat_sessions`에 `safety_mode_until` 추가 (ERD v1.5 초안, 이슈 #88) | 점검 결과 카드 다시 그리기, 만드는 중인 답 표시, 답변마다 비용과 시간 측정, 안전 모드 끝나는 시각 | H-2 · H-3 · H-8 |
 | 14 | `chat_messages.safety` 추가 (ERD v1.5 초안, #100) | H-3을 202로 바꾸면 답을 H-2로 받으므로, 긴급, 자해 안내 카드를 처음 그릴 때도 이 칸이 필요함. 원문은 담지 않음 | H-2 |
 | 15 | `chat_messages.reply_to_id` 추가 (ERD v1.5 초안, #100) | 답 줄이 어느 질문의 답인지. `client_request_id`는 질문 줄에만 둘 수 있어서(대화 안에서 겹치면 안 됨) 다시 시도 때 답 줄을 찾고, 맨 아래에 생긴 답에 질문을 인용하려면 필요함 | H-2, H-3 |
+| 16 | `chat_messages.route_kind` 추가 (ERD v1.5 초안, #140) | 답 줄에 답을 만든 갈래를 남겨, 범위 밖으로 걸러진 질문과 답을 다음 질문의 대화 기억에서 뺌(5회차 멘토링 시연). 응답에는 내보내지 않음 | H-2, H-3 (응답 모양은 그대로) |
+| 17 | 실천 표 세 개 `recommendations`, `habit_goals`, `habit_records` (ERD v1.5 초안, 마이그레이션 18번). `recommendations`는 ERD의 `guide_id`, `medication_link_id`, `action_id` 대신 `challenge_key`, `fact_refs`(팩트표 "질환 id:항목 이름"), `desc`, `caution_label`. 팩트표가 JSON 파일이라 가리킬 표가 없음. `rewards`는 P-6과 함께 뒤로 | 분석을 지우면 추천은 같이 지우고 목표는 연결만 비움(R-8). 동의 철회는 목표를 끝내고 기록을 남김(U-5), 탈퇴는 모두 지움(U-3) | P-1 ~ P-4, R-8, U-3, U-5 |
 
 ---
 
@@ -1345,6 +1414,7 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 - [ ] 챗봇을 날짜별 여러 대화로 갈지 (H-4 · H-5 구현 여부)
 - [ ] 한 주가 끝난 뒤 목표 다시 고르기 흐름 (P-2)
 - [x] 동의 철회 시 기존 기록 처리 (U-5) — 위 표대로 (10/6 확정)
+- [ ] 다시 동의(U-6): 동의 기록 방식(덮어쓰기와 이력 표), 11/5 시연 전에 넣을지 🟡 수인 (#137)
 - [x] MVP 범위 확정 — 요구사항 정의서 v1.5 "MVP" 칸 (10/6 확정, 후순위 12건은 여유 있을 때만)
 - [x] RW-01 제외 확정 (2026-09-28, 한성규) — RG-05 [이 목표로 실천 시작하기]에서 RW-02로 바로 연결
 - [ ] RW-03 · RW-04 · RW-05를 한 화면의 상태(미실천 · 일부 완료 · 전체 완료)로 합칠지 🟡 수인

@@ -33,6 +33,7 @@ S0 = FixedInfo(
         UserDrug("리피토정10밀리그램", "아토르바스타틴", "콜레스테롤", "1일 1회 저녁"),
     ],
 )
+NO_DRUGS = FixedInfo(age=72, diseases=["고혈압"], drugs=[])  # 아직 처방전을 올리지 않은 사용자
 
 
 def classified(**over: Any) -> dict[str, Any]:
@@ -165,6 +166,80 @@ async def test_pregnancy_goes_to_refer():
     chat = FakeChat(classify=classified(category="out_of_scope"))
     r = await route("임신 중인데 이 약 먹어도 돼요?", S0, [], chat)
     assert (r.kind, r.classification["refer_kind"]) == ("refer", "next_visit")
+
+
+@sync
+async def test_food_chip_goes_to_medication():
+    """추천 칩 "같이 먹으면 안 되는 음식"을 분류가 범위 밖으로 봐도 약 갈래로 (10/27 실제 분류 3번 중 3번 범위 밖)"""
+    for q in (
+        "같이 먹으면 안 되는 음식이 있나요?",
+        "약이랑 함께 먹으면 안 되는 음식 있어?",
+        "피해야 할 음식이 있나요?",
+    ):
+        r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+        assert r.kind == "medication", q
+
+
+@sync
+async def test_food_or_drink_question_goes_to_medication():
+    """약 이름 없이 먹어도, 마셔도 되는지 물어도 먹는 약이 있으면 약 갈래로. 분류가 이유에는 약과의 상호작용이라 쓰고
+    갈래는 범위 밖으로 고름 (10/29 실제 분류 4번 중 4번, #145 채연 리뷰). 근거 검색은 먹는 약 전체로 찾음"""
+    for q in (
+        "자몽주스 마셔도 돼요?",
+        "커피 마셔도 되나요?",
+        "막걸리 한잔 마셔도 괜찮아요?",
+        "바나나 먹어도 돼요?",
+        "홍삼 드셔도 되나요?",
+        # 먹으면 안 되는지 묻는 꼴 (어르신이 흔히 쓰는 말투)
+        "자몽 먹으면 안 되나요?",
+        "술 마시면 안 돼요?",
+        "우유랑 같이 드시면 괜찮아요?",
+    ):
+        r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+        assert r.kind == "medication", q
+    # 먹는 약이 없으면 찾을 근거가 없어 범위 밖 그대로
+    r = await route("자몽주스 마셔도 돼요?", NO_DRUGS, [], FakeChat(classify=classified(category="out_of_scope")))
+    assert r.kind == "out_of_scope"
+    # 먹어도 되는지 묻지 않는 범위 밖 질문, 추천을 바라는 질문은 그대로 (골든셋 O3 "아무 약이나 추천해 줘")
+    for q in (
+        "아무 약이나 추천해 줘",
+        "같이 먹으면 되는 영양제 추천해 줘",
+        # 무엇을 먹을지 묻는 말은 메뉴 질문이라 그대로 (#147 채연 리뷰)
+        "오늘 저녁 뭐 먹으면 돼요?",
+        "점심에 무엇을 먹으면 좋을까요? 먹어도 되는 걸로요",
+        # 괴로움 낱말이 있으면 범위 밖에 둬서 도움 연결 문구가 나가게 (#147 채연 리뷰, 10/29 수인 결정: 괴로움이 먼저)
+        "우울한데 술 마셔도 돼요?",
+        "요즘 너무 힘들어서 술 마셔도 될까요?",
+        "오늘 저녁 뭐 먹을까요?",
+        "마이클 잭슨이 누구야?",
+    ):
+        r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+        assert r.kind == "out_of_scope", q
+
+
+@sync
+async def test_analysis_chip_asks_about_user_drugs():
+    """분석 칩은 먹는 약끼리 묻는 질문으로 (분석의 경고가 있으면 점검 결과로 답함)"""
+    r = await route(
+        "이번 분석에서 가장 조심할 건 뭔가요?", S0, [], FakeChat(classify=classified(category="out_of_scope"))
+    )
+    assert r.kind == "medication" and r.classification["about_user_drugs"] is True
+
+
+@sync
+async def test_this_analysis_rule_keeps_classification_for_drug_questions():
+    """질문에 "이번 분석"만 있으면 먹는 약끼리로 바꾸지 않음. 분석 칩처럼 가장 조심할 것을 물을 때만 (#135 채연 리뷰)"""
+    r = await route("이번 분석에 나온 노바스크는 어떻게 먹어야 하나요?", S0, [], FakeChat(classify=classified()))
+    assert r.kind == "medication" and r.classification["about_user_drugs"] is False
+
+
+@sync
+async def test_chip_rules_do_not_override_refer_or_other_questions():
+    chat = FakeChat(classify=classified(category="refer", refer_kind="pharmacist"))
+    assert (await route("같이 먹으면 안 되는 음식이 있나요?", S0, [], chat)).kind == "refer"
+    for q in ("마이클 잭슨이 누구야?", "오늘 저녁 음식 추천해 줘", "분석이 뭐예요?"):
+        r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+        assert r.kind == "out_of_scope" and not r.classification["about_user_drugs"], q
 
 
 @sync

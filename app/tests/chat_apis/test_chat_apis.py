@@ -16,10 +16,12 @@ from app.models.analysis import DrugGuide, ReviewStatus
 from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.users import ConsentType, UserConsent
 from app.services import chats, safety
+from app.services.chatbot.answer import OUT_OF_SCOPE
 from app.services.chatbot.context import FixedInfo
 from app.services.chatbot.llm import Usage
 from app.services.chatbot.pipeline import Reply, Route
-from app.tests.analysis_apis.test_analysis_apis import AnalysisCase
+from app.services.drug_names import base_name
+from app.tests.analysis_apis.test_analysis_apis import PRODUCTS, AnalysisCase
 
 API = "/api/v1/chat/sessions"
 EMERGENCY_TEXT = "약 먹고 나서 가슴이 조여요"  # 1층 chest
@@ -265,7 +267,11 @@ class TestAsk(ChatCase):
     async def test_no_evidence_reason_is_logged_without_question(self):
         """근거 없음은 검색 이유를 로그에 남겨 서버에서 원인을 찾게 함 (10/25 서버 확인). 질문 글과 약 이름은 남기지 않음"""
         self.fake.reply = Reply(
-            "no_evidence", "근거를 찾지 못했어요.", Route(kind="medication"), evidence_reason="no_candidate"
+            "no_evidence",
+            "근거를 찾지 못했어요.",
+            Route(kind="medication"),
+            evidence_reason="insufficient",
+            evidence_verdicts="a=INSUFFICIENT b=PARTIAL/indirect c=NONE",
         )
         with self.assertLogs(chats.logger, "WARNING") as logs:
             async with self.client() as client:
@@ -273,8 +279,20 @@ class TestAsk(ChatCase):
                 sid = await self.session(client, headers)
                 await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
         line = "\n".join(logs.output)
-        assert "reason=no_candidate" in line and "kind=medication" in line and "drugs=0" in line
+        assert "reason=insufficient" in line and "kind=medication" in line and "drugs=0" in line
+        # 답 유형 칸 이름은 answer_type, 어느 판정에서 막혔는지도 남김 (#124 채연 리뷰)
+        assert "answer_type=no_evidence" in line and " answer=" not in line
+        assert "verdicts=a=INSUFFICIENT b=PARTIAL/indirect c=NONE" in line
         assert "혈압약" not in line
+
+    async def test_answer_with_evidence_leaves_no_reason_log(self):
+        """근거가 있는 답(이유 없음)은 근거 없음 로그를 남기지 않음 (#124 채연 리뷰)"""
+        self.fake.reply = normal_reply()
+        with self.assertNoLogs(chats.logger, "WARNING"):
+            async with self.client() as client:
+                headers, _ = await self.auth(client, "a12@example.com")
+                sid = await self.session(client, headers)
+                await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
 
     async def test_slow_answer_is_cut_and_row_deleted(self):
         """답 만들기는 25초 안에서 끊음. 30초가 지나 새로 만드는 답과 겹치지 않게 (10/22)"""
@@ -346,6 +364,29 @@ class TestAsk(ChatCase):
         assert items[-1]["answerType"] == "crisis" and items[0]["content"] == ""
         assert datetime.fromisoformat(today["safetyModeUntil"]) == next_midnight()
 
+    async def test_amount_question_in_safety_mode_gets_crisis_card(self):
+        """안전 모드(그 대화 안, 자정까지)에서 약의 양 질문은 원문 없이 E5로, AI를 부르지 않음 (설계 메모 4-6, #116)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "a13@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, CRISIS_TEXT)
+            await self.ask(client, headers, sid, "노바스크 한 번에 몇 알 먹어요?", crid="q-2")
+            items = await self.items(client, headers, sid)
+        assert self.fake.calls == []
+        assert [i["answerType"] for i in items if i["role"] == "assistant"] == ["crisis", "crisis"]
+        assert items[-2]["content"] == "" and items[-1]["safety"]["types"] == ["crisis"]
+        assert items[-1]["safety"]["rule"] == "safety_mode_amount"
+
+    async def test_amount_question_without_safety_mode_goes_to_answer(self):
+        """안전 모드가 아니면 같은 질문도 보통 흐름으로. 안전 모드여도 때를 묻는 질문은 보통 흐름"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "a14@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "노바스크 한 번에 몇 알 먹어요?")
+            await self.ask(client, headers, sid, CRISIS_TEXT, crid="q-2")
+            await self.ask(client, headers, sid, "약 언제 먹어요?", crid="q-3")
+        assert len(self.fake.calls) == 2
+
 
 class TestFixedInfo(ChatCase):
     async def test_uses_latest_card_analysis_with_consent(self):
@@ -391,6 +432,33 @@ class TestFixedInfo(ChatCase):
             items = await self.items(client, headers, sid)
         assert self.fake.calls[0]["info"].drugs[0].ingredient == "" and items[-1]["status"] == "done"
 
+    async def test_pair_warnings_of_the_analysis_are_passed(self):
+        """⑤에 쓰는 약 두 개짜리 경고. 이름은 분석 화면과 같은 처방 이름 그대로 (10/26 수인 결정)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f6@example.com")
+            rx = await self.prescription(user, ["645600020", "648800030"])  # 시험용 병용금기
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            sid = await self.session(client, headers, analysisId=aid)
+            await self.ask(client, headers, sid, "같이 먹으면 안 되는 약 있어?")
+        info = self.fake.calls[0]["info"]
+        assert info.analysis_id == aid and len(info.pair_warnings) == 1
+        w = info.pair_warnings[0]
+        assert set(w.names) == {base_name(PRODUCTS[2][1]), "아스피린프로텍트정100밀리그람"}  # 수출명은 뗌
+        assert w.summary == "함께 드시면 안 되는 약이에요"
+
+    async def test_safety_card_is_saved_and_returned(self):
+        """점검 결과로 답하면 answerType은 normal, safetyCard는 H-2에 그대로 (명세서 v1.5 초안 H-2)"""
+        card = {"analysisId": 7, "warningIds": [31, 32]}
+        self.fake.reply = Reply("normal", "분석에서 확인된, 같이 먹을 때 주의할 점이에요.", Route(kind="medication"))
+        self.fake.reply.safety_card = card
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f7@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "같이 먹으면 안 되는 약 있어?")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["answerType"] == "normal" and items[-1]["safetyCard"] == card
+        assert "safetyCard" not in items[0]  # 카드가 없는 줄은 칸을 생략
+
     async def test_no_consent_means_general_info_only(self):
         async with self.client() as client:
             headers, user = await self.auth(client, "f3@example.com")
@@ -412,3 +480,35 @@ class TestFixedInfo(ChatCase):
             await self.ask(client, headers, sid, EMERGENCY_TEXT)
             await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?", crid="q-2")
         assert self.fake.calls[0]["history"] == []
+
+    async def test_history_skips_out_of_scope_turn(self):
+        """범위 밖으로 걸러진 질문과 그 답은 다음 질문의 대화 기억에 넣지 않음. 앞 대화가 노이즈가 됨
+        (5회차 멘토링 시연 "마이클 잭슨 누구야" 다음 "내가 먹는 약이 뭐야?", #99)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f8@example.com")
+            sid = await self.session(client, headers)
+            self.fake.reply = Reply("normal", OUT_OF_SCOPE, Route(kind="out_of_scope"))
+            await self.ask(client, headers, sid, "마이클 잭슨이 누구야?")
+            self.fake.reply = normal_reply()
+            await self.ask(client, headers, sid, "내가 먹는 약이 뭐야?", crid="q-2")
+            await self.ask(client, headers, sid, "그럼 아침에 먹어?", crid="q-3")
+        assert self.fake.calls[1]["history"] == []
+        assert self.fake.calls[2]["history"] == [
+            {"role": "user", "content": "내가 먹는 약이 뭐야?"},
+            {"role": "assistant", "content": "식사 직후에 드시는 게 좋아요."},
+        ]
+
+    async def test_answer_row_keeps_route_kind(self):
+        """답 줄에 답을 만든 갈래를 남김. 질문 줄은 비움 (1층이 잡은 긴급 답 포함)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f9@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+            await self.ask(client, headers, sid, EMERGENCY_TEXT, crid="q-2")
+        rows = await ChatMessage.filter(session_id=sid).order_by("id")
+        assert [(m.role.value, m.route_kind) for m in rows] == [
+            ("user", None),
+            ("assistant", "medication"),
+            ("user", None),
+            ("assistant", "emergency"),
+        ]

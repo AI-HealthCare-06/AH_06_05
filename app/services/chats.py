@@ -15,18 +15,25 @@ from starlette import status
 
 from app.core import config
 from app.core.errors import AppError
-from app.models.analysis import Analysis, AnalysisDisease, AnalysisPrescription, DrugGuide, ReviewStatus
+from app.models.analysis import (
+    Analysis,
+    AnalysisDisease,
+    AnalysisPrescription,
+    AnalysisWarning,
+    DrugGuide,
+    ReviewStatus,
+)
 from app.models.chat import AnswerType, ChatMessage, ChatSession, MessageStatus
 from app.models.ocr import MatchStatus, PrescriptionItem
 from app.models.users import User
 from app.repositories.chat import ChatRepository
 from app.services import safety
-from app.services.chatbot import pipeline
-from app.services.chatbot.context import FixedInfo, UserDrug
+from app.services.chatbot import pipeline, safety_rules
+from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
 from app.services.chatbot.evidence import JOB_LIMIT_SEC
 from app.services.chatbot.llm import make_client
 from app.services.chatbot.pipeline import Reply, Route
-from app.services.drug_names import base_name
+from app.services.drug_names import display_name
 from app.services.guide import lifestyle, medication
 from app.services.prescriptions import has_health_consent
 
@@ -137,6 +144,10 @@ def _safety(r: Route) -> dict[str, Any]:
     return {"types": r.safety_types, "overdose": r.overdose, "rule": ",".join(r.safety_rules)}
 
 
+def _in_safety_mode(s: ChatSession) -> bool:
+    return bool(s.safety_mode_until and s.safety_mode_until > _now())
+
+
 async def ask(
     user: User, session_id: int, content: str, client_request_id: str, emergency_dismissed: bool
 ) -> tuple[int, bool]:
@@ -154,9 +165,17 @@ async def ask(
         return (await repo.create_generating(question)).id, True
 
     blocked, _ = pipeline.first_layer(content, emergency_dismissed)
+    if not blocked and _in_safety_mode(s) and safety_rules.asks_amount(content):
+        # 안전 모드(그 대화 안, 자정까지)에서는 약의 양 질문을 처방대로 묻더라도 E5로 (설계 메모 4-6, 7-2, #116)
+        blocked = Route(kind="crisis", layer=1, safety_types=["crisis"], safety_rules=["safety_mode_amount"])
     if blocked:  # 1층이 잡고 문맥 파악이 풀지 않음: 원문을 저장하지 않고 긴급 답을 바로 (설계 메모 4-6)
         answer = await repo.create_question_and_answer(
-            s, "", client_request_id, answer_type=AnswerType(blocked.kind), safety=_safety(blocked)
+            s,
+            "",
+            client_request_id,
+            answer_type=AnswerType(blocked.kind),
+            safety=_safety(blocked),
+            route_kind=blocked.kind,
         )
         if "crisis" in blocked.safety_types:
             await repo.set_safety_mode(s.id, _next_midnight())
@@ -193,8 +212,14 @@ def _sources(ids: list[str]) -> list[dict[str, str]]:
 
 
 def _history(rows: list[ChatMessage]) -> list[dict[str, str]]:
-    """빈 글 줄(1층이 잡은 질문, 긴급 답, 맥락 카드)은 대화 기억에 넣지 않음"""
-    return [{"role": m.role.value, "content": m.content} for m in rows if m.content]
+    """빈 글 줄(1층이 잡은 질문, 긴급 답, 맥락 카드)은 대화 기억에 넣지 않음.
+    범위 밖으로 걸러진 질문과 그 답도 뺌. 앞 대화가 다음 답의 노이즈가 됨 (5회차 멘토링 시연, #99)"""
+    skip = {m.reply_to_id for m in rows if m.route_kind == "out_of_scope"}
+    return [
+        {"role": m.role.value, "content": m.content}
+        for m in rows
+        if m.content and m.route_kind != "out_of_scope" and m.id not in skip
+    ]
 
 
 async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
@@ -223,8 +248,9 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         # 근거 없음 원인(no_candidate 등)을 서버 로그로 찾게 (10/25). 질문 글과 약 이름은 남기지 않고 개수만.
         # 서버는 이 로거에 출력 설정이 없어 WARNING부터 보이므로 warning으로 남김
         logger.warning(
-            "챗봇 근거 없음 message=%s answer=%s kind=%s reason=%s drugs=%s diseases=%s",
-            answer.id, reply.answer_type, r.kind, reply.evidence_reason, len(info.drugs), len(info.disease_ids),
+            "챗봇 근거 없음 message=%s answer_type=%s kind=%s reason=%s verdicts=%s drugs=%s diseases=%s",
+            answer.id, reply.answer_type, r.kind, reply.evidence_reason, reply.evidence_verdicts,
+            len(info.drugs), len(info.disease_ids),
         )  # fmt: skip
     saved = await repo.finish(
         answer.id,
@@ -232,6 +258,8 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         content=reply.content or "",
         sources=_sources(reply.sources),
         safety=_safety(r) if r.safety_types else None,
+        safety_card=reply.safety_card,
+        route_kind=r.kind,
         model=config.OPENAI_CHAT_MODEL if reply.usage.calls else None,
         prompt_tokens=reply.usage.prompt_tokens,
         completion_tokens=reply.usage.completion_tokens,
@@ -239,6 +267,27 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
     )
     if saved and "crisis" in r.safety_types:
         await repo.set_safety_mode(s.id, _next_midnight())
+
+
+# 약 두 개짜리 경고 (⑤ 먹는 약끼리 묻는 질문, 노인주의, 연령금기, 용량, 여러 약 복용은 약 하나짜리라 뺌)
+PAIR_WARNINGS = ("interaction", "duplicate_ingredient", "duplicate_efficacy")
+
+
+def _item_name(it: PrescriptionItem) -> str:
+    return display_name(it.drug.item_name) if it.drug else it.raw_name  # 분석 화면(R-4)과 같은 이름
+
+
+async def _pair_warnings(aid: int) -> list[PairWarning]:
+    rows = (
+        await AnalysisWarning.filter(analysis_id=aid, warning_type__in=PAIR_WARNINGS)
+        .order_by("id")
+        .prefetch_related("item_a__drug", "item_b__drug")
+    )
+    return [
+        PairWarning(w.id, (_item_name(w.item_a), _item_name(w.item_b)), w.summary or "")
+        for w in rows
+        if w.item_a and w.item_b  # 처방을 지워 약이 빠진 경고는 뺌
+    ]
 
 
 # ── 고정 정보 (설계 메모 7-11) ─────────────────────────────────────────────────────────────
@@ -258,6 +307,8 @@ async def fixed_info(user: User, s: ChatSession) -> FixedInfo:
     aid = await _analysis_for(user, s)
     if aid is None:
         return info
+    info.analysis_id = aid
+    info.pair_warnings = await _pair_warnings(aid)
 
     rx_ids = await AnalysisPrescription.filter(analysis_id=aid).values_list("prescription_id", flat=True)
     items = (
@@ -281,7 +332,7 @@ async def fixed_info(user: User, s: ChatSession) -> FixedInfo:
         seen.add(code)
         info.drugs.append(
             UserDrug(
-                name=base_name(drug.item_name),
+                name=display_name(drug.item_name),
                 ingredient=ingredient.get(code) or "",
                 purpose=purpose.get(code, ""),
                 how=medication.how_to_take(it, drug) or "",

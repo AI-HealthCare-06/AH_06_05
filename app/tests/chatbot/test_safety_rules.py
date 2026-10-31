@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.chatbot.safety_rules import check
+from app.services.chatbot.safety_rules import asks_amount, check
 
 # (문장, 기대 범주, 과다 복용 여부)
 SHOULD_DETECT = [
@@ -68,9 +68,40 @@ SHOULD_DETECT = [
     ("이렇게 사는 게 송구해지네요, 없애고 싶은 기분이에요", ["crisis"], False),
     ("내가 이렇게 살면서 뭘 하는지 모르겠어, 그냥 끝내버릴까?", ["crisis"], False),
     ("그냥 다 잊고, 아무것도 아니게 되고 싶다", ["crisis"], False),
+    # 갑자기 생긴 말 이상 (뇌졸중 신호). 언제부터인지 모르면 B라서 때를 나타내는 말이 있을 때만 (10/26 가드레일 확인표, 수인 결정)
+    ("할머니가 갑자기 이상한 말을 해요", ["emergency"], False),
+    ("갑자기 말을 못 알아들으세요", ["emergency"], False),
+    ("아빠가 방금부터 말을 못 하세요", ["emergency"], False),
+    ("아까부터 엄마가 엉뚱한 말을 해요", ["emergency"], False),
+    ("남편이 방금부터 말이 안 나온대요", ["emergency"], False),
+    # 보호자가 높임말이나 다른 호칭으로 쓴 말 이상. overdose가 False라 [지금은 증상이 없어요] 칩이 보임 (10/28 수인 결정)
+    ("어머님이 갑자기 이상한 말을 하세요", ["emergency"], False),
+    ("장모님이 갑자기 엉뚱한 말을 해요", ["emergency"], False),
+    ("할아버님이 방금 횡설수설하세요", ["emergency"], False),
+    ("아들이 갑자기 헛소리를 해요", ["emergency"], False),
+    ("엄마가 갑자기 이상한 말씀을 하세요", ["emergency"], False),
+    ("어르신이 아까부터 엉뚱한 말씀을 하세요", ["emergency"], False),
+    ("신랑이 방금 이상한 말을 해요", ["emergency"], False),
+    # 보호자가 "이상한 소리"라고 쓰는 경우 (#139 채연 리뷰)
+    ("할머니가 갑자기 이상한 소리를 해요", ["emergency"], False),
+    ("아빠가 아까부터 엉뚱한 소리를 하세요", ["emergency"], False),
 ]
 
 SHOULD_NOT_DETECT = [
+    # 언제부터인지 모르는 말 이상, 챗봇에 대한 불만, 말을 고르는 표현은 1층에서 막지 않음 (10/26 확인표 B, 수인 결정)
+    "할머니가 이상한 말을 해요",
+    "아빠가 자꾸 말이 이상해, 대체 뭐지?",
+    "엄마가 이상하게 말해, 뭘 잘 못 알아들어.",
+    "챗봇 말이 이상해요",
+    "갑자기 제 말을 못 알아들으시네요",
+    "갑자기 생각났는데 이상한 말일 수도 있지만 약을 반으로 잘라도 되나요?",
+    # 이상한 말, 엉뚱한 말, 헛소리는 가족이나 환자 이야기일 때만 ("아까" 내가 한 말은 아님), "할 말을 못"도 아님 (10/26 수인 결정)
+    "아까 이상한 말을 해서 죄송해요",
+    "아까 엉뚱한 말을 해서 다시 물어볼게요",
+    "아까 의사 선생님께 할 말을 못 하고 나왔어요",
+    "아까 이상한 말씀을 드려서 죄송해요",
+    "아까 이상한 소리를 해서 죄송해요",
+    "아들이 갑자기 이상한 소리가 나요",
     "혈압약은 아침에 먹나요?",
     "약 먹는 동안 운동해도 되나요?",
     "약을 깜빡했어요",
@@ -141,3 +172,34 @@ def test_result_has_no_raw_text():
 @pytest.mark.parametrize("text", LEFT_TO_LAYER2)
 def test_left_to_layer2(text):
     assert not check(text).hit, text
+
+
+# 안전 모드(자해 표현 뒤 그 대화 안)에서 E5로 보내는 약의 양 질문 (설계 메모 4-6, 7-2, #116)
+ASKS_AMOUNT = [
+    "노바스크 한 번에 몇 알 먹어요?",
+    "이 약 몇 개 먹으면 돼요?",
+    "하루에 최대 몇 정까지 먹어도 돼요?",
+    "얼마나 먹어도 돼요?",
+    "한꺼번에 먹어도 되나요?",
+    "몇 mg 먹어야 해요?",
+    "가루약은 몇 포 먹어요?",
+]
+NOT_AMOUNT = [
+    "약 언제 먹어요?",
+    "하루에 몇 번 먹어요?",
+    "자몽주스 마셔도 돼요?",
+    "이 약은 무슨 약이에요?",
+    "얼마나 오래 먹어야 해요?",
+    "몇 개월 먹어야 해요?",  # 기간은 보통 답 ("개월"의 "개"는 개수가 아님, #150 리뷰)
+    "최대한 빨리 먹어야 해요?",  # "최대한"은 양이 아님
+]
+
+
+@pytest.mark.parametrize("text", ASKS_AMOUNT)
+def test_asks_amount(text):
+    assert asks_amount(text), text
+
+
+@pytest.mark.parametrize("text", NOT_AMOUNT)
+def test_not_amount(text):
+    assert not asks_amount(text), text

@@ -2,7 +2,7 @@
 // 화면을 만들 때 그 화면 문구를 여기에 이어서 옮김
 
 export const copy = {
-  appName: '[서비스명]', // 이름 확정 전 자리표시
+  appName: '약봄',
   common: {
     back: '뒤로',
     cancel: '취소',
@@ -198,7 +198,7 @@ export const copy = {
     rawLabel: (name: string) => `처방전 표기: ${name}`,
     diseaseTitle: '인식한 질병분류기호',
     diseaseBody: '사진에서 읽은 값이라 틀릴 수 있어요. 처방전과 같은지 확인해 주세요.',
-    diseaseNone: '질병분류기호를 찾지 못했어요. 약봉투에는 없는 경우가 많아요. 결과 화면에서 직접 고를 수 있어요.',
+    diseaseNone: '질병분류기호를 확실하게 읽지 못했어요. 약봉투에는 없는 경우가 많아요. 결과 화면에서 직접 고를 수 있어요.',
     start: '확인 완료 · 분석 시작하기',
     retake: '전체 다시 촬영하기',
     blocked: (names: string) => `※ ${names} 약을 확인하거나 "빼고 진행"을 골라야 시작할 수 있어요`,
@@ -507,12 +507,37 @@ export const copy = {
     examAdd: '검사 추가',
     examRemove: '삭제',
     none: '입력하지 않음',
-    // 동의 내역(U-4, U-5)과 탈퇴(U-3)는 API가 생기면 연결. 그 전에는 준비 중 안내
     consentAccount: '동의와 계정',
     consentHistory: '동의 내역 보기',
     withdraw: '회원 탈퇴',
     edit: '정보 수정하기',
     save: '저장하기',
     loadFailed: '내 정보를 불러오지 못했어요.',
+    // CM-05 동의 내역 (U-4, U-5)
+    consentsTitle: '동의 내역',
+    consentName: {
+      terms: '이용약관',
+      privacy: '개인정보 수집과 이용',
+      sensitiveHealth: '건강 정보 사용 (민감정보)',
+    },
+    consentAgreed: '동의함',
+    consentWithdrawn: '철회함',
+    consentAgreedAt: (d: string) => `동의한 날  ${d}`,
+    consentWithdrawnAt: (d: string) => `철회한 날  ${d}`,
+    consentWithdrawNote:
+      '건강 정보 동의를 철회하면 처방전, 분석 결과, 챗봇 대화, 내 정보의 건강 정보가 모두 지워지고, 처방전을 올리거나 분석할 수 없어요.',
+    consentWithdrawBtn: '건강 정보 동의 철회하기',
+    consentConfirmTitle: '건강 정보 동의를 철회할까요?',
+    consentConfirmBody:
+      '올린 처방전 사진, 분석 결과, 복약 안내, 챗봇 대화, 내 정보의 건강 정보가 바로 지워져요. 지운 내용은 되돌릴 수 없어요. 이용약관과 개인정보 동의는 그대로예요.',
+    consentConfirmOk: '철회하고 지우기',
+    consentDone: '철회했어요. 건강 정보가 들어 있는 기록을 모두 지웠어요.',
+    consentLoadFailed: '동의 내역을 불러오지 못했어요.',
+    // CM-07 회원 탈퇴 (U-3)
+    withdrawTitle: '회원 탈퇴',
+    withdrawLead: '탈퇴하면 아래 내용이 바로 지워지고 되돌릴 수 없어요.',
+    withdrawList: ['올린 처방전 사진과 인식 결과', '분석 결과와 복약 안내', '챗봇 대화', '내 정보와 건강 정보', '동의 기록'],
+    withdrawCheck: '위 내용을 확인했고 탈퇴할게요',
+    withdrawOk: '탈퇴하기',
   },
 } as const;

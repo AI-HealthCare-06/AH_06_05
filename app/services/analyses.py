@@ -38,7 +38,7 @@ from app.models.ocr import MatchStatus, Prescription, PrescriptionDisease, Presc
 from app.models.users import User, UserHealthProfile
 from app.repositories.chat import ChatRepository
 from app.services import safety
-from app.services.drug_names import base_name
+from app.services.drug_names import display_name
 from app.services.guide import lifestyle, medication, store
 from app.services.prescriptions import has_health_consent
 
@@ -338,7 +338,7 @@ async def prepare_retry(user: User, analysis_id: int) -> tuple[Analysis, Analysi
 def _drug_ref(it: PrescriptionItem) -> dict[str, Any]:
     return {
         "ediCode": it.drug.edi_code if it.drug else None,
-        "itemName": base_name(it.drug.item_name) if it.drug else it.raw_name,
+        "itemName": display_name(it.drug.item_name) if it.drug else it.raw_name,
         "hospitalName": it.prescription.hospital_name,
     }
 
@@ -410,7 +410,7 @@ async def get_result(user: User, analysis_id: int) -> dict[str, Any]:
         {"rawName": i.raw_name, "reason": "excluded" if i.match_status == MatchStatus.EXCLUDED else "unmatched"}
         for i in items
         if i.match_status not in USABLE
-    ] + [{"rawName": base_name(i.drug.item_name), "reason": "not_oral"} for i in usable if i.drug.route != "내복"]
+    ] + [{"rawName": display_name(i.drug.item_name), "reason": "not_oral"} for i in usable if i.drug.route != "내복"]
     checked = _checked_count(items)
     med_id, med_status, med = await _guide_content(a, GuideSection.MEDICATION)
     life_id, life_status, life = await _guide_content(a, GuideSection.LIFESTYLE)
@@ -456,7 +456,7 @@ async def get_warning(user: User, analysis_id: int, warning_id: int) -> dict[str
         "title": TITLES.get(w.warning_type, "확인이 필요해요"),
         "drugs": [
             {
-                "itemName": base_name(r.drug.item_name) if r.drug else r.raw_name,
+                "itemName": display_name(r.drug.item_name) if r.drug else r.raw_name,
                 "hospitalName": r.prescription.hospital_name,
                 "category": medication.category_of(r.drug),
                 "ingredient": names.get(r.drug.edi_code) if r.drug else None,
@@ -579,7 +579,7 @@ async def list_analyses(user: User, cursor: str | None, size: int) -> dict[str, 
 # ── R-8 기록 삭제 ─────────────────────────────────────────────────────────────────────────────
 async def delete_analysis(user: User, analysis_id: int) -> None:
     """분석 결과 · 경고 · 안내문 · 피드백을 지우고, 이 분석에만 쓰인 처방전(약 포함)도 같이 지움 (다른 분석에도 쓰였으면 남김).
-    챗봇 대화는 이 분석으로 시작했거나 이 분석의 맥락 카드가 붙은 대화를 지움 (#100, #119 리뷰 10/23). 실천 목표는 아직 서버에 없음"""
+    챗봇 대화는 이 분석으로 시작했거나 이 분석의 맥락 카드가 붙은 대화를 지움 (#100, #119 리뷰 10/23). 실천 추천은 DB가 같이 지우고 목표와 기록은 연결만 비워 남김"""
     a = await _expire_if_stuck(await _get(user, analysis_id))
     if a.status in (AnalysisStatus.QUEUED, AnalysisStatus.RUNNING):
         raise AppError(
