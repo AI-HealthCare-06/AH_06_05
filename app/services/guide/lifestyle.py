@@ -65,7 +65,7 @@ def is_supported(code: str) -> bool:
     return disease_of(code) is not None
 
 
-def _ingredient_words(drug_class: str) -> set[str]:
+def ingredient_words(drug_class: str) -> set[str]:
     """ "칼슘차단제 (암로디핀, 니페디핀 등)" → {"암로디핀", "니페디핀"} / "메트포르민" → {"메트포르민"}"""
     inner = re.findall(r"\(([^)]*)\)", drug_class)
     text = " ".join(inner) if inner else drug_class
@@ -116,7 +116,7 @@ def build(codes: list[str], items: list[PrescriptionItem], all_codes: list[str] 
                 }
             )
         for ml in d.get("medication_link", []):
-            words = _ingredient_words(ml["drug_class"])
+            words = ingredient_words(ml["drug_class"])
             for it in items:
                 if any(w in it.drug.item_name for w in words):
                     clinician = bool(ml.get("requires_clinician"))

@@ -12,6 +12,7 @@ TORTOISE_APP_MODELS = [
     "app.models.analysis",
     "app.models.rag",
     "app.models.chat",
+    "app.models.habits",
 ]
 
 TORTOISE_ORM = {

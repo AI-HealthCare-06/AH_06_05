@@ -12,6 +12,7 @@ from app.models.chat import ChatSession
 from app.models.ocr import OcrJob, Prescription
 from app.models.users import ConsentType, Sex, User, UserConsent, UserHealthProfile
 from app.repositories.user_repository import UserRepository
+from app.services import habits
 from app.services.ocr import photos
 
 REQUIRED_FIELDS = ("birth_year", "sex")
@@ -63,7 +64,7 @@ class UserManageService:
 
     async def withdraw_consent(self, user: User, type_name: str) -> None:
         """U-5. sensitiveHealth만 철회할 수 있음. 철회하면 건강 정보가 들어 있을 수 있는 기록을 지움.
-        실천 목표 · 실천 기록 · 포인트는 서버에 아직 없어서 다루지 않음 (생기면 명세서 U-5 표대로 종료하고 남김)"""
+        실천 목표는 끝내고 기록은 남김 (명세서 U-5 표). 추천(질환 라벨)은 분석과 같이 지워짐. 포인트는 서버에 아직 없음"""
         if type_name != CONSENT_TYPE_NAMES[ConsentType.SENSITIVE_HEALTH]:
             raise AppError(
                 status.HTTP_400_BAD_REQUEST,
@@ -75,6 +76,7 @@ class UserManageService:
         if consent is None or (not consent.agreed and consent.withdrawn_at is not None):
             return  # 이미 철회함 (다시 불러도 같은 결과)
         await _erase_health_records(user)
+        await habits.end_goals(user)
         await UserConsent.filter(id=consent.id).update(agreed=False, withdrawn_at=datetime.now(config.TIMEZONE))
 
     async def withdraw_user(self, user: User, confirmed: bool) -> None:
@@ -82,6 +84,7 @@ class UserManageService:
         if confirmed is not True:
             raise AppError(status.HTTP_400_BAD_REQUEST, "VALIDATION_ERROR", "탈퇴를 확인해 주세요.", field="confirmed")
         await _erase_health_records(user)
+        await habits.delete_goals(user)
         async with in_transaction():
             await UserConsent.filter(user=user).delete()
             # 이메일은 다시 가입할 수 있게 비움. 출생연도와 성별은 칸을 비울 수 없어서 자리 값(0, M)으로 채움
