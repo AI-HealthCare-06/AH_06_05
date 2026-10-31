@@ -19,6 +19,7 @@ from app.models.analysis import (
     Analysis,
     AnalysisDisease,
     AnalysisPrescription,
+    AnalysisStatus,
     AnalysisWarning,
     DrugGuide,
     ReviewStatus,
@@ -292,11 +293,18 @@ async def _pair_warnings(aid: int) -> list[PairWarning]:
 
 # ── 고정 정보 (설계 메모 7-11) ─────────────────────────────────────────────────────────────
 async def _analysis_for(user: User, s: ChatSession) -> int | None:
-    """가장 최근에 붙은 맥락 카드의 분석, 없으면 H-1 analysisId. 지워진 분석은 건너뜀"""
+    """가장 최근에 붙은 맥락 카드의 분석, 없으면 H-1 analysisId. 지워진 분석은 건너뜀.
+    둘 다 없으면(홈에서 연 대화) 가장 최근 완료 분석을 쓰고 대화에 적음. 적어 두어야 그 분석을 지울 때 이 대화도 지워짐 (R-8, #100).
+    완료 분석이 없으면 일반 질문 모드 (명세서 H-1 "분석 전에 들어온 경우", #159)"""
     for aid in (await repo.last_card_analysis(s), s.analysis_id):
         if aid and await Analysis.exists(id=aid, user=user):
             return int(aid)
-    return None
+    latest = await Analysis.filter(user=user, status=AnalysisStatus.DONE).order_by("-id").first()
+    if latest is None:
+        return None
+    await ChatSession.filter(id=s.id).update(analysis_id=latest.id)
+    s.analysis_id = latest.id
+    return int(latest.id)
 
 
 async def fixed_info(user: User, s: ChatSession) -> FixedInfo:
