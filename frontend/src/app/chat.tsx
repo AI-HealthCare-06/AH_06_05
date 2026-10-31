@@ -97,7 +97,7 @@ export default function Chat() {
       return (
         <>
           {from && <QuoteLine text={from} />}
-          <Generating />
+          <Generating since={chat.pending.find((q) => q.answerId === m.id)?.sentAt || Date.parse(m.createdAt) || undefined} />
         </>
       );
     }
@@ -152,7 +152,7 @@ export default function Chat() {
           {local.map((q) => (
             <Fragment key={q.crid}>
               {!q.dismissed && <UserBubble text={q.content} />}
-              {q.error ? <ErrorCard kind={q.error} onRetry={() => chat.retry(q.crid)} /> : <Generating />}
+              {q.error ? <ErrorCard kind={q.error} onRetry={() => chat.retry(q.crid)} /> : <Generating since={q.sentAt} />}
             </Fragment>
           ))}
         </ScrollView>
