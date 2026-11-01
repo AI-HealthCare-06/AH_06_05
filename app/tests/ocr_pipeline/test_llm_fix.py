@@ -179,7 +179,7 @@ def test_similarity_ignores_mg_notation_but_not_real_changes():
 @sync
 async def test_suggestion_survives_when_the_fixed_name_has_a_sibling_drug():
     """고친 이름의 약에 형제 약(글자 하나 차이의 다른 성분)이 있어도 추천은 버려지지 않는다 (어차피 사용자가 고르는 단계)"""
-    products = [*PRODUCTS, ("100000007", "멜로시드엠캡슐7.5밀리그램(멜록시캄/메트포르민)_(1캡슐)")]
+    products = [*PRODUCTS, ("100000007", "멜로시드엠캡슐7.5밀리그램(멜록시캄)_(1캡슐)")]
     ingredients = {"100000001": "M1", "100000007": "M2"}
     m = NameMatcher(products, ingredients=ingredients)
     assert m.decide("멜로시드캡슐7.5밀리그램(멜록시캄)").sibling  # 이 이름은 보통 경로에선 형제 확인에 걸림
