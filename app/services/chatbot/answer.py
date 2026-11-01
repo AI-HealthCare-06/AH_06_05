@@ -128,10 +128,10 @@ _COUNT = re.compile(rf"(?:하루|1일|매일)\s*{_WORD}\s*(?:번|회)|{_WORD}\s*
 _LIST_NO = re.compile(r"(?:^|(?<=\s))\d{1,2}[.)](?=\s)")  # "1. ", "2) " 같은 목록 번호는 숫자로 보지 않음
 # 양이나 복용을 바꾸라는 말. "끊지 마세요"처럼 하지 말라는 말은 글자가 이어지지 않아 걸리지 않음.
 # 바로 앞 몇 글자에 약이 있을 때만 봄 ("술을 줄이세요", "담배를 끊으세요"는 거르지 않게, 10/25 점검)
-_CHANGE = re.compile(
+_CHANGE_STEM = (
     r"(끊|중단하|멈추|멈춰|그만\s*드|늘리|늘려|줄이|줄여|올리|올려|낮추|낮춰|바꾸|바꿔|건너뛰|거르|몰아서|한꺼번에)"
-    r"[가-힣]{0,2}(?:세요|셔도|해도|도\s*(?:돼|괜찮))"
 )
+_CHANGE = re.compile(_CHANGE_STEM + r"[가-힣]{0,2}(?:세요|셔도|해도|도\s*(?:돼|괜찮))")
 # 약을 먹지 말라는 말 ("중단하지 마세요"는 아님). 함께 먹지 말라는 경고도 AI가 만들지 않으므로 거름 (NFR-032, 10/26 수인 결정)
 _STOP = re.compile(r"(복용하지|드시지|먹지|복용을\s*하지)\s*(?:마|말)")
 # 약을 멈춰도 된다는 말 ("안 드셔도 돼요", "드시지 않아도", "그만 드셔야"). 같은 문장 앞쪽에 약이 있으면 거름.
@@ -147,6 +147,13 @@ _REST_TAIL = r"[을를은는]?\s*(?:하루|이틀|사흘|며칠|잠시|잠깐|�
 # 바꾸라는 말(_CHANGE)은 "줄여도 괜찮"까지 잡아서 바로 뒤가 "은지"로 이어짐
 _OTHER_SUBJECT = re.compile(r"[가-힣]+[은는을를이가]\s")  # "커피는 안 드셔도 돼요"처럼 약이 아닌 대상이 앞에 있음
 _ASKS_BACK = re.compile(r"\s*(?:되는지|될지(?!도)|되나요|괜찮은지|좋은지)|[은는]지")
+# 바꾸거나 멈추거나 쉬어도 되는지 되묻는 말. 이 말 뒤(같은 문장 뒤쪽이나 다음 문장)에서는 약 이름이 없어도
+# 바꾸라는 말과 쉬라는 말을 거름 ("줄여도 괜찮은지 궁금하시죠? 네, 줄이셔도 괜찮아요.", #172 채연 리뷰)
+_ASK_CHANGE = re.compile(
+    rf"(?:{_CHANGE_STEM}|그만\s*먹|쉬|(?:안|못)\s*(?:드|먹|복용)|(?:드시지|먹지|복용하지)\s*않)[가-힣]{{0,3}}\s*"
+    r"(?:되는지|될지(?!도)|되나요|될까요|괜찮은지|괜찮을지|괜찮나요|좋은지)"
+)
+_REST_BARE = re.compile(r"쉬(?:어도|셔도|세요|시면)")
 
 # 먹는 때는 시키는 말에만 ("먹으면 졸릴 수 있어요" 같은 설명은 보지 않음, 10/25 점검)
 _TAKE = re.compile(r"(드세요|드시면\s*(?:돼|됩|좋)|드셔도|드시는\s*게\s*좋|복용하세요|복용하시면|먹으세요|드십시오)")
@@ -196,19 +203,26 @@ def _rest(sentence: str, drug_names: list[str]) -> list[str]:
     ]
 
 
-def _changes_drug(sentence: str, drug_names: list[str], flat: str, prev_med: bool = False) -> bool:
+def _after_ask(sentence: str, start: int, ask_at: int | None) -> bool:
+    """되묻는 말 뒤이고 그 사이에 다른 대상("커피는")이 없음"""
+    return ask_at is not None and start >= ask_at and not _OTHER_SUBJECT.search(sentence[ask_at:start])
+
+
+def _changes_drug(
+    sentence: str, drug_names: list[str], flat: str, prev_med: bool = False, after_ask: bool = False
+) -> bool:
     """근거에 없는 바꾸라는 말, 먹지 말라는 말(바로 앞 몇 글자에 약), 멈춰도 된다는 말(같은 문장 앞쪽에 약), 약을 쉬라는 말.
     바로 뒤가 묻는 말이면 질문을 되풀이한 것이라 보지 않음.
     멈춰도 된다는 말은 앞 문장이 약 이야기이고 이 문장 앞쪽에 다른 대상("커피는")이 없어도 거름
-    ("안 먹어도 되는지 궁금하시죠? 네, 안 먹어도 돼요." 묻는 말을 빼면서 생긴 구멍, 점검에서 찾음)"""
+    ("안 먹어도 되는지 궁금하시죠? 네, 안 먹어도 돼요." 묻는 말을 빼면서 생긴 구멍, 점검에서 찾음).
+    바꾸라는 말과 쉬라는 말은 되묻는 말 뒤(after_ask면 문장 처음부터)이면 약 이름이 없어도 거름"""
+    ask = _ASK_CHANGE.search(sentence)
+    ask_at = 0 if after_ask else (ask.end() if ask else None)
     found = [(m, m.group(1)) for m in _CHANGE.finditer(sentence)] + [(m, m.group(0)) for m in _STOP.finditer(sentence)]
     for m, word in found:
         before = sentence[max(0, m.start() - _OBJECT_WINDOW) : m.start()]
-        if (
-            _about_drug(before, drug_names)
-            and re.sub(r"\s+", "", word) not in flat
-            and not _asks_back(sentence, m.end())
-        ):
+        near = _about_drug(before, drug_names) or (m.re is _CHANGE and _after_ask(sentence, m.start(), ask_at))
+        if near and re.sub(r"\s+", "", word) not in flat and not _asks_back(sentence, m.end()):
             return True
     for m in _STOP_OK.finditer(sentence):
         before = sentence[: m.start()]
@@ -218,7 +232,14 @@ def _changes_drug(sentence: str, drug_names: list[str], flat: str, prev_med: boo
             and not _asks_back(sentence, m.end())
         ):
             return True
-    return any(re.sub(r"\s+", "", w) not in flat for w in _rest(sentence, drug_names))  # 약이 말 안에 있음
+    if any(re.sub(r"\s+", "", w) not in flat for w in _rest(sentence, drug_names)):  # 약이 말 안에 있음
+        return True
+    return any(
+        _after_ask(sentence, m.start(), ask_at)
+        and not _asks_back(sentence, m.end())
+        and re.sub(r"\s+", "", m.group(0)) not in flat
+        for m in _REST_BARE.finditer(sentence)
+    )
 
 
 def output_guard(content: str, evidence: list[Evidence], info: FixedInfo) -> str | None:
@@ -235,15 +256,17 @@ def output_guard(content: str, evidence: list[Evidence], info: FixedInfo) -> str
         if not any(_MISSED_TALK.search(p) or _MISSED_DOSE.search(p) for p in permit):
             return "missed"
     drug_names = [d.name[:3] for d in info.drugs if d.name]
-    prev_med = False
+    prev_med = after_ask = False
     for sentence in re.split(r"(?<=[.!?])\s+|\n", content):
         is_med = bool(_MED_WORDS.search(sentence)) or any(n in sentence for n in drug_names)
         # 먹는 때는 바로 앞 문장이 약 이야기여도 봄 ("노바스크는 혈압약이에요. 자기 전에 드셔도 돼요", 10/25 점검)
         about_med, prev_med = is_med or prev_med, is_med
         if not about_med:
+            after_ask = False
             continue
-        if _changes_drug(sentence, drug_names, flat, prev_med=about_med):
+        if _changes_drug(sentence, drug_names, flat, prev_med=about_med, after_ask=after_ask):
             return "change"
+        after_ask = bool(_ASK_CHANGE.search(sentence))
         if _TAKE.search(sentence) and any(re.sub(r"\s+", "", t) not in flat for t in _TIMING.findall(sentence)):
             return "timing"
     return None

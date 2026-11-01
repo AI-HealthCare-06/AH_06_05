@@ -690,6 +690,27 @@ def test_output_guard_allows_question_repeated_back():
         assert output_guard(s, [GRAPEFRUIT], S0) == "change", s
 
 
+def test_output_guard_blocks_permission_after_question_repeated():
+    """질문을 되풀이한 뒤 약 이름 없이 허락하거나 권하는 말은 거름 (#172 채연 리뷰)"""
+    for s in (
+        "약을 줄여도 괜찮은지 궁금하시죠? 네, 줄이셔도 괜찮아요.",
+        "노바스크를 하루 쉬어도 되나요? 네, 쉬어도 됩니다.",
+        "약을 줄여도 괜찮은지는 상관없어요. 줄이세요.",
+        "약을 그만 먹어도 되는지는 문제없어요. 그만 드세요.",
+        "약을 끊어도 되는지는 걱정 마세요. 끊으셔도 돼요.",  # main에서도 지나가던 꼴
+        "약을 줄여도 괜찮은지는 상관없어요, 줄이세요.",  # 같은 문장 안
+        "노바스크를 쉬어도 될지 고민되시죠? 며칠 쉬셔도 돼요.",
+    ):
+        assert output_guard(s, [GRAPEFRUIT], S0) == "change", s
+    # 다른 대상이 앞에 있거나 바꾸라는 말이 없으면 그대로 둠
+    for s in (
+        "약을 줄여도 괜찮은지는 의사와 상의해 주세요. 커피는 줄이셔도 괜찮아요.",
+        "약을 끊어도 되는지는 의사에게 물어보세요. 임의로 끊지 마세요.",
+        "노바스크를 쉬어도 되는지는 의사에게 물어보세요. 오늘은 푹 쉬세요.",
+    ):
+        assert output_guard(s, [GRAPEFRUIT], S0) is None, s
+
+
 @sync
 async def test_missed_dose_question_classified_out_of_scope():
     """분류가 범위 밖으로 나와도 약을 빠뜨린 질문이면 근거 없음 (10/25 실제 답이 normal로 나간 길, 가짜 AI로 확인)"""
