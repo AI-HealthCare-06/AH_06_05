@@ -50,12 +50,9 @@ def test_longer_name_with_a_different_ingredient_sibling_becomes_a_choice():
     assert [c.edi_code for c in d.candidates] == ["100000004", "100000003"]
 
 
-def test_same_ingredient_sibling_is_asked_only_when_the_read_line_matches_both():
-    d = m().decide("건일몬테루카스트정10밀리그램")  # 성분이 읽히지 않아 비교할 근거가 없다
+def test_same_ingredient_sibling_is_not_asked():
+    d = m().decide("건일몬테루카스트정10밀리그램(몬테루카스트나트륨)")
     assert d.status == FOUND and not d.sibling
-    d = m().decide("건일몬테루카스트정10밀리그램(몬테루카스트나트륨)")  # 츄정도 성분·함량이 같아 글자로 구별되지 않는다
-    assert d.status == AMBIGUOUS and d.sibling
-    assert [c.edi_code for c in d.candidates] == ["100000005", "100000006"]
 
 
 def test_unknown_ingredient_counts_as_different():
@@ -185,52 +182,13 @@ def test_still_asks_when_the_top_candidate_does_not_match_the_read_ingredient():
     assert d.status == AMBIGUOUS and d.sibling
 
 
-def _nb(top_strength: str, nb_strength: str) -> NameMatcher:
-    # 스로펜(이부프로펜)이라는 다른 성분 형제가 있어서 형제 확인에 들어온다.
-    # 성분이 같은 이웃 아스로펜엠정은 형제로 치지 않지만, 읽은 줄과 성분·함량이 맞으면 글자로 구별되지 않는다
-    products = [
-        ("400000001", "스로펜정(이부프로펜)_(0.2g/1정)"),
-        ("400000002", f"아스로펜정{top_strength}밀리그램(아세클로페낙)_(0.1g/1정)"),
-        ("400000006", f"아스로펜엠정{nb_strength}밀리그램(아세클로페낙)_(0.1g/1정)"),
-    ]
-    return NameMatcher(products, ingredients={"400000001": "I1", "400000002": "A1", "400000006": "A1"})
-
-
-def test_still_asks_when_a_same_ingredient_neighbor_brand_matches_the_read_line():
-    d = _nb("100", "100").decide("아스로펜정100밀리그램(아세클로페낙)")
-    assert d.status == AMBIGUOUS and d.sibling
-    assert d.candidates[0].edi_code == "400000002"
-
-
-def test_same_ingredient_neighbor_with_another_strength_does_not_block_found():
-    d = _nb("100", "200").decide("아스로펜정100밀리그램(아세클로페낙)")  # 이웃의 함량이 읽은 줄과 다르다
-    assert d.status == FOUND and not d.sibling, d
-    assert d.candidates[0].edi_code == "400000002"
-
-
-def _same_only(read_strength: str = "100") -> NameMatcher:
-    # 성분이 같은 이웃 상표만 있고 다른 성분의 형제는 없다 (토피라정 ↔ 토피라트정)
+def test_same_ingredient_neighbor_brand_is_not_asked_even_when_the_read_line_matches_both():
+    # 성분이 같은 이웃 상표(토피라정 ↔ 토피라트정)는 어느 쪽을 골라도 점검 결과가 같아서 묻지 않는다 (ocr_sibling.md)
     products = [
         ("400000011", "토피라정100밀리그램(토피라메이트)_(0.1g/1정)"),
-        ("400000012", f"토피라트정{read_strength}밀리그램(토피라메이트)_(0.1g/1정)"),
+        ("400000012", "토피라트정100밀리그램(토피라메이트)_(0.1g/1정)"),
     ]
-    return NameMatcher(products, ingredients={"400000011": "T1", "400000012": "T1"})
-
-
-def test_asks_when_only_a_same_ingredient_neighbor_matches_the_read_line():
-    d = _same_only().decide("토피라정100밀리그램(토피라메이트)")
-    assert d.status == AMBIGUOUS and d.sibling
-    assert [c.edi_code for c in d.candidates][:2] == ["400000011", "400000012"]  # 읽은 약이 맨 위, 이웃이 보기에 있다
-
-
-def test_same_ingredient_neighbor_does_not_ask_without_ingredient_evidence_or_with_another_strength():
-    assert _same_only().decide("토피라정100밀리그램").status == FOUND  # 성분이 읽히지 않아 비교할 근거가 없다
-    assert _same_only().decide("토피라정100밀리그램(토피라").status == FOUND  # 괄호가 잘림
-    assert _same_only("25").decide("토피라정100밀리그램(토피라메이트)").status == FOUND  # 이웃의 함량이 다르다
-
-
-def test_same_ingredient_neighbor_check_is_off_with_the_switch_off_or_when_skipped(monkeypatch):
-    m = _same_only()
-    assert m.decide("토피라정100밀리그램(토피라메이트)", siblings=False).status == FOUND
-    monkeypatch.setattr(mod.config, "OCR_SIBLING_CONFIRM", False)
-    assert m.decide("토피라정100밀리그램(토피라메이트)").status == FOUND
+    mm = NameMatcher(products, ingredients={"400000011": "T1", "400000012": "T1"})
+    d = mm.decide("토피라정100밀리그램(토피라메이트)")
+    assert d.status == FOUND and not d.sibling
+    assert d.candidates[0].edi_code == "400000011"
