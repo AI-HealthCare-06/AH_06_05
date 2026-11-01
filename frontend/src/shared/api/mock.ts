@@ -3,6 +3,7 @@
 import { DIALYSIS, DISEASE_IDS, DRINKING, EXAM_NAME_MAX, SMOKING } from '@/features/common/health';
 
 import type { Method } from './client';
+import * as mc from './mockChallenge';
 import * as md from './mockData';
 import { routeChat } from './mockChat';
 
@@ -196,5 +197,12 @@ function routeFlow(method: Method, path: string, body: Record<string, unknown>):
   if (method === 'GET' && (m = route(/^\/analyses\/\d+\/warnings\/(\d+)$/))) return md.warningDetail(Number(m[1]));
   if (method === 'PUT' && route(/^\/analyses\/\d+\/diseases$/)) return md.putDiseases((body ?? {}) as Record<string, unknown>);
   if (method === 'GET' && route(/^\/analyses\/\d+$/)) return md.analysisResult();
+  if (method === 'GET' && route(/^\/recommendations$/)) {
+    const lifestyle = (md.analysisResult().body as { lifestyle: { diseases: unknown[] } }).lifestyle;
+    return mc.getRecommendationsMock(lifestyle.diseases.length > 0);
+  }
+  if (method === 'POST' && route(/^\/habit-goals$/)) return mc.createGoalsMock(body);
+  if (method === 'GET' && route(/^\/habit-goals\/today$/)) return mc.todayMock();
+  if (method === 'POST' && (m = route(/^\/habit-goals\/(\d+)\/records$/))) return mc.recordMock(Number(m[1]), body);
   return routeChat(method, p, body);
 }

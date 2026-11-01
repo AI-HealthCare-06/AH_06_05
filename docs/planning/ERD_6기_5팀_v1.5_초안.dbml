@@ -45,6 +45,7 @@
 //   recommendations: 팩트표가 코드의 JSON 파일이라 가리킬 표가 없어 guide_id, medication_link_id, action_id 대신 challenge_key(soup, walk, alcohol),
 //   fact_refs(팩트표 "질환 id:항목 이름" 목록), desc(팩트표 글 그대로), caution_label(의료진이 정한 강도로)을 둠. (analysis_id, challenge_key)는 하나만.
 //   habit_goals.end_date는 끝낸 날(다시 고를 때 뺀 목표, 동의 철회). habit_records.value는 그날 총량. 주 단위 다시 고르기(REQ-116)는 뒤로.
+//   habit_goals.status는 not null, 기본값 'active'로 맞춤(마이그레이션 18번과 같게, 10/31 채연).
 //
 // [v1.4, 2026-10-08, 채연] 팩트표 v0.12 반영. lifestyle_guides에 group_type(위험 신호, 교차 규칙을 같은 표에 담음),
 //   requires_clinician, goal_eligible, applies_when, show_when_unknown, condition, user_message 추가. lifestyle_guide_actions에 kind(fact 또는
@@ -397,7 +398,7 @@ Table habit_goals {
   unit              varchar(20)
   start_date        date        [not null]
   end_date          date        [note: 'v1.5, 끝낸 날 (뺀 목표, 동의 철회). 주 단위 다시 고르기 REQ-116은 뒤로']
-  status            varchar(20) [note: 'active / ended']
+  status            varchar(20) [not null, default: 'active', note: 'active / ended']
   created_at        timestamp   [default: `now()`]
 
   Note: '최대 3개 활성 (REQ-111)'

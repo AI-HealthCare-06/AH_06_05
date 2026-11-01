@@ -13,7 +13,7 @@ import { ChatbotIcon } from '@/shared/ui/icons';
 import type { ChatParams } from './types';
 
 // 버튼을 숨기는 화면 — 챗봇 창 자체 · 촬영 · 인식 확인 · 분석 중 · 분석 결과 · 경고 자세히(아래 고정 버튼이 챗봇을 염) · 로그인 · 회원가입 · 내 정보 수정 (경로는 화면을 만들 때 맞춤)
-const HIDDEN = ['/chat', '/capture', '/recognize', '/analyzing', '/result', '/warning', '/login', '/signup', '/me-edit'];
+const HIDDEN = ['/chat', '/capture', '/recognize', '/analyzing', '/result', '/challenge-select', '/warning', '/login', '/signup', '/me-edit'];
 // 하단 내비가 있는 화면 — 버튼을 내비 위로 올림
 const WITH_BOTTOM_NAV = ['/challenge', '/me'];
 
