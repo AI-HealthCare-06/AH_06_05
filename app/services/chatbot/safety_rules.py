@@ -70,6 +70,9 @@ EMERGENCY_RULES: list[tuple[str, str]] = [
         rf"{_NOT_EXPLANATION}{_SUDDEN}\S{{0,12}}({_WHO}\S{{0,12}}|{_OTHERS}|(?<![제내할]))말을(잘)?못알아|"
         rf"{_NOT_EXPLANATION}{_SUDDEN}\S{{0,12}}({_WHO}\S{{0,12}}|{_OTHERS}){_NOT_UNDERSTAND}|"
         rf"{_NOT_EXPLANATION}{_WHO}\S{{0,12}}{_SUDDEN}\S{{0,12}}{_NOT_UNDERSTAND}|"
+        # "갑자기"와 가족이 같이 있으면 낱말 제외를 쓰지 않음. 오탐은 119 안내가 한 번 잘못 나가는 정도지만 누락은 위험해서.
+        # "아까"까지 풀면 "아까 의사 선생님 말을 이해 못 했어요"가 다시 걸려서 "갑자기"만 봄 (#160 채연 리뷰 10/31)
+        rf"갑자기\S{{0,12}}{_WHO}\S{{0,12}}{_NOT_UNDERSTAND}|{_WHO}\S{{0,12}}갑자기\S{{0,12}}{_NOT_UNDERSTAND}|"
         # 이상한 말, 엉뚱한 말, 헛소리는 가족이나 환자 이야기일 때만 ("아까 이상한 말을 해서 죄송해요"는 아님, 10/26 수인 결정)
         rf"{_WHO}\S{{0,12}}{_SUDDEN}\S{{0,12}}{_ODD_TALK}|{_SUDDEN}\S{{0,12}}{_WHO}\S{{0,12}}{_ODD_TALK}",
     ),
