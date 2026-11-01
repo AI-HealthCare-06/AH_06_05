@@ -1,6 +1,6 @@
 // CB-01 화면 부품 (설계 메모 4-2 ~ 4-8 항목). 문구는 copy.chatbot (설계 메모 6장)
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Linking, Modal, Platform, Pressable, Text, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
+import { AccessibilityInfo, Linking, Modal, Platform, Pressable, Text, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 
 import { getAnalysis } from '@/features/rag/api';
 import type { AnalysisResult } from '@/features/rag/types';
@@ -42,11 +42,42 @@ export function UserBubble({ text, faded }: { text: string; faded?: boolean }) {
   );
 }
 
-export function Generating() {
+// 답을 기다리는 동안: 답이 나올 자리에 답 말풍선과 같은 카드를 두고 점 세 개가 차례로 진해짐 (메신저의 입력 중 표시와 같은 꼴).
+// 오래 걸리면 글을 바꿔 아직 만드는 중임을 알림 (답은 보통 몇 초, 길면 30초까지, 설계 메모 4-3 항목).
+// 보내는 중(앱)과 만드는 중(서버 줄)이 다른 자리에 그려져 바뀔 때 다시 시작하지 않게, 기다린 시간은 질문을 보낸 때부터 셈.
+// 기기에서 움직임 줄이기를 켜면 점을 멈춤 (WCAG 2.2 2.3.3)
+const DOT_MS = 400;
+const SLOW_MS = 8000;
+
+export function Generating({ since }: { since?: number }) {
+  const [step, setStep] = useState(0);
+  const [slow, setSlow] = useState(false);
+  const [still, setStill] = useState(false);
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then(setStill)
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), Math.max(0, SLOW_MS - (since ? Date.now() - since : 0)));
+    return () => clearTimeout(t);
+  }, [since]);
+  useEffect(() => {
+    if (still) return;
+    const t = setInterval(() => setStep((x) => (x + 1) % 3), DOT_MS);
+    return () => clearInterval(t);
+  }, [still]);
   return (
-    <View style={{ alignSelf: 'flex-start' }} accessibilityLiveRegion="polite">
-      <Text style={T.caption}>{c.generating}</Text>
-    </View>
+    <Card style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View style={{ flexDirection: 'row', gap: 5 }} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+        {[0, 1, 2].map((i) => (
+          <View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.p600, opacity: still || i === step ? 1 : 0.25 }} />
+        ))}
+      </View>
+      <Text style={T.caption} accessibilityLiveRegion="polite">
+        {slow ? c.generatingSlow : c.generating}
+      </Text>
+    </Card>
   );
 }
 

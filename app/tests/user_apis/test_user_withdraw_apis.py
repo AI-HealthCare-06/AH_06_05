@@ -152,6 +152,77 @@ class TestWithdrawConsent(WithdrawCase):
         assert self.stored_photos()
 
 
+class TestConsentAgain(WithdrawCase):
+    URL = "/api/v1/users/me/consents/sensitiveHealth"
+
+    async def test_agree_again_reopens_upload_and_keeps_erased_records_gone(self):
+        """U-6: 철회한 뒤 다시 동의하면 업로드가 되고, 철회 때 지운 기록은 돌아오지 않음. 같은 줄을 새 시각으로 고침"""
+        async with self.client() as client:
+            user, headers = await self.member(client, "a1@example.com")
+            ids = await self.fill(user)
+            await client.delete(self.URL, headers=headers)
+            before = await UserConsent.get(user=user, consent_type=ConsentType.SENSITIVE_HEALTH)
+
+            response = await client.put(self.URL, json={"agreed": True}, headers=headers)
+            assert response.status_code == status.HTTP_204_NO_CONTENT
+            consent = await UserConsent.get(user=user, consent_type=ConsentType.SENSITIVE_HEALTH)
+            assert consent.id == before.id and consent.agreed is True and consent.withdrawn_at is None
+            assert consent.agreed_at > before.agreed_at
+
+            upload = await client.post(
+                "/api/v1/prescriptions", files=[("files", ("p.jpg", JPG, "image/jpeg"))], headers=headers
+            )
+            assert upload.status_code != status.HTTP_403_FORBIDDEN
+            assert not await Analysis.filter(id=ids["analysis"]).exists()
+
+            me = await client.get("/api/v1/users/me", headers=headers)
+            assert me.status_code == status.HTTP_200_OK  # 철회 때 지운 건강 정보 줄은 빈 줄로 다시 만들어짐
+
+    async def test_agreed_already_changes_nothing(self):
+        async with self.client() as client:
+            user, headers = await self.member(client, "a2@example.com")
+            before = await UserConsent.get(user=user, consent_type=ConsentType.SENSITIVE_HEALTH)
+            response = await client.put(self.URL, json={"agreed": True}, headers=headers)
+            assert response.status_code == status.HTTP_204_NO_CONTENT
+            after = await UserConsent.get(user=user, consent_type=ConsentType.SENSITIVE_HEALTH)
+            assert after.agreed_at == before.agreed_at
+
+    async def test_row_missing_is_created(self):
+        async with self.client() as client:
+            user, headers = await self.member(client, "a3@example.com")
+            await UserConsent.filter(user=user, consent_type=ConsentType.SENSITIVE_HEALTH).delete()
+            response = await client.put(self.URL, json={"agreed": True}, headers=headers)
+            assert response.status_code == status.HTTP_204_NO_CONTENT
+        assert await UserConsent.filter(user=user, agreed=True).count() == 3
+
+    async def test_wrong_type_or_body_is_400(self):
+        async with self.client() as client:
+            user, headers = await self.member(client, "a4@example.com")
+            await client.delete(self.URL, headers=headers)
+            for name in ("terms", "privacy", "nothing"):
+                response = await client.put(f"/api/v1/users/me/consents/{name}", json={"agreed": True}, headers=headers)
+                assert response.status_code == status.HTTP_400_BAD_REQUEST
+                assert response.json()["error"]["field"] == "type"
+            for body in ({"agreed": False}, {}, {"agreed": "yes"}, {"agreed": 1}):
+                response = await client.put(self.URL, json=body, headers=headers)
+                assert response.status_code == status.HTTP_400_BAD_REQUEST
+                assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+                assert response.json()["error"]["field"] == "agreed"
+        consent = await UserConsent.get(user=user, consent_type=ConsentType.SENSITIVE_HEALTH)
+        assert consent.agreed is False
+
+    async def test_changes_only_my_consent_and_needs_login(self):
+        async with self.client() as client:
+            other, other_headers = await self.member(client, "a5@example.com")
+            _, headers = await self.member(client, "a6@example.com")
+            await client.delete(self.URL, headers=other_headers)
+            await client.delete(self.URL, headers=headers)
+            await client.put(self.URL, json={"agreed": True}, headers=headers)
+            assert (await client.put(self.URL, json={"agreed": True})).status_code == status.HTTP_401_UNAUTHORIZED
+        consent = await UserConsent.get(user=other, consent_type=ConsentType.SENSITIVE_HEALTH)
+        assert consent.agreed is False
+
+
 class TestWithdrawUser(WithdrawCase):
     async def delete_me(self, client: AsyncClient, headers: dict[str, str], body):
         return await client.request("DELETE", "/api/v1/users/me", json=body, headers=headers)

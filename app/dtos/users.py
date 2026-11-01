@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, StrictBool
 
 from app.core.validators import optional_after_validator, validate_birth_year
 from app.dtos.base import CamelModel
@@ -122,6 +122,14 @@ CONSENT_TYPE_NAMES = {
     ConsentType.PRIVACY: "privacy",
     ConsentType.SENSITIVE_HEALTH: "sensitiveHealth",
 }
+
+
+class ConsentAgainRequest(CamelModel):
+    """U-6 요청. agreed가 true가 아니면 거절 (끄기는 U-5)"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agreed: StrictBool  # "yes", 1 같은 값을 동의로 받지 않음
 
 
 class ConsentItem(CamelModel):

@@ -58,8 +58,8 @@ COMMENT ON TABLE "habit_records" IS '하루 실천 기록 (P-4). 수량형은 �
 
 async def downgrade(db: BaseDBAsyncClient) -> str:
     return """
-        DROP TABLE IF EXISTS "habit_goals";
         DROP TABLE IF EXISTS "habit_records";
+        DROP TABLE IF EXISTS "habit_goals";
         DROP TABLE IF EXISTS "recommendations";"""
 
 

@@ -19,6 +19,7 @@ from app.models.analysis import (
     Analysis,
     AnalysisDisease,
     AnalysisPrescription,
+    AnalysisStatus,
     AnalysisWarning,
     DrugGuide,
     ReviewStatus,
@@ -35,6 +36,7 @@ from app.services.chatbot.llm import make_client
 from app.services.chatbot.pipeline import Reply, Route
 from app.services.drug_names import display_name
 from app.services.guide import lifestyle, medication
+from app.services.ocr.mask import mask_numbers
 from app.services.prescriptions import has_health_consent
 
 logger = logging.getLogger(__name__)
@@ -180,7 +182,10 @@ async def ask(
         if "crisis" in blocked.safety_types:
             await repo.set_safety_mode(s.id, _next_midnight())
         return answer.id, False
-    answer = await repo.create_question_and_answer(s, content, client_request_id, status=MessageStatus.GENERATING)
+    # 입력 정책: 주민번호, 전화번호 같은 번호는 저장과 OpenAI로 가기 전에 가림. 1층은 위에서 원문을 봄 (10/31 수인 결정)
+    answer = await repo.create_question_and_answer(
+        s, mask_numbers(content), client_request_id, status=MessageStatus.GENERATING
+    )
     return answer.id, True
 
 
@@ -260,6 +265,7 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         safety=_safety(r) if r.safety_types else None,
         safety_card=reply.safety_card,
         route_kind=r.kind,
+        analysis_id=info.analysis_id,
         model=config.OPENAI_CHAT_MODEL if reply.usage.calls else None,
         prompt_tokens=reply.usage.prompt_tokens,
         completion_tokens=reply.usage.completion_tokens,
@@ -292,11 +298,33 @@ async def _pair_warnings(aid: int) -> list[PairWarning]:
 
 # ── 고정 정보 (설계 메모 7-11) ─────────────────────────────────────────────────────────────
 async def _analysis_for(user: User, s: ChatSession) -> int | None:
-    """가장 최근에 붙은 맥락 카드의 분석, 없으면 H-1 analysisId. 지워진 분석은 건너뜀"""
-    for aid in (await repo.last_card_analysis(s), s.analysis_id):
-        if aid and await Analysis.exists(id=aid, user=user):
-            return int(aid)
-    return None
+    """후보 셋 중 가장 나중에 생긴 것의 분석을 씀 (#159, #162 채연 리뷰). 시각이 같으면 앞의 것.
+    가장 최근에 붙은 맥락 카드(붙은 때), 대화에 적힌 분석(대화를 연 때와 그 분석이 끝난 때 중 늦은 쪽),
+    가장 최근에 끝난 완료 분석(끝난 때). 그래서 같은 날 새 분석을 하면 다음 질문부터 새 분석을 쓰고,
+    결과 화면에서 예전 기록으로 연 대화는 그 기록을 씀. 지워진 분석과 남의 분석은 건너뜀.
+    최근 완료 분석을 쓰면 대화에 적음 (R-8로 같이 지워지게, #100). 완료 분석이 없으면 일반 질문 모드 (명세서 H-1)"""
+    picks: list[tuple[datetime, int]] = []
+    card = await repo.last_card(s)
+    card_aid = card.context_card.get("analysisId") if card else None
+    if card and card_aid and await Analysis.exists(id=card_aid, user=user):
+        picks.append((card.created_at, int(card_aid)))
+    current = await Analysis.get_or_none(id=s.analysis_id, user=user) if s.analysis_id else None
+    if current:
+        picks.append((max(s.created_at, current.finished_at or s.created_at), current.id))
+    latest = (
+        await Analysis.filter(user=user, status=AnalysisStatus.DONE, finished_at__not_isnull=True)
+        .order_by("-finished_at", "-id")
+        .first()
+    )
+    if latest:
+        picks.append((latest.finished_at, latest.id))
+    if not picks:
+        return None
+    when, aid = max(picks, key=lambda p: p[0])  # max는 같은 값이면 앞의 것을 돌려줌
+    if latest and (when, aid) == (latest.finished_at, latest.id) and aid != s.analysis_id:
+        await ChatSession.filter(id=s.id).update(analysis_id=aid)
+        s.analysis_id = aid
+    return aid
 
 
 async def fixed_info(user: User, s: ChatSession) -> FixedInfo:

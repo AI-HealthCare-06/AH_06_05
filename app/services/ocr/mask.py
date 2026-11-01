@@ -179,3 +179,14 @@ def mask(text: str) -> str:
     text = _HONORIFIC.sub(lambda m: m[0] if m[1] in _STOP else NAME, text)
     text = _SPACED_HONORIFIC.sub(lambda m: m[0] if m[1].replace(" ", "").replace("\t", "") in _STOP else NAME, text)
     return _hide_names_near_anchors(text)
+
+
+def mask_numbers(text: str) -> str:
+    """챗봇 질문용: 번호류만 가림 (주민번호, 전화번호, 이메일, 생년월일 등). 이름 규칙은 쓰지 않음.
+    사람이 쓴 문장에서는 "어머님이", "연락", "약 이름 노바스크"까지 이름으로 가려서 분류와 답을 망가뜨림 (10/31 측정)"""
+    for pattern, mark in _RULES:
+        text = pattern.sub(mark, text)
+    for pattern, mark in _LABELED:
+        if mark != NAME:
+            text = pattern.sub(lambda m, mark=mark: m[1] + mark, text)  # type: ignore[misc]
+    return text

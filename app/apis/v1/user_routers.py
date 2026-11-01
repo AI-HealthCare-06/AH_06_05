@@ -5,7 +5,14 @@ from fastapi import APIRouter, Depends, Response, status
 from app.apis.v1.auth_routers import REFRESH_COOKIE
 from app.core import config
 from app.dependencies.security import get_request_user
-from app.dtos.users import ConsentItem, ConsentsResponse, UserInfoResponse, UserUpdateRequest, WithdrawRequest
+from app.dtos.users import (
+    ConsentAgainRequest,
+    ConsentItem,
+    ConsentsResponse,
+    UserInfoResponse,
+    UserUpdateRequest,
+    WithdrawRequest,
+)
 from app.models.users import User
 from app.services.users import UserManageService
 
@@ -54,6 +61,18 @@ async def user_consents(
     """U-4 동의 내역"""
     consents = await user_manage_service.list_consents(user)
     return ConsentsResponse(items=[ConsentItem.from_consent(c) for c in consents])
+
+
+@user_router.put("/me/consents/{consent_type}", status_code=status.HTTP_204_NO_CONTENT)
+async def agree_consent(
+    consent_type: str,
+    data: ConsentAgainRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    user_manage_service: Annotated[UserManageService, Depends(UserManageService)],
+) -> Response:
+    """U-6 다시 동의 (sensitiveHealth만)"""
+    await user_manage_service.agree_consent(user=user, type_name=consent_type, agreed=data.agreed)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @user_router.delete("/me/consents/{consent_type}", status_code=status.HTTP_204_NO_CONTENT)

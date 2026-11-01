@@ -29,6 +29,8 @@ export const getConsents = () => api<{ items: ConsentItem[] }>('GET', '/users/me
 
 // U-5 동의 철회 (건강 정보 동의만). 처방전, 분석, 챗봇 대화, 건강 정보가 지워짐
 export const withdrawConsent = () => api<void>('DELETE', '/users/me/consents/sensitiveHealth');
+// U-6 철회한 건강 정보 동의를 다시 켬 (#137)
+export const agreeConsentAgain = () => api<void>('PUT', '/users/me/consents/sensitiveHealth', { agreed: true });
 
 // U-3 회원 탈퇴. 기록을 모두 지우고 이 계정으로는 더 이상 로그인할 수 없음
 export const withdrawMe = () => api<void>('DELETE', '/users/me', { confirmed: true });
