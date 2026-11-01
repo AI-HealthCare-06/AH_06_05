@@ -5,6 +5,7 @@ import { AccessibilityInfo, Linking, Modal, Platform, Pressable, Text, TextInput
 import { getAnalysis } from '@/features/rag/api';
 import type { AnalysisResult } from '@/features/rag/types';
 import { copy } from '@/shared/copy';
+import { drugLabel } from '@/shared/drugName';
 import { C, L, R, T } from '@/shared/theme';
 import { dictationSeen, setDictationSeen } from '@/shared/storage/chat';
 import { Btn, Card, Chip } from '@/shared/ui';
@@ -288,15 +289,15 @@ export function QuoteLine({ text }: { text: string }) {
   );
 }
 
-// 맥락 카드에 쓰는 분석 요약 (R-4에서 꺼냄, 설계 메모 3-3 AnalysisSummary)
+// 맥락 카드에 쓰는 분석 요약 (R-4에서 꺼냄, 설계 메모 3-3 AnalysisSummary). 약 이름은 결과 화면처럼 수출용 표시를 뺌
 function targetLabel(a: AnalysisResult, ctx?: ChatContext) {
   if (!ctx) return null;
   if (ctx.type === 'warning') {
     const w = a.warnings.find((x) => x.id === ctx.id);
-    return w ? c.contextWarning(w.drugs.map((d) => d.itemName).join(' + ')) : null;
+    return w ? c.contextWarning(w.drugs.map((d) => drugLabel(d.itemName)).join(' + ')) : null;
   }
   const d = a.medication.items.find((x) => x.itemId === ctx.id);
-  return d ? c.contextDrug(d.itemName) : null;
+  return d ? c.contextDrug(drugLabel(d.itemName)) : null;
 }
 
 export function ContextCard({ analysisId, context }: { analysisId: number; context?: ChatContext }) {
