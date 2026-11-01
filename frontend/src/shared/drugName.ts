@@ -56,5 +56,5 @@ export function drugLabel(name: string): string {
   }
   // 원래 데이터에 괄호가 짝이 안 맞는 이름("...mg))", "...그램[")은 짝이 맞을 때까지 뒤의 괄호를 덜어 냄
   while (!balanced(out) && /[()[\]]$/.test(out)) out = out.slice(0, -1).trim();
-  return out;
+  return out || name;
 }

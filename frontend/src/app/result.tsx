@@ -227,6 +227,7 @@ function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResu
               {m.cautions.map((c) => (
                 <Bullet key={c} text={c} />
               ))}
+              <Text style={T.small}>{r.cautionsFoot}</Text>
             </View>
           ) : (
             <Field label={r.caution} value={m.caution} />
