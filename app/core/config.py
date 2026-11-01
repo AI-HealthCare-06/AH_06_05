@@ -58,6 +58,9 @@ class Config(BaseSettings):
     OCR_WORKER_RETRY_DELAY_SEC: int = 20
     OCR_WORKER_TIMEOUT_SEC: int = 300  # 한 번 시도의 제한 시간 (사진 5장 × CLOVA 40초 + 여유)
     OCR_UPLOAD_WAIT_SEC: float = 8.0  # 업로드 응답이 사진 저장을 기다리는 최대 시간 (넘으면 서버 안 처리로 바꿈)
+    # 챗봇 답 만들기(H-3)를 arq 워커에서 돌릴지 (#118). 꺼짐이 기본. 워커가 살아 있지 않거나 큐에 못 넣으면 서버 안 백그라운드로 처리한다.
+    # 다시 시도는 하지 않는다 (답 만들기 안에서 OpenAI를 이미 1번 다시 부르고 앱이 30초에 포기함, 10/31 채연과 정함)
+    CHAT_WORKER: bool = False
 
     # 사용자 한 명이 하루(한국 시간 자정부터)에 올릴 수 있는 사진 수 (0이면 끔). 처방전이 아닌 사진을 OCR 호출 전에 가려내는 것이
     # 어려워서(docs/design/ocr_precheck.md 시도 결과) CLOVA 호출 비용을 막는 안전장치로 둠

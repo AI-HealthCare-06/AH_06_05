@@ -25,10 +25,11 @@ if not (_HERE / "app").is_dir() and (_HERE.parent / "app").is_dir() and str(_HER
     sys.path.append(str(_HERE.parent))
 
 from core import config  # noqa: E402
-from tasks import example_echo_task, ocr_job, purge_photos  # noqa: E402
+from tasks import chat_answer, example_echo_task, ocr_job, purge_photos  # noqa: E402
 
 from app.core import config as app_config  # noqa: E402
 from app.core.db.databases import TORTOISE_ORM  # noqa: E402
+from app.services.chats import ANSWER_TIMEOUT_SEC  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,15 @@ class WorkerSettings:
             name="ocr_job",
             timeout=app_config.OCR_WORKER_TIMEOUT_SEC,
             max_tries=app_config.OCR_WORKER_MAX_TRIES,
+            keep_result=0,
+        ),
+        # 챗봇 답 (#118). 다시 시도 없음 (10/31 채연과 정함). 답 만들기는 generate 안에서 25초에 끊기고,
+        # 실패한 답 줄을 지우는 시간까지 5초를 더 줌 (워커가 먼저 끊으면 답 줄이 만드는 중으로 남음)
+        func(
+            chat_answer,
+            name="chat_answer",
+            timeout=ANSWER_TIMEOUT_SEC + 5,
+            max_tries=1,
             keep_result=0,
         ),
     ]
