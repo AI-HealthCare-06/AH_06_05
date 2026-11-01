@@ -94,6 +94,11 @@ class ChatMessage(models.Model):
     route_kind = fields.CharField(
         max_length=20, null=True, description="답 줄만. 답을 만든 갈래(Route.kind). out_of_scope면 대화 기억에서 뺌"
     )
+    # 답 줄만. 이 답이 쓴 분석. 대화의 분석이 바뀌어도(A에서 B로) A를 지울 때 이 대화를 찾게 (R-8, #159). FK는 set null
+    analysis: fields.ForeignKeyNullableRelation["Analysis"] = fields.ForeignKeyField(
+        "models.Analysis", related_name="chat_messages", null=True, on_delete=fields.SET_NULL,
+        description="답 줄만. 이 답이 쓴 분석 (R-8로 대화를 찾을 때)",
+    )  # fmt: skip
     status = fields.CharEnumField(enum_type=MessageStatus, max_length=20, default=MessageStatus.DONE)
     model = fields.CharField(max_length=50, null=True, description="답 줄만")
     prompt_tokens = fields.IntField(null=True)
@@ -102,6 +107,7 @@ class ChatMessage(models.Model):
     created_at = fields.DatetimeField(auto_now_add=True)
     session_id: int  # 외래 키 칸 (타입 검사용, 칸을 새로 만들지 않음)
     reply_to_id: int | None
+    analysis_id: int | None
 
     class Meta:
         table = "chat_messages"
