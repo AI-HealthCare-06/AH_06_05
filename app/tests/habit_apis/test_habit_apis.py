@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from starlette import status
 
 from app.core import config
+from app.models.analysis import AnalysisDisease
 from app.models.habits import HabitGoal, HabitRecord, HabitStatus
 from app.tests.analysis_apis.test_analysis_apis import AnalysisCase
 
@@ -115,6 +116,42 @@ class TestGoals(HabitCase):
             # 다른 분석의 같은 챌린지를 함께 고르면 400
             other = (await self.recs(client, headers, await self.analysis(client, headers, user)))["items"]
             assert (await self.goals(client, headers, [ids[0], other[0]["id"]])).status_code == 400
+
+    async def test_picker_keeps_active_goal_from_older_analysis(self):
+        # 고혈압 분석에서 국물 남기기와 걷기를 고른 뒤, 당뇨 분석(걷기만 추천)에서 다시 고를 때 국물 남기기도 보이고 그대로 이어짐
+        async with self.client() as client:
+            headers, user = await self.auth(client, "g5@example.com")
+            old = (await self.recs(client, headers, await self.analysis(client, headers, user)))["items"]
+            soup, walk = (await self.goals(client, headers, [i["id"] for i in old])).json()["goalIds"]
+            new = await self.recs(client, headers, await self.analysis(client, headers, user, diseases=("E11",)))
+            titles = [i["title"] for i in new["items"]]
+            assert titles == ["빠르게 걷기 30분", "국물 남기기"], titles
+            assert new["items"][1]["id"] == old[0]["id"] and new["items"][1]["reasonLabel"] == "고혈압"
+            ids = [i["id"] for i in new["items"]]
+            assert (await self.goals(client, headers, ids)).json()["goalIds"] == [walk, soup]
+            assert await HabitGoal.filter(status=HabitStatus.ENDED).count() == 0
+            # 국물 남기기를 빼면 그때만 끝남
+            assert (await self.goals(client, headers, ids[:1])).json()["goalIds"] == [walk]
+            assert await HabitGoal.filter(status=HabitStatus.ENDED).values_list("id", flat=True) == [soup]
+            # 끝난 목표는 더 내려 주지 않음
+            again = await self.recs(client, headers, await self.analysis(client, headers, user, diseases=("E11",)))
+            assert [i["title"] for i in again["items"]] == ["빠르게 걷기 30분"]
+
+    async def test_picker_keeps_active_goal_after_diseases_change(self):
+        # 질환 직접 선택 등으로 분석의 질환이 바뀌어 추천이 다시 계산돼도, 실천 중인 목표는 다시 고르기에 남음
+        async with self.client() as client:
+            headers, user = await self.auth(client, "g6@example.com")
+            aid = await self.analysis(client, headers, user)
+            old = (await self.recs(client, headers, aid))["items"]
+            soup, walk = (await self.goals(client, headers, [i["id"] for i in old])).json()["goalIds"]
+            await AnalysisDisease.filter(analysis_id=aid).update(disease_id="E11")
+            body = await self.recs(client, headers, aid)
+            assert [i["title"] for i in body["items"]] == ["빠르게 걷기 30분", "국물 남기기"]
+            assert (await self.goals(client, headers, [i["id"] for i in body["items"]])).json()["goalIds"] == [
+                walk,
+                soup,
+            ]
+            assert await HabitGoal.filter(status=HabitStatus.ENDED).count() == 0
 
 
 class TestToday(HabitCase):
