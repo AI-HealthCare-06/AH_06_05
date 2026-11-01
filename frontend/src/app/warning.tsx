@@ -8,6 +8,7 @@ import { getWarning } from '@/features/rag/api';
 import type { WarningDetail } from '@/features/rag/types';
 import { ApiError } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
+import { drugLabel } from '@/shared/drugName';
 import { C, T } from '@/shared/theme';
 import { Btn, Card, Chip, Disclaimer, Screen, Section } from '@/shared/ui';
 
@@ -41,7 +42,7 @@ export default function WarningScreen() {
         title={r.warningTitle}
         footer={error || analysisId === null ? <Btn label={error ? copy.common.retry : copy.common.goHome} onPress={error ? () => setRun((n) => n + 1) : () => router.replace('/')} /> : undefined}
       >
-        {error ? <Text style={[T.body, { color: C.danger }]}>{r.loadFail} · {error}</Text> : <ActivityIndicator color={C.p600} style={{ marginTop: 40 }} />}
+        {error ? <Text style={[T.body, { color: C.danger }]}>{r.loadFail} ({error})</Text> : <ActivityIndicator color={C.p600} style={{ marginTop: 40 }} />}
       </Screen>
     );
   }
@@ -59,8 +60,8 @@ export default function WarningScreen() {
       <View style={{ gap: 10, marginTop: 12 }}>
         {w.drugs.map((d, i) => (
           <Card key={i}>
-            <Text style={T.bodyM}>{d.itemName}</Text>
-            <Text style={T.caption}>{[d.hospitalName, d.category, d.ingredient && `성분 ${d.ingredient}`].filter(Boolean).join(' · ')}</Text>
+            <Text style={T.bodyM}>{drugLabel(d.itemName)}</Text>
+            <Text style={T.caption}>{[d.hospitalName, d.category, d.ingredient && `성분 ${d.ingredient}`].filter(Boolean).join(', ')}</Text>
           </Card>
         ))}
       </View>

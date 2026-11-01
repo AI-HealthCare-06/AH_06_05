@@ -6,8 +6,10 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  StyleProp,
   StyleSheet,
   Text,
+  TextStyle,
   TextInput,
   View,
   ViewStyle,
@@ -16,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { copy } from '@/shared/copy';
 import { C, L, R, S, T } from '@/shared/theme';
+import { BackIcon } from '@/shared/ui/icons';
 
 type BtnKind = 'primary' | 'secondary' | 'ghost' | 'danger';
 
@@ -99,6 +102,16 @@ const chipTone = {
   primary: [C.p600, C.onPrimary],
 } as const;
 
+// 목록 한 줄: 앞에 짧은 줄(-)을 붙이고, 줄이 길어져도 둘째 줄이 글자 시작 위치에 맞음
+export function Bullet({ text, textStyle = T.body }: { text: string; textStyle?: StyleProp<TextStyle> }) {
+  return (
+    <View style={{ flexDirection: 'row', gap: 8 }}>
+      <Text style={textStyle}>-</Text>
+      <Text style={[textStyle, { flex: 1 }]}>{text}</Text>
+    </View>
+  );
+}
+
 export function Chip({ label, tone = 'neutral' }: { label: string; tone?: keyof typeof chipTone }) {
   const [bg, fg] = chipTone[tone];
   return (
@@ -129,6 +142,7 @@ export function Screen({
   back = true,
   footer,
   scroll = true,
+  fab = false,
   onBack,
 }: {
   title: string;
@@ -136,6 +150,7 @@ export function Screen({
   back?: boolean;
   footer?: ReactNode;
   scroll?: boolean;
+  fab?: boolean; // 챗봇 버튼이 떠 있는 탭 화면: 맨 아래 내용이 버튼에 가려지지 않게 여백을 둠
   onBack?: () => void;
 }) {
   const router = useRouter();
@@ -143,28 +158,31 @@ export function Screen({
   const canBack = back && (!!onBack || router.canGoBack());
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <View style={[st.bar, { paddingTop: ins.top + 8 }]}>
-        {canBack ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={copy.common.back}
-            hitSlop={12}
-            onPress={onBack ?? (() => router.back())}
-            style={st.barSide}
-          >
-            <Text style={{ fontSize: 26, color: C.text }}>‹</Text>
-          </Pressable>
-        ) : (
-          <View style={st.barSide} />
-        )}
-        <Text style={[T.subhead, { flex: 1 }]} numberOfLines={1} accessibilityRole="header">
-          {title}
-        </Text>
+      <View style={[st.bar, { paddingTop: ins.top }]}>
+        <View style={st.barRow}>
+          {canBack ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={copy.common.back}
+              hitSlop={12}
+              onPress={onBack ?? (() => router.back())}
+              style={st.barBack}
+            >
+              <BackIcon />
+            </Pressable>
+          ) : null}
+          <Text style={st.barTitle} numberOfLines={1} accessibilityRole="header">
+            {title}
+          </Text>
+        </View>
       </View>
       {scroll ? (
         <ScrollView
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ padding: S.side, paddingBottom: (footer ? 120 : S.section) + ins.bottom }}
+          contentContainerStyle={{
+            padding: S.side,
+            paddingBottom: fab ? L.fab + L.fabGap * 2 : (footer ? 120 : S.section) + ins.bottom,
+          }}
         >
           {children}
         </ScrollView>
@@ -322,23 +340,18 @@ const st = StyleSheet.create({
   card: { backgroundColor: C.card, borderRadius: R.card, padding: 16, borderWidth: 1, borderColor: C.border },
   chip: { borderRadius: R.chip, paddingHorizontal: 10, paddingVertical: 4, alignSelf: 'flex-start' },
   sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  barSide: { width: 28 },
+  // 위쪽 제목 줄: 높이 L.header, 좌우 여백 S.side (본문, 홈 로고와 같은 선). 뒤로 가기가 없으면 제목이 그 선에서 바로 시작
+  bar: { backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.border },
+  barRow: { height: L.header, flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.side },
+  barBack: { width: 28, height: L.touch, justifyContent: 'center', alignItems: 'flex-start', marginLeft: -9 },
+  barTitle: { flex: 1, fontSize: 17, fontWeight: '800', color: C.text },
   footer: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    padding: 16,
+    paddingHorizontal: S.side,
+    paddingTop: 12,
     backgroundColor: C.card,
     borderTopWidth: 1,
     borderTopColor: C.border,

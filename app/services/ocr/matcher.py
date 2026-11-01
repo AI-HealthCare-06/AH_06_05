@@ -71,6 +71,23 @@ def _strength_numbers(name: str) -> list[str]:
     return re.findall(r"\d+(?:\.\d+)?", _PER_UNIT.sub("", re.split(r"[(\[]", unify(name))[0]))
 
 
+def _ingredient_text(name: str) -> str | None:
+    """이름에서 첫 번째 닫힌 괄호 안의 성분 글자. 괄호가 없거나 "…(모"처럼 잘려 닫히지 않았으면 None"""
+    m = re.search(r"\(([^()]*)\)", unify(base_name(name)))
+    return m.group(1) if m else None
+
+
+def _evidence(read: str, cand: str) -> bool | None:
+    """읽은 줄의 성분(괄호)과 함량이 후보와 맞는가. True = 둘 다 맞음, False = 다름, None = 근거 없음"""
+    p, cp = _ingredient_text(read), _ingredient_text(cand)
+    if p is None or cp is None:
+        return None
+    if p != cp:
+        return False
+    rs, cs = _strength_numbers(read), _strength_numbers(cand.split("_(")[0])
+    return not (rs and cs and rs != cs)
+
+
 def _different_ingredient(a: set[str | None], b: set[str | None]) -> bool:
     """두 상표의 주성분코드가 하나도 겹치지 않으면 다른 약 (코드를 모르는 약이 끼어 있으면 다르다고 봄)"""
     return None in a or None in b or not (a & b)
@@ -228,10 +245,17 @@ class NameMatcher:
             # 읽은 이름의 함량 숫자가 맞는 약의 숫자와 다르다 (60을 30으로, 5를 50으로 잘못 읽은 경우 · 목록에 없는 함량).
             # 글자는 거의 같아서 점수가 높게 나오지만 다른 함량의 약일 수 있다 → 틀린 함량이 확정되지 않게 사용자가 고른다 (10/15, 급여목록으로 한 자리 바꾸기 시험에서 3%)
             return Decision(AMBIGUOUS, round(best, 3), cands, strength=True)
-        if siblings and (sib := self._sibling_choices(top[0][2], qg, top_n)):
+        if siblings:
             # 읽힌 이름이 목록에 있는 이름이어도, 글자 하나 차이의 다른 성분 약이 있으면 오타인지 다른 약인지 글자만으로는 알 수 없다
             # (예: 로글리코엠정을 로글리코정으로 읽음). 틀린 약이 확정되는 것을 막으려고 사용자가 고르게 한다
-            return Decision(AMBIGUOUS, round(best, 3), [cands[0], *sib], sibling=True)
+            # 다만 읽은 줄의 성분(닫힌 괄호)과 함량으로 맨 위 후보만 맞고 형제들은 모두 아니면, 글자가 아니라 성분으로 구별되므로 묻지 않는다
+            # (성분이 읽히지 않았거나 괄호가 잘렸거나 성분 글자가 같은 형제가 있으면 근거가 없어서 그대로 묻는다)
+            # 성분이 같은 이웃 상표(토피라정 ↔ 토피라트정)는 어느 쪽을 골라도 점검 결과가 같아서 묻지 않는다 (ocr_sibling.md 기준)
+            sib = self._sibling_choices(top[0][2], qg, top_n)
+            if sib and not (
+                _evidence(qb, top[0][2]) is True and all(_evidence(qb, c.item_name) is not True for c in sib)
+            ):
+                return Decision(AMBIGUOUS, round(best, 3), [cands[0], *sib], sibling=True)
         return Decision(FOUND, round(best, 3), cands, exact=exact, same_name=unify(base_name(top[0][2])) == unify(qb))
 
     def _short_exact(self, qb: str) -> Decision:
