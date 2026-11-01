@@ -40,7 +40,7 @@ export default function Me() {
   const or = (v: string | null | undefined) => v ?? c.none;
   return (
     // 아래 내비와 떠 있는 챗봇 버튼이 있는 화면이라, 수정 버튼은 챗봇 버튼에 가리지 않게 맨 위에 둠
-    <Screen title={c.title} back={false}>
+    <Screen title={c.title} back={false} fab>
       {failed && <Text style={{ fontSize: 14, color: C.danger }}>※ {c.loadFailed}</Text>}
       {me && h && (
         <>

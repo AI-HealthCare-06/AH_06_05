@@ -8,7 +8,7 @@ import { useFlow } from '@/features/ocr/flow';
 import { ApiError, USE_MOCK } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
 import { C, T } from '@/shared/theme';
-import { Btn, Card, Chip, Screen, Section } from '@/shared/ui';
+import { Btn, Bullet, Card, Chip, Screen, Section } from '@/shared/ui';
 
 const MAX = 5;
 type Problem = { kind: 'quality' | 'notDocument' | 'ocrFailed' | 'camera'; fileIndex?: number; canContinue?: boolean };
@@ -162,9 +162,7 @@ export default function Capture() {
         <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 10 }}>
           <Text style={T.heading}>{copy.capture.tipsTitle}</Text>
           {copy.capture.tipList.map((t) => (
-            <Text key={t} style={T.body}>
-              · {t}
-            </Text>
+            <Bullet key={t} text={t} />
           ))}
           <Btn label={copy.capture.close} kind="secondary" onPress={() => setTips(false)} />
         </View>

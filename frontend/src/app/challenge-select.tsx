@@ -7,7 +7,7 @@ import type { RecommendationList } from '@/features/challenge/types';
 import { useFlow } from '@/features/ocr/flow';
 import { ApiError } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
-import { C, T } from '@/shared/theme';
+import { C, S, T } from '@/shared/theme';
 import { Btn, Card, Check, Chip, Disclaimer, Screen } from '@/shared/ui';
 
 const c = copy.challenge;
@@ -117,11 +117,11 @@ export default function ChallengeSelect() {
         {c.selectHead}
       </Text>
       <Text style={[T.body, { color: C.text2, marginTop: 4, marginBottom: 16 }]}>{c.selectBody}</Text>
-      <View style={{ gap: 12 }}>
+      <View style={{ gap: S.gap }}>
         {data.items.map((it) => {
           const on = picked.includes(it.id);
           return (
-            <Card key={it.id} style={{ gap: 4, borderWidth: on ? 2 : 1, borderColor: on ? C.p600 : C.border }}>
+            <Card key={it.id} style={{ gap: 4, borderWidth: on ? 2 : 1, padding: on ? 15 : 16, borderColor: on ? C.p600 : C.border }}>
               <Check on={on} label={it.title} bold onPress={() => toggle(it.id)} />
               <Text style={[T.body, { color: C.text2 }]}>{it.desc}</Text>
               {it.cautionLabel && <Chip label={it.cautionLabel} tone="caution" />}
@@ -129,7 +129,7 @@ export default function ChallengeSelect() {
           );
         })}
       </View>
-      <Text style={[T.caption, { marginTop: 12, color: limit ? C.danger : C.text2 }]} accessibilityLiveRegion="polite">
+      <Text style={[T.caption, { marginTop: S.gap, color: limit ? C.danger : C.text2 }]} accessibilityLiveRegion="polite">
         {limit ? c.max : c.picked(picked.length)}
       </Text>
       <Disclaimer />

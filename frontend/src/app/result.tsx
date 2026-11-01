@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 
 import { useChatLauncher } from '@/features/chatbot/launcher';
@@ -9,8 +9,10 @@ import { getAnalysis, putDiseases, retryAnalysis, sendGuideFeedback } from '@/fe
 import type { Action, AnalysisResult, Severity, Warning } from '@/features/rag/types';
 import { ApiError } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
+import { drugLabel } from '@/shared/drugName';
 import { C, R, T } from '@/shared/theme';
-import { Btn, Card, Chip, Disclaimer, Radio, Screen, Section } from '@/shared/ui';
+import { DocIcon } from '@/shared/ui/icons';
+import { Btn, Bullet, Card, Chip, Disclaimer, Radio, Screen, Section } from '@/shared/ui';
 
 const r = copy.result;
 type TabKey = 'safety' | 'med' | 'life';
@@ -58,14 +60,14 @@ export default function Result() {
         onBack={goHome}
         footer={error ? <Btn label={copy.common.retry} onPress={load} /> : undefined}
       >
-        {error ? <Text style={[T.body, { color: C.danger }]}>{r.loadFail} · {error}</Text> : <ActivityIndicator color={C.p600} style={{ marginTop: 40 }} />}
+        {error ? <Text style={[T.body, { color: C.danger }]}>{r.loadFail} ({error})</Text> : <ActivityIndicator color={C.p600} style={{ marginTop: 40 }} />}
       </Screen>
     );
   }
 
   const { summary } = data;
   const counts = summary.warningCounts;
-  const sev = [counts.danger && `${r.severity.danger} ${counts.danger}`, counts.caution && `${r.severity.caution} ${counts.caution}`, counts.info && `${r.severity.info} ${counts.info}`].filter(Boolean).join(' · ');
+  const sev = [counts.danger && `${r.severity.danger} ${counts.danger}`, counts.caution && `${r.severity.caution} ${counts.caution}`, counts.info && `${r.severity.info} ${counts.info}`].filter(Boolean).join(', ');
   const tabs: [TabKey, string][] = [['safety', r.tabs.safety], ['med', r.tabs.med], ['life', r.tabs.life]];
   const day = new Date(data.createdAt);
 
@@ -81,7 +83,7 @@ export default function Result() {
           <Text style={[T.bodyM, { flex: 1 }]}>{r.summary(summary.prescriptionCount, summary.drugCount)}</Text>
           {sev ? <Chip label={sev} tone={counts.danger ? 'danger' : 'caution'} /> : <Chip label={r.noRisk} tone="success" />}
         </View>
-        {summary.hospitals.length > 0 && <Text style={T.caption}>{summary.hospitals.join(' · ')}</Text>}
+        {summary.hospitals.length > 0 && <Text style={T.caption}>{summary.hospitals.join(', ')}</Text>}
       </Card>
 
       <View accessibilityRole="tablist" style={{ flexDirection: 'row', backgroundColor: C.muted, borderRadius: R.control, padding: 4, marginTop: 12 }}>
@@ -162,7 +164,7 @@ function Safety({ data, onDetail }: { data: AnalysisResult; onDetail: (id: numbe
 }
 
 function WarningCard({ w, onPress }: { w: Warning; onPress: () => void }) {
-  const names = w.drugs.length <= 2 ? w.drugs.map((d) => d.itemName).join(w.type === 'interaction' ? ' + ' : ' · ') : r.drugsCount(w.drugs.length);
+  const names = w.drugs.length <= 2 ? w.drugs.map((d) => drugLabel(d.itemName)).join(w.type === 'interaction' ? ' + ' : ', ') : r.drugsCount(w.drugs.length);
   return (
     <Card tone={SEV_TONE[w.severity]} onPress={onPress}>
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
@@ -201,7 +203,7 @@ function GuideFailed({ analysisId, onRetried }: { analysisId: number; onRetried:
 
 const Field = ({ label, value }: { label: string; value: string | null }) => (
   <Text style={T.body}>
-    <Text style={T.bodyM}>{label} · </Text>
+    <Text style={T.bodyM}>{label}: </Text>
     {value ?? r.missingField}
   </Text>
 );
@@ -214,20 +216,17 @@ function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResu
       {data.medication.items.map((m) => (
         <Card key={m.itemId} style={{ gap: 6 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-            <Text style={[T.subhead, { flex: 1 }]}>{m.itemName}</Text>
+            <Text style={[T.subhead, { flex: 1 }]}>{drugLabel(m.itemName)}</Text>
             {m.category && <Chip label={m.category} tone="info" />}
           </View>
           <Field label={r.purpose} value={m.purpose} />
-          <Field label={r.howTo} value={m.howToTake} />
+          <Field label={r.howTo} value={m.howToTake?.split(' · ').join(', ') ?? null} />
           {m.cautions?.length ? (
             <View style={{ gap: 2 }}>
               <Text style={T.bodyM}>{r.caution}</Text>
               {m.cautions.map((c) => (
-                <Text key={c} style={T.body}>
-                  · {c}
-                </Text>
+                <Bullet key={c} text={c} />
               ))}
-              <Text style={T.small}>{r.cautionsFoot}</Text>
             </View>
           ) : (
             <Field label={r.caution} value={m.caution} />
@@ -259,26 +258,23 @@ function GuideFeedbackBox({ guideId }: { guideId: number }) {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
   const send = async () => {
     if (rating === null) return;
     try {
       setBusy(true);
       setErr(null);
       await sendGuideFeedback(guideId, rating, comment.trim() || undefined);
-      setSent(true);
+      setSent(true); // "의견을 보냈어요."를 2초만 보여 줌. 다시 보내면 앞의 의견을 덮어씀(R-9)
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setSent(false), 2000);
     } catch (e) {
       setErr(errText(e));
     } finally {
       setBusy(false);
     }
   };
-  if (sent) {
-    return (
-      <Card tone="success">
-        <Text style={T.bodyM}>{r.feedbackThanks}</Text>
-      </Card>
-    );
-  }
   return (
     <Card style={{ gap: 4 }}>
       <Text style={T.label}>{r.feedbackTitle}</Text>
@@ -296,6 +292,11 @@ function GuideFeedbackBox({ guideId }: { guideId: number }) {
       />
       {err && <Text style={[T.caption, { color: C.danger }]}>※ {err}</Text>}
       <Btn label={r.feedbackSend} disabled={rating === null || busy} onPress={send} style={{ marginTop: 8 }} />
+      {sent && (
+        <Text style={[T.caption, { color: C.success, textAlign: 'center', marginTop: 8 }]} accessibilityLiveRegion="polite">
+          {r.feedbackThanks}
+        </Text>
+      )}
     </Card>
   );
 }
@@ -303,9 +304,7 @@ function GuideFeedbackBox({ guideId }: { guideId: number }) {
 const Actions = ({ actions }: { actions: Action[] }) => (
   <>
     {actions.map((a, i) => (
-      <Text key={i} style={T.body}>
-        · {a.text}
-      </Text>
+      <Bullet key={i} text={a.text} />
     ))}
   </>
 );
@@ -322,7 +321,7 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
       </View>
       {life.medicationLinks.map((l) => (
         <View key={l.itemId} style={{ gap: 2 }}>
-          <Text style={T.bodyM}>{l.itemName}</Text>
+          <Text style={T.bodyM}>{drugLabel(l.itemName)}</Text>
           <Actions actions={l.actions} />
           {l.requiresClinician && <Chip label={r.clinician} tone="caution" />}
         </View>
@@ -355,7 +354,7 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
     <View style={{ marginTop: 12, gap: 12 }}>
       <Card style={{ gap: 4 }}>
         <Text style={T.small}>{r.foundDiseases}</Text>
-        <Text style={T.subhead}>{life.diseases.map((d) => d.name).join(' · ')}</Text>
+        <Text style={T.subhead}>{life.diseases.map((d) => d.name).join(', ')}</Text>
         <Text style={T.caption}>{fromText}</Text>
       </Card>
       {life.sections.some((s) => s.conflict) &&
@@ -384,12 +383,18 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
       )}
       <Btn label={copy.challenge.start} onPress={() => router.push('/challenge-select')} />
       {life.sources.length > 0 && (
-        <View style={{ gap: 2 }}>
-          <Text style={T.small}>{r.sources}</Text>
-          {life.sources.map((s) => (
-            <Text key={s.id} style={T.caption}>
-              · {s.title ? `${s.org} · ${s.title}` : s.org}
+        <View style={{ backgroundColor: C.card, borderRadius: R.card, borderWidth: 1, borderColor: C.border, padding: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <DocIcon />
+            <Text style={T.small} accessibilityRole="header">
+              {r.sourceTitle}
             </Text>
+          </View>
+          {life.sources.map((s) => (
+            <View key={s.id} style={{ marginTop: 12 }}>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>{s.org}</Text>
+              {s.title ? <Text style={[T.caption, { marginTop: 2 }]}>{s.title}</Text> : null}
+            </View>
           ))}
         </View>
       )}
