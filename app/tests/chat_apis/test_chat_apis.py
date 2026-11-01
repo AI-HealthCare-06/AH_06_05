@@ -475,6 +475,95 @@ class TestFixedInfo(ChatCase):
             assert (await client.delete(f"/api/v1/analyses/{aid}", headers=headers)).status_code == 204
         assert not await ChatSession.exists(id=sid)
 
+    @staticmethod
+    async def finished(aid: int, minutes_ago: int) -> None:
+        await Analysis.filter(id=aid).update(finished_at=datetime.now(config.TIMEZONE) - timedelta(minutes=minutes_ago))
+
+    async def test_home_chat_moves_to_analysis_finished_after_it(self):
+        """같은 날 A로 묻고 B를 분석한 뒤 같은 대화에서 물으면 B로 답하고 대화에 B를 적음 (#162 채연 리뷰).
+        답 줄마다 쓴 분석을 적어 두어 A를 지워도 이 대화가 지워짐"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f13@example.com")
+            a = (await self.start(client, headers, await self.prescription(user, ["644300010"]))).json()["analysisId"]
+            await self.finished(a, 60)
+            sid = await self.session(client, headers)
+            await ChatSession.filter(id=sid).update(created_at=datetime.now(config.TIMEZONE) - timedelta(minutes=30))
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+            b = (await self.start(client, headers, await self.prescription(user, ["641900040"]))).json()["analysisId"]
+            await self.ask(client, headers, sid, "혈압약은 저녁에 먹어도 되나요?", crid="q-2")
+            items = await self.items(client, headers, sid)
+        assert [c["info"].analysis_id for c in self.fake.calls] == [a, b]
+        assert (await ChatSession.get(id=sid)).analysis_id == b
+        answers = await ChatMessage.filter(session_id=sid, role=MessageRole.ASSISTANT).order_by("id")
+        assert [m.analysis_id for m in answers] == [a, b]
+        assert all("analysisId" not in i for i in items)  # 앱으로 내려보내지 않음
+
+    async def test_chat_opened_from_old_record_keeps_it(self):
+        """결과 화면에서 예전 기록 A로 연 대화는, B가 그 전에 끝났으면 A를 그대로 씀"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f14@example.com")
+            a = (await self.start(client, headers, await self.prescription(user, ["644300010"]))).json()["analysisId"]
+            b = (await self.start(client, headers, await self.prescription(user, ["641900040"]))).json()["analysisId"]
+            await self.finished(a, 120)
+            await self.finished(b, 60)
+            sid = await self.session(client, headers, analysisId=a)
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+        assert self.fake.calls[0]["info"].analysis_id == a
+        assert (await ChatSession.get(id=sid)).analysis_id == a
+
+    async def test_analysis_finished_after_card_wins(self):
+        """맥락 카드 A를 붙인 뒤 B가 끝나면 B를 씀. 그 뒤 카드 A를 다시 붙이면 A로 돌아감"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f15@example.com")
+            a = (await self.start(client, headers, await self.prescription(user, ["644300010"]))).json()["analysisId"]
+            await self.finished(a, 60)
+            sid = await self.session(client, headers)
+            body = {"analysisId": a, "clientRequestId": "ctx-1"}
+            assert (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).status_code == 201
+            await ChatMessage.filter(session_id=sid).update(
+                created_at=datetime.now(config.TIMEZONE) - timedelta(minutes=30)
+            )
+            b = (await self.start(client, headers, await self.prescription(user, ["641900040"]))).json()["analysisId"]
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+            body = {"analysisId": a, "clientRequestId": "ctx-2"}
+            assert (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).status_code == 201
+            await self.ask(client, headers, sid, "혈압약은 저녁에 먹어도 되나요?", crid="q-2")
+        assert [c["info"].analysis_id for c in self.fake.calls] == [b, a]
+
+    async def test_latest_is_by_finish_time_not_number(self):
+        """실패한 분석을 다시 시도하면 번호는 작아도 나중에 끝남. 끝난 때가 늦은 분석을 씀"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f16@example.com")
+            a = (await self.start(client, headers, await self.prescription(user, ["644300010"]))).json()["analysisId"]
+            b = (await self.start(client, headers, await self.prescription(user, ["641900040"]))).json()["analysisId"]
+            await self.finished(b, 60)
+            await self.finished(a, 10)
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+        assert self.fake.calls[0]["info"].analysis_id == a
+
+    async def test_deleting_either_analysis_deletes_the_moved_chat(self):
+        """A에서 B로 바뀐 대화는 A를 지워도(답 줄에 적힌 분석), B를 지워도(대화에 적힌 분석) 지워짐 (R-8)"""
+        for target in ("a", "b"):
+            async with self.client() as client:
+                headers, user = await self.auth(client, f"f17{target}@example.com")
+                rx_a = await self.prescription(user, ["644300010"])
+                a = (await self.start(client, headers, rx_a)).json()["analysisId"]
+                await self.finished(a, 60)
+                sid = await self.session(client, headers, crid=f"s-{target}")
+                await ChatSession.filter(id=sid).update(
+                    created_at=datetime.now(config.TIMEZONE) - timedelta(minutes=30)
+                )
+                await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+                b = (await self.start(client, headers, await self.prescription(user, ["641900040"]))).json()[
+                    "analysisId"
+                ]
+                await self.ask(client, headers, sid, "혈압약은 저녁에 먹어도 되나요?", crid="q-2")
+                assert (await ChatSession.get(id=sid)).analysis_id == b
+                aid = a if target == "a" else b
+                assert (await client.delete(f"/api/v1/analyses/{aid}", headers=headers)).status_code == 204
+            assert not await ChatSession.exists(id=sid), target
+
     async def test_unapproved_guide_gives_no_purpose(self):
         async with self.client() as client:
             headers, user = await self.auth(client, "f2@example.com")

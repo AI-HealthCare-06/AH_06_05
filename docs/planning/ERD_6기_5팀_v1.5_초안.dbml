@@ -47,6 +47,10 @@
 //   habit_goals.end_date는 끝낸 날(다시 고를 때 뺀 목표, 동의 철회). habit_records.value는 그날 총량. 주 단위 다시 고르기(REQ-116)는 뒤로.
 //   habit_goals.status는 not null, 기본값 'active'로 맞춤(마이그레이션 18번과 같게, 10/31 채연).
 //
+// [v1.5 초안 추가, 2026-11-01, 수인] chat_messages.analysis_id 추가(#159, 11/1 채연 확인): 답 줄에 그 답이 쓴 분석을 남김. 홈에서 연 대화는 같은 날
+//   새 분석이 끝나면 다음 질문부터 새 분석을 써서 chat_sessions.analysis_id가 A에서 B로 바뀜. 그래도 R-8로 A를 지울 때 이 칸으로 대화를 찾아 지움.
+//   예전 답 줄은 비어 있음(채우지 않음). FK는 set null, R-8은 같은 트랜잭션에서 대화를 먼저 지움. 마이그레이션 19번.
+//
 // [v1.4, 2026-10-08, 채연] 팩트표 v0.12 반영. lifestyle_guides에 group_type(위험 신호, 교차 규칙을 같은 표에 담음),
 //   requires_clinician, goal_eligible, applies_when, show_when_unknown, condition, user_message 추가. lifestyle_guide_actions에 kind(fact 또는
 //   safety_notice), scope, use_in_answer 추가하고 source_id는 비워도 되게 바꿈(출처는 새 표 lifestyle_source_links로). 새 표
@@ -351,6 +355,7 @@ Table chat_messages {
   safety_card jsonb       [note: 'v1.5 · 안전성 점검 결과 카드 { analysisId, warningIds }. 카드가 붙는 답도 answer_type은 normal, 상담 갈래(next_visit, soon)면 refer (#134, 10/28). 카드가 없으면 비어 있음 (이슈 #88, 수인 10/12 확정)']
   safety      jsonb       [note: 'v1.5, 서버가 감지한 긴급, 자해 결과 { types, overdose, rule }. answer_type이 emergency, crisis인 답에만. 원문은 담지 않음 (이슈 #100, 수인 10/22)']
   route_kind  varchar(20) [note: 'v1.5, 답 줄만. 답을 만든 갈래(Route.kind: emergency, crisis, medication, lifestyle, refer, clarify, out_of_scope). out_of_scope면 다음 질문의 대화 기억에서 뺌. H-2 응답에는 내보내지 않음 (#140, 수인 10/28)']
+  analysis_id bigint      [ref: > analyses.id, note: 'v1.5, 답 줄만. 이 답이 쓴 분석. 대화의 분석이 바뀌어도(같은 날 A에서 B로) R-8로 A를 지울 때 이 대화를 찾음. H-2 응답에는 내보내지 않음. FK는 set null (#159, 수인 11/1)']
   status      varchar(20) [not null, default: 'done', note: 'v1.5 · generating / done. 화면을 나갔다 와도 만드는 중인 답을 알 수 있게 (이슈 #88). 사용자 줄은 늘 done. 실패(failed)는 두지 않음: 서버가 실패하면 만드는 중이던 줄을 지우고 앱이 E6을 보여 줌. 30초를 넘긴 줄은 다시 시도 때 지움 (수인 10/12 확정, 줄을 지우는 것은 10/22 #100)']
   model       varchar(50) [note: 'v1.5 · 답을 만든 모델 이름 (예: gpt-4o-mini). 답변마다 비용과 시간을 재려고 둠 (이슈 #88). assistant 줄만 채움 (수인 10/12 확정)']
   prompt_tokens     int   [note: 'v1.5 · 입력 토큰 수. 답 하나에 AI를 여러 번 부르면 합친 값. assistant 줄만 채움 (이슈 #88)']
