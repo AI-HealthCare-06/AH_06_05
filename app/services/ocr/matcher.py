@@ -71,6 +71,23 @@ def _strength_numbers(name: str) -> list[str]:
     return re.findall(r"\d+(?:\.\d+)?", _PER_UNIT.sub("", re.split(r"[(\[]", unify(name))[0]))
 
 
+def _ingredient_text(name: str) -> str | None:
+    """이름에서 첫 번째 닫힌 괄호 안의 성분 글자. 괄호가 없거나 "…(모"처럼 잘려 닫히지 않았으면 None"""
+    m = re.search(r"\(([^()]*)\)", unify(base_name(name)))
+    return m.group(1) if m else None
+
+
+def _evidence(read: str, cand: str) -> bool | None:
+    """읽은 줄의 성분(괄호)과 함량이 후보와 맞는가. True = 둘 다 맞음, False = 다름, None = 근거 없음"""
+    p, cp = _ingredient_text(read), _ingredient_text(cand)
+    if p is None or cp is None:
+        return None
+    if p != cp:
+        return False
+    rs, cs = _strength_numbers(read), _strength_numbers(cand.split("_(")[0])
+    return not (rs and cs and rs != cs)
+
+
 def _different_ingredient(a: set[str | None], b: set[str | None]) -> bool:
     """두 상표의 주성분코드가 하나도 겹치지 않으면 다른 약 (코드를 모르는 약이 끼어 있으면 다르다고 봄)"""
     return None in a or None in b or not (a & b)
@@ -115,6 +132,7 @@ class NameMatcher:
         self._ingr = ingredients
         self._sib: dict[str, list[str]] | None = None
         self._by_brand: dict[str, list[int]] = {}
+        self._near_all: dict[str, list[str]] = {}  # 글자 하나 차이 이웃 상표 전부 (성분이 같은 것 포함)
         self._maker = maker_pattern(makers)
 
     def without_maker(self, name: str) -> str:
@@ -153,13 +171,16 @@ class NameMatcher:
             for i in range(len(key)):
                 shorter[key[:i] + key[i + 1 :]].add(key)
         out: dict[str, list[str]] = {}
+        near_all: dict[str, list[str]] = {}
         for key in by_brand:
             near = set(shorter.get(key, ()))  # 글자가 하나 더 있는 형제
             near |= {k for i in range(len(key)) if (k := key[:i] + key[i + 1 :]) in by_brand}  # 하나 빠진 형제
+            near_all[key] = sorted(near)
             diff = sorted(k for k in near if _different_ingredient(codes[key], codes[k]))
             if diff:
                 out[key] = diff
         self._by_brand = by_brand
+        self._near_all = near_all
         self._sib = out
         return out
 
@@ -228,11 +249,47 @@ class NameMatcher:
             # 읽은 이름의 함량 숫자가 맞는 약의 숫자와 다르다 (60을 30으로, 5를 50으로 잘못 읽은 경우 · 목록에 없는 함량).
             # 글자는 거의 같아서 점수가 높게 나오지만 다른 함량의 약일 수 있다 → 틀린 함량이 확정되지 않게 사용자가 고른다 (10/15, 급여목록으로 한 자리 바꾸기 시험에서 3%)
             return Decision(AMBIGUOUS, round(best, 3), cands, strength=True)
-        if siblings and (sib := self._sibling_choices(top[0][2], qg, top_n)):
+        if siblings:
             # 읽힌 이름이 목록에 있는 이름이어도, 글자 하나 차이의 다른 성분 약이 있으면 오타인지 다른 약인지 글자만으로는 알 수 없다
             # (예: 로글리코엠정을 로글리코정으로 읽음). 틀린 약이 확정되는 것을 막으려고 사용자가 고르게 한다
-            return Decision(AMBIGUOUS, round(best, 3), [cands[0], *sib], sibling=True)
+            # 다만 읽은 줄의 성분(닫힌 괄호)과 함량으로 맨 위 후보만 맞고 형제들은 모두 아니면, 글자가 아니라 성분으로 구별되므로 묻지 않는다
+            # (성분이 읽히지 않았거나 괄호가 잘렸거나 성분 글자가 같은 형제가 있으면 근거가 없어서 그대로 묻는다)
+            # 성분이 같아서 형제로 치지 않은 이웃 상표(토피라정 ↔ 토피라트정)도 읽은 줄과 성분·함량이 맞으면 글자로도 성분으로도 구별되지 않으므로
+            # 다른 성분의 형제가 없어도 묻는다 (성분이 읽히지 않았으면 비교할 근거가 없어서 묻지 않는다)
+            sib = self._sibling_choices(top[0][2], qg, top_n)
+            near = self._neighbor_choices(qb, top[0][2], qg, top_n)
+            if near or (
+                sib
+                and not (_evidence(qb, top[0][2]) is True and all(_evidence(qb, c.item_name) is not True for c in sib))
+            ):
+                return Decision(
+                    AMBIGUOUS, round(best, 3), [cands[0], *self._merge_choices(sib, near, top_n)], sibling=True
+                )
         return Decision(FOUND, round(best, 3), cands, exact=exact, same_name=unify(base_name(top[0][2])) == unify(qb))
+
+    def _neighbor_choices(self, qb: str, top_name: str, qg: frozenset[str], top_n: int) -> list[Candidate]:
+        """글자 하나 차이인 이웃 상표(성분이 같은 것 포함) 중에 읽은 줄의 성분과 함량이 맞는 제품을 상표마다 하나씩
+        (질문 이름과 가장 가까운 것). 없거나 형제 확인을 끄면 빈 목록"""
+        if not config.OCR_SIBLING_CONFIRM or self._ingr is None:
+            return []
+        self._siblings()
+        picks = []
+        for k in self._near_all.get(unify(_brand(top_name)), ()):
+            hits = [i for i in self._by_brand[k] if _evidence(qb, self._idx[i][1]) is True]
+            if hits:
+                picks.append(max((overlap(qg, self._idx[i][2]), self._idx[i][1], self._idx[i][0]) for i in hits))
+        picks.sort(reverse=True)
+        return [Candidate(edi, nm, round(sc, 3)) for sc, nm, edi in picks[: max(top_n, SIBLING_CHOICES) - 1]]
+
+    @staticmethod
+    def _merge_choices(sib: list[Candidate], near: list[Candidate], top_n: int) -> list[Candidate]:
+        """다른 성분 형제와 성분이 같은 이웃을 합쳐 점수 순으로 (이웃이 없으면 형제 목록 그대로)"""
+        if not near:
+            return sib
+        seen = {c.edi_code for c in sib}
+        both = [*sib, *(c for c in near if c.edi_code not in seen)]
+        both.sort(key=lambda c: (c.score, c.item_name, c.edi_code), reverse=True)
+        return both[: max(top_n, SIBLING_CHOICES) - 1]
 
     def _short_exact(self, qb: str) -> Decision:
         """짧은 이름(3글자: 울셋정 · 코푸정 · 아트정 등 급여목록에 실제로 있음)은 비슷한 이름을 찾으면 엉뚱한 약이 나오기 쉬워서,
