@@ -116,7 +116,7 @@ export default function ChallengeSelect() {
       <Text style={T.heading} accessibilityRole="header">
         {c.selectHead}
       </Text>
-      <Text style={[T.body, { color: C.text2, marginTop: 4, marginBottom: 16 }]}>{c.selectBody}</Text>
+      <Text style={[T.body, { color: C.text2, marginTop: 4, marginBottom: 16 }]}>{data.items.length > 1 ? c.selectBody : c.selectBodyOne}</Text>
       <View style={{ gap: S.gap }}>
         {data.items.map((it) => {
           const on = picked.includes(it.id);
