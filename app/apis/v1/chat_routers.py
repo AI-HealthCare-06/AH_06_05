@@ -10,6 +10,7 @@ from app.dependencies.security import get_request_user
 from app.dtos.chat import ContextCreateRequest, MessageCreateRequest, SessionCreateRequest
 from app.models.users import User
 from app.services import chats as svc
+from app.services.chatbot import queue as chat_queue
 
 chat_router = APIRouter(prefix="/chat/sessions", tags=["chat"])
 CurrentUser = Annotated[User, Depends(get_request_user)]
@@ -38,9 +39,9 @@ async def list_messages(session_id: int, user: CurrentUser) -> dict[str, Any]:
 async def ask(
     session_id: int, body: MessageCreateRequest, background: BackgroundTasks, user: CurrentUser
 ) -> dict[str, Any]:
-    """H-3 질문 보내기. 답은 뒤에서 만들고 앱은 H-2로 확인함"""
+    """H-3 질문 보내기. 답은 뒤에서 만들고 앱은 H-2로 확인함. 워커에 못 맡기면(꺼짐, 워커 없음) 서버 안에서 만듦 (#118)"""
     message_id, run = await svc.ask(user, session_id, body.content, body.client_request_id, body.emergency_dismissed)
-    if run:
+    if run and not await chat_queue.enqueue_answer(message_id, body.emergency_dismissed):
         background.add_task(svc.generate, message_id, body.emergency_dismissed)
     return {"messageId": message_id}
 
