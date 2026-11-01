@@ -34,6 +34,25 @@ export function MeIcon({ color = C.text3, size = 22 }: IconProps) {
   );
 }
 
+// 뒤로 가기 화살표 (공통 상단 바). 그림 왼쪽이 24칸 중 9칸 뒤에서 시작해서 바깥 여백을 9만큼 당겨 씀
+export function BackIcon({ color = C.text, size = 24 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" {...line} strokeWidth={2.2} stroke={color}>
+      <Path d="m15 6-6 6 6 6" />
+    </Svg>
+  );
+}
+
+// 문서 (근거와 출처 카드 머리)
+export function DocIcon({ color = C.text2, size = 18 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" {...line} stroke={color}>
+      <Path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <Path d="M14 3v5h5M9 13h6M9 17h6" />
+    </Svg>
+  );
+}
+
 // 챗봇 입력창 받아쓰기 안내 (와이어프레임 CB-01 ⑧)
 export function MicIcon({ color = C.text2, size = 20 }: IconProps) {
   return (

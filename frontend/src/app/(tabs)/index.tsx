@@ -7,7 +7,7 @@ import { HomeChallengeCard } from '@/features/challenge/homeCard';
 import { useFlow } from '@/features/ocr/flow';
 import { RecentRecord } from '@/features/rag/recentRecord';
 import { copy } from '@/shared/copy';
-import { C, L, S, T } from '@/shared/theme';
+import { C, L, S } from '@/shared/theme';
 import { Disclaimer } from '@/shared/ui';
 import { CameraIcon } from '@/shared/ui/icons';
 

@@ -107,22 +107,21 @@ export default function Challenge() {
   // RW-03-E2: 아래 고정 버튼은 챗봇 버튼과 겹쳐서 본문 안에 둠
   if (!today.hasGoals) {
     return (
-      <Screen title={copy.nav.challenge} onBack={toHome}>
+      <Screen title={copy.nav.challenge} onBack={toHome} fab>
         <Card style={{ gap: 6 }}>
           <Text style={T.subhead}>{noAnalysis ? c.noAnalysisTitle : c.emptyToday}</Text>
           <Text style={T.body}>{noAnalysis ? c.noAnalysisBody : c.emptyTodayBody}</Text>
         </Card>
-        <View style={{ marginTop: 16 }}>
+        <View style={{ marginTop: 8 }}>
           {noAnalysis ? <Btn label={c.goCapture} onPress={() => router.navigate('/')} /> : <Btn label={c.goPick} onPress={goPick} />}
         </View>
         <Disclaimer />
-        <View style={{ height: L.fab + L.fabGap }} />
       </Screen>
     );
   }
   const all = today.totalCount > 0 && today.doneCount === today.totalCount;
   return (
-    <Screen title={copy.nav.challenge} onBack={toHome}>
+    <Screen title={copy.nav.challenge} onBack={toHome} fab>
       <CelebrateScreen
         visible={celebrate}
         streakDays={today.streakDays}
@@ -160,9 +159,8 @@ export default function Challenge() {
       <Pressable accessibilityRole="link" onPress={goPick} style={{ minHeight: L.touch, justifyContent: 'center', alignSelf: 'flex-start', marginTop: 8 }}>
         <Text style={[T.bodyM, { color: C.p700 }]}>{c.rePick}</Text>
       </Pressable>
-      {noAnalysis && <Text style={[T.caption, { color: C.danger }]}>{c.noAnalysisTitle}</Text>}
+      {noAnalysis && <Text style={[T.caption, { color: C.danger, marginTop: 8 }]}>{c.noAnalysisTitle}</Text>}
       <Disclaimer />
-      <View style={{ height: L.fab + L.fabGap }} />
     </Screen>
   );
 }

@@ -7,10 +7,13 @@ import { getPrescription, patchItem, searchDrugs } from '@/features/ocr/api';
 import { useFlow } from '@/features/ocr/flow';
 import type { DrugSearch, MatchStatus, Prescription, PrescriptionItem } from '@/features/ocr/types';
 import { copy } from '@/shared/copy';
+import { drugLabel } from '@/shared/drugName';
 import { C, R, T } from '@/shared/theme';
-import { Btn, Card, Chip, Screen } from '@/shared/ui';
+import { Btn, Bullet, Card, Chip, Screen } from '@/shared/ui';
 
 const r = copy.recognize;
+// 점수(0~1)를 정수 퍼센트로. 정확히 100%일 때만 100이 나오도록 내림. 1e-6은 0.29 같은 값이 28로 떨어지는 소수 오차를 막음
+const pct = (score: number) => Math.floor(score * 100 + 1e-6);
 const STATUS: Record<MatchStatus, [string, 'success' | 'caution' | 'danger' | 'neutral']> = {
   auto: [r.status.ok, 'success'],
   user_confirmed: [r.status.ok, 'success'],
@@ -20,7 +23,7 @@ const STATUS: Record<MatchStatus, [string, 'success' | 'caution' | 'danger' | 'n
 };
 
 const timing = (it: PrescriptionItem) =>
-  [it.timing, it.totalDays ? `${it.totalDays}일` : null].filter(Boolean).join(' · ');
+  [it.timing, it.totalDays ? `${it.totalDays}일` : null].filter(Boolean).join(', ');
 
 // OC-02 인식 결과 확인 · 수정 (O-2 조회, O-3 수정, O-4 검색)
 export default function Recognize() {
@@ -83,7 +86,7 @@ export default function Recognize() {
       footer={
         <View style={{ gap: 6 }}>
           <Btn label={r.start} disabled={blocking.length > 0 || !usable || saving} onPress={() => router.replace('/analyzing')} />
-          {blocking.length > 0 && <Text style={[T.caption, { textAlign: 'center' }]}>{r.blocked(blocking.map((b) => `${b.k + 1}번째`).join(' · '))}</Text>}
+          {blocking.length > 0 && <Text style={[T.caption, { textAlign: 'center' }]}>{r.blocked(blocking.map((b) => `${b.k + 1}번째`).join(', '))}</Text>}
           <Btn label={r.retake} kind="ghost" onPress={() => router.replace('/capture')} />
         </View>
       }
@@ -92,15 +95,13 @@ export default function Recognize() {
       <Text style={[T.bodyM, { marginTop: 8 }]}>{r.summary(list.length, list.map((x) => x.hospitalName ?? '').filter(Boolean).join(', '))}</Text>
 
       {duplicates.length > 0 && (
-        <Text style={[T.caption, { marginTop: 8 }]}>{r.duplicates(duplicates.map((n) => `${n}번째`).join(' · '))}</Text>
+        <Text style={[T.caption, { marginTop: 8 }]}>{r.duplicates(duplicates.map((n) => `${n}번째`).join(', '))}</Text>
       )}
       {notices.length > 0 && (
         <Card tone="caution" style={{ marginTop: 12, gap: 4 }}>
           <Text style={T.label}>{r.noticesTitle}</Text>
           {notices.map((n) => (
-            <Text key={n} style={T.caption}>
-              · {n}
-            </Text>
+            <Bullet key={n} text={n} textStyle={T.caption} />
           ))}
         </Card>
       )}
@@ -122,7 +123,7 @@ export default function Recognize() {
           const [label, tone] = STATUS[it.matchStatus];
           // 후보를 미리 골라 두지 않는다: 사용자가 직접 눌러야 "이 약으로 확인"이 켜진다 (읽은 이름이 다른 약일 수 있는 항목을 그냥 지나치지 않게)
           const chosen = pick[it.id] ?? null;
-          const title = it.matchStatus === 'needs_confirm' ? it.rawName : it.itemName ?? (it.matchStatus === 'unmatched' ? `${k + 1}번째 약품` : it.rawName);
+          const title = it.matchStatus === 'needs_confirm' ? it.rawName : (it.itemName ? drugLabel(it.itemName) : null) ?? (it.matchStatus === 'unmatched' ? `${k + 1}번째 약품` : it.rawName);
           return (
             <Card
               key={it.id}
@@ -133,7 +134,7 @@ export default function Recognize() {
                 <View style={{ flex: 1 }}>
                   <Text style={T.bodyM}>{title}</Text>
                   <Text style={T.caption}>
-                    {it.matchStatus === 'unmatched' ? r.rawLabel(it.rawName) : [rx.hospitalName, timing(it)].filter(Boolean).join(' · ')}
+                    {it.matchStatus === 'unmatched' ? r.rawLabel(it.rawName) : [rx.hospitalName, timing(it)].filter(Boolean).join(', ')}
                   </Text>
                 </View>
                 <Chip label={label} tone={tone} />
@@ -147,9 +148,7 @@ export default function Recognize() {
                 <View style={{ marginTop: 8, gap: 2 }}>
                   <Text style={T.label}>{r.guidanceTitle}</Text>
                   {it.guidance.map((g) => (
-                    <Text key={g} style={T.caption}>
-                      · {g}
-                    </Text>
+                    <Bullet key={g} text={g} textStyle={T.caption} />
                   ))}
                   <Text style={T.small}>{r.guidanceNote}</Text>
                 </View>
@@ -163,7 +162,7 @@ export default function Recognize() {
 
               {it.matchStatus === 'needs_confirm' && (
                 <View style={{ marginTop: 12, gap: 8 }}>
-                  <Text style={T.caption}>{it.suggestedBy === 'llm' ? r.suggestedLlm : r.similar}</Text>
+                  <Text style={T.caption}>{it.suggestedBy === 'llm' ? r.suggestedLlm : it.candidates.some((c) => pct(c.score) === 100) ? r.similarExact : r.similar}</Text>
                   {it.candidates.map((c) => {
                     const on = chosen === c.ediCode;
                     return (
@@ -175,8 +174,8 @@ export default function Recognize() {
                         style={[st.option, { borderColor: on ? C.p600 : C.border }]}
                       >
                         <Text style={{ fontSize: 18, color: on ? C.p600 : C.text2 }}>{on ? '●' : '○'}</Text>
-                        <Text style={[T.label, { flex: 1 }]}>{c.itemName}</Text>
-                        <Text style={T.caption}>{r.similarity(Math.round(c.score * 100))}</Text>
+                        <Text style={[T.label, { flex: 1 }]}>{drugLabel(c.itemName)}</Text>
+                        <Text style={T.caption}>{r.similarity(pct(c.score))}</Text>
                       </Pressable>
                     );
                   })}
@@ -247,7 +246,7 @@ function SearchModal({ visible, onClose, onPick }: { visible: boolean; onClose: 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: ins.top + 8 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingBottom: 10 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, paddingBottom: 10 }}>
           <Pressable accessibilityRole="button" accessibilityLabel={copy.common.back} onPress={onClose} hitSlop={12} style={{ minWidth: 32, minHeight: 48, justifyContent: 'center' }}>
             <Text style={{ fontSize: 28, color: C.text }}>‹</Text>
           </Pressable>
@@ -274,8 +273,8 @@ function SearchModal({ visible, onClose, onPick }: { visible: boolean; onClose: 
               }}
               style={st.result}
             >
-              <Text style={T.label}>{item.itemName}</Text>
-              <Text style={T.caption}>{item.entpName} · {item.etcOtc}</Text>
+              <Text style={T.label}>{drugLabel(item.itemName)}</Text>
+              <Text style={T.caption}>{item.entpName}, {item.etcOtc}</Text>
             </Pressable>
           )}
           ListEmptyComponent={res?.status === 'not_found' ? <Text style={[T.caption, { textAlign: 'center' }]}>{r.searchEmpty}</Text> : null}

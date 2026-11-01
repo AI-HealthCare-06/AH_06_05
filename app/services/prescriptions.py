@@ -1,6 +1,6 @@
 """피처 1 OCR 서비스 — 업로드 검사 · OCR 작업 실행 · 인식 결과 조회 · 수정 · 약 이름 검색 (API O-1 ~ O-5)
 
-OCR 작업은 FastAPI 백그라운드 작업으로 돌린다 (사진 원본은 메모리에만 두고 저장하지 않음 — NFR-011).
+OCR 작업은 FastAPI 백그라운드 작업으로 돌린다 (사진 원본은 24시간만 임시 저장하고 자동 삭제, 저장소를 끄면 저장하지 않음, NFR-011).
 작업 안에서 사진 1장 = prescriptions 1행. 읽지 못한 사진은 ocr_jobs.error_code에 "Q2,D3,F1" 모양으로 적는다
 (Q = IMAGE_QUALITY_LOW · D = NOT_A_DOCUMENT · F = OCR_FAILED, 숫자는 1부터 센 사진 번호).
 """
