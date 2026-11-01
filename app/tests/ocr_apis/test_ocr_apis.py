@@ -380,7 +380,7 @@ class TestUploadAndJob(OcrApiCase):
         await DrugProduct.filter(edi_code="641900040").update(ingr_code="A1")
         await DrugProduct.create(
             edi_code="641900099",
-            item_name="노바스크엠정5밀리그람(암로디핀베실산염/로사르탄칼륨)_(1정)",
+            item_name="노바스크엠정5밀리그람(암로디핀베실산염)_(1정)",
             entp_name="한국화이자제약(주)",
             ingr_code="A2",
             etc_otc="전문",
@@ -405,6 +405,26 @@ class TestUploadAndJob(OcrApiCase):
                 )
             ).json()
         assert found["status"] == "matched" and [i["ediCode"] for i in found["items"]] == ["641900040"]
+
+    async def test_name_distinguished_by_the_read_ingredient_is_confirmed_without_asking(self):
+        """형제 약(노바스크엠정)이 있어도 읽은 줄의 성분(괄호)으로 구별되면 묻지 않고 자동 확정한다"""
+        await DrugProduct.filter(edi_code="641900040").update(ingr_code="A1")
+        await DrugProduct.create(
+            edi_code="641900099",
+            item_name="노바스크엠정5밀리그람(암로디핀베실산염/로사르탄칼륨)_(1정)",
+            entp_name="한국화이자제약(주)",
+            ingr_code="A2",
+            etc_otc="전문",
+            route="내복",
+        )
+        svc.reset_caches()
+        sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+        async with self.client() as client:
+            headers = await self.auth(client, "pc18@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [sample])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        first = rx["items"][0]
+        assert first["matchStatus"] == "auto" and first["ediCode"] == "641900040"
 
     async def test_matching_runs_off_the_event_loop_and_index_is_prebuilt(self):
         """이름 맞추기는 CPU를 쓰므로 서버(이벤트 루프)를 멈추지 않게 별도 스레드에서 돌리고, 추천용 색인은 미리 만들어 둔다"""
