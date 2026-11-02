@@ -767,6 +767,24 @@ class TestFixedInfo(ChatCase):
         assert [i["id"] for i in items if i.get("answerType")] == [first["id"]]
         assert self.fake.calls == []  # 답 AI를 부르지 않음
 
+    async def test_first_message_source_follows_the_guide_source(self):
+        """시연 약은 "무엇에 쓰나요"가 허가정보에서 나옴: 안내문의 source를 출처로 (복약 안내 카드와 같게). 없을 때만 약효분류와 기준일 (#193 채연 리뷰)"""
+        permit = "식약처 의약품 허가정보 (품목기준코드 199603456, 허가일 2018-05-02)"
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f37@example.com")
+            await DrugGuide.create(
+                edi_code="641900040",
+                content={"purpose": "혈압 관리에 쓰는 약이에요", "source": permit},
+                review_status=ReviewStatus.APPROVED,
+            )
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            item = (await PrescriptionItem.filter(prescription=rx).first()).id
+            sid = await self.session(client, headers, analysisId=aid)
+            body = {"analysisId": aid, "context": {"type": "drug", "id": item}, "clientRequestId": "ctx-s1"}
+            first = (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).json()["firstMessage"]
+        assert first["sources"] == [{"title": permit}]
+
     async def test_first_message_for_warning_card_uses_template(self):
         """H-7: 경고 카드는 점검 문장(템플릿) 그대로 + 상담 안내. 경고 문구를 AI가 만들지 않음 (NFR-032, 설계 메모 4-4)"""
         async with self.client() as client:
@@ -851,6 +869,22 @@ class TestFixedInfo(ChatCase):
         assert info.pair_warnings == [] and len(info.other_warnings) == 1
         assert info.other_warnings[0].names == (base_name(PRODUCTS[0][1]),)
         assert info.other_warnings[0].summary == "어르신이 조심해야 하는 약이에요"
+
+    async def test_polypharmacy_warning_has_no_drug_name(self):
+        """여러 약 복용 경고는 약 하나가 아니라 여러 약에 대한 것이라 이름 없이 (#195 채연 리뷰 3)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f38@example.com")
+            rx = await self.prescription(user, ["641900040", "644300010"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            (a, _b) = await PrescriptionItem.filter(prescription=rx).order_by("id")
+            await AnalysisWarning.create(
+                analysis_id=aid, warning_type="polypharmacy", severity="info", item_a=a,
+                summary="약을 5가지 함께 드시고 있어요", source="점검 기준",
+            )  # fmt: skip
+            sid = await self.session(client, headers, analysisId=aid)
+            await self.ask(client, headers, sid, "이번 분석에서 가장 조심할 건 뭔가요?")
+        info = self.fake.calls[0]["info"]
+        assert [w.names for w in info.other_warnings] == [()]
 
     async def test_safety_card_is_saved_and_returned(self):
         """점검 결과로 답하면 answerType은 normal, safetyCard는 H-2에 그대로 (명세서 v1.5 초안 H-2)"""

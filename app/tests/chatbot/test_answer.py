@@ -819,6 +819,49 @@ async def test_analysis_chip_takes_reworded_chip_and_falls_back_without_drugs():
 ELDERLY = PairWarning(41, ("노바스크정5밀리그람",), "어르신이 조심해야 하는 약이에요")
 
 
+POLY = PairWarning(51, (), "약을 5가지 함께 드시고 있어요")
+
+
+@sync
+async def test_analysis_chip_with_pair_warnings_never_says_none_even_with_food_words():
+    """약끼리 경고가 있는 분석에 "가장 조심할 음식"을 물어도 "걸린 항목이 없었어요"가 아니라 그 경고와 점검하지 않는 것을 보여 줌 (#195 채연 리뷰 1)"""
+    chat = FakeChat(classify=classified(category="out_of_scope"))
+    r = await answer("이번 분석에서 가장 조심할 음식은 뭔가요?", S_WARN, [], chat, search=FakeSearch())
+    assert r.safety_card == {"analysisId": 7, "warningIds": [31, 32]}
+    assert (
+        "기준에 걸린 항목은 없었어요" not in r.content and "음식이나 술, 처방에 없는 약은 점검하지 않아요" in r.content
+    )
+    assert "answer" not in chat.calls
+
+
+@sync
+async def test_analysis_chip_shows_pair_and_single_warnings_together():
+    """약끼리 경고와 약 하나짜리 경고가 같이 있으면 분류가 약끼리 묻는 질문으로 보지 않아도 둘 다 보임 (#195 채연 리뷰 2)"""
+    chat = FakeChat(classify=classified(category="out_of_scope"))
+    both = replace(S_WARN, other_warnings=[ELDERLY])
+    for q in ("이번 분석에서 가장 조심할 건 뭔가요?", "이번 분석에서 가장 조심할 음식이나 술은 뭔가요?"):
+        r = await answer(q, both, [], chat, search=FakeSearch())
+        assert r.safety_card == {"analysisId": 7, "warningIds": [31, 32, 41]}, q
+        assert "어르신이 조심해야" in r.content and NSAID.summary in r.content, q
+
+
+@sync
+async def test_polypharmacy_warning_is_shown_without_a_drug_name():
+    """여러 약 복용 경고는 약 하나의 이름을 붙이지 않고 문장만 (#195 채연 리뷰 3). 점검 기준 문장에도 여러 약 복용이 들어 있음"""
+    chat = FakeChat(classify=classified(category="out_of_scope"))
+    r = await answer(
+        "이번 분석에서 가장 조심할 건 뭔가요?",
+        replace(S0, analysis_id=7, other_warnings=[POLY]),
+        [],
+        chat,
+        search=FakeSearch(),
+    )
+    lines = r.content.splitlines()
+    assert "약을 5가지 함께 드시고 있어요" in lines and not any(x.startswith(":") for x in lines)
+    none = await answer("이번 분석에서 가장 조심할 건 뭔가요?", S0, [], chat, search=FakeSearch())
+    assert "여러 약 복용" in none.content
+
+
 @sync
 async def test_analysis_chip_shows_single_drug_warnings():
     """약 두 개짜리 경고가 없고 노인주의 같은 약 하나짜리만 있으면 그것을 ⑤와 같은 모양으로 답하고 카드를 붙임 (11/2)"""
