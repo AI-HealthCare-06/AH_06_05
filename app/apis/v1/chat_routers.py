@@ -1,4 +1,4 @@
-"""피처 3 챗봇 (API 명세서 5장 H-1 ~ H-8, #100). H-4, H-5는 2단계"""
+"""피처 3 챗봇 (API 명세서 5장 H-1 ~ H-8, #100)"""
 
 from typing import Annotated, Any
 
@@ -6,8 +6,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from starlette import status
 from starlette.responses import Response
 
+from app.core.errors import AppError
 from app.dependencies.security import get_request_user
-from app.dtos.chat import ContextCreateRequest, MessageCreateRequest, SessionCreateRequest
+from app.dtos.chat import ContextCreateRequest, MessageCreateRequest, SessionCreateRequest, SessionTitleRequest
 from app.models.users import User
 from app.services import chats as svc
 from app.services.chatbot import queue as chat_queue
@@ -21,6 +22,14 @@ async def start_session(body: SessionCreateRequest, user: CurrentUser) -> dict[s
     """H-1 대화 시작. 같은 clientRequestId면 새로 만들지 않음. firstMessage는 아직 없음 (#116)"""
     context = body.context.model_dump() if body.context else None
     return {"sessionId": await svc.start_session(user, body.client_request_id, body.analysis_id, context)}
+
+
+@chat_router.get("")
+async def list_sessions(user: CurrentUser, date: str | None = None, month: str | None = None) -> dict[str, Any]:
+    """H-4 날짜별 대화 목록. ?month=는 기록 있는 날짜(CB-02), ?date=는 그날 대화(CB-03). 둘 중 하나만"""
+    if bool(date) == bool(month):
+        raise AppError(status.HTTP_400_BAD_REQUEST, "VALIDATION_ERROR", "date나 month 하나만 보내 주세요.")
+    return await svc.sessions_on(user, date) if date else await svc.days_with_sessions(user, month or "")
 
 
 @chat_router.get("/today")
@@ -44,6 +53,12 @@ async def ask(
     if run and not await chat_queue.enqueue_answer(message_id, body.emergency_dismissed):
         background.add_task(svc.generate, message_id, body.emergency_dismissed)
     return {"messageId": message_id}
+
+
+@chat_router.patch("/{session_id}")
+async def rename_session(session_id: int, body: SessionTitleRequest, user: CurrentUser) -> dict[str, Any]:
+    """H-5 대화 제목 수정"""
+    return await svc.rename_session(user, session_id, body.title)
 
 
 @chat_router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

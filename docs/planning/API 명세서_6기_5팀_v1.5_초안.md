@@ -369,8 +369,8 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | H-1 | POST | `/chat/sessions` | 대화 시작 | CB-01 · CB-01-E1 · CB-01-E2 | 수인 | ✅ |
 | H-2 | GET | `/chat/sessions/{id}/messages` | 이전 대화 조회 | CB-01 | 수인 | ✅ |
 | H-3 | POST | `/chat/sessions/{id}/messages` | 질문 보내기 (`202`로 받고 답은 H-2로 확인) | CB-01 · CB-01-E2 | 수인 | ✅ |
-| H-4 | GET | `/chat/sessions?date=` · `?month=` | 날짜별 대화 목록 | CB-02 · CB-03 | 수인 | ⚪ |
-| H-5 | PATCH | `/chat/sessions/{id}` | 대화 제목 수정 | CB-03 | 수인 | ⚪ |
+| H-4 | GET | `/chat/sessions?date=` · `?month=` | 날짜별 대화 목록 | CB-02 · CB-03 | 수인 | 🟡 |
+| H-5 | PATCH | `/chat/sessions/{id}` | 대화 제목 수정 | CB-03 | 수인 | 🟡 |
 | H-6 | DELETE | `/chat/sessions/{id}` | 대화 삭제 | CB-03 · MY-S1 | 수인 | ✅ |
 | H-7 | POST | `/chat/sessions/{id}/context` | 오늘 대화에 분석 맥락 붙이기 (1단계) | CB-01-E2 | 수인 | ✅ |
 | H-8 | GET | `/chat/sessions/today` | 오늘 대화 찾기 (찾기만 하고 만들지 않음) | CB-01 · CB-01-E1 | 수인 | 🟡 |
@@ -1250,20 +1250,23 @@ H-2 답 줄에 더하는 칸 (10/12 수인 확정, 10/22 H-3 응답에서 옮김
 | `crisis` | 도움 연결 | CB-01-E5 (REQ-131) |
 | `error` | 연결 오류 | CB-01-E6 — **프론트 전용**, 서버는 보내지 않음 (REQ-132) |
 
-### H-4. 날짜별 대화 목록 `GET /chat/sessions?date=2026-09-16` ⚪
+### H-4. 날짜별 대화 목록 `GET /chat/sessions?date=2026-09-16` 🟡
 
 CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → 그날 대화 목록)
 ```json
 { "items": [ { "sessionId": 301, "title": "혈압약 먹는 시간 질문", "preview": "아침에 먹는 게 좋은지...", "createdAt": "2026-09-16T09:10:00+09:00", "updatedAt": "2026-09-16T09:12:00+09:00" } ] }
 ```
-날짜별 여러 대화 구조로 확정될 때만 구현 (REQ-077)
 - `createdAt` (10/12 수인): 날짜와 카드에 보이는 시각은 대화를 시작한 시각 기준
+- (제안, 11/2) `?month=` 응답은 `{ "dates": ["2026-09-16"] }`. `date`와 `month`는 둘 중 하나만, 형식이 틀리면 `400 VALIDATION_ERROR`
+- (제안, 11/2) `title`은 고친 제목, 없으면 저장된 첫 질문 앞 30자, 그것도 없으면 "대화". `preview`는 첫 질문 앞 60자. 1층이 잡은 질문은 원문이 없어 쓰지 않음
+- 1단계는 하루 한 대화라 `?date=` 목록은 보통 1개
 
-### H-5. 대화 제목 수정 `PATCH /chat/sessions/{id}` ⚪
+### H-5. 대화 제목 수정 `PATCH /chat/sessions/{id}` 🟡
 
 ```json
 { "title": "혈압약 복용 시간" }
 ```
+- (제안, 11/2) 앞뒤 공백을 지운 뒤 1~30자, 벗어나면 `400 VALIDATION_ERROR`. 응답 `200` `{ "sessionId": 301, "title": "혈압약 복용 시간" }`. 남의 대화는 `404`
 
 ### H-6. 대화 삭제 `DELETE /chat/sessions/{id}`
 

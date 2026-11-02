@@ -39,3 +39,9 @@ class ContextCreateRequest(CamelModel):
     analysis_id: int
     context: ChatContext | None = None
     client_request_id: RequestId
+
+
+class SessionTitleRequest(CamelModel):
+    """H-5. title은 앞뒤 공백을 지운 뒤 1~30자"""
+
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=30)]

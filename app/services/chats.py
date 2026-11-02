@@ -8,7 +8,7 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from starlette import status
@@ -47,6 +47,12 @@ ANSWER_TIMEOUT_SEC = JOB_LIMIT_SEC
 STALE_SEC = 30  # 만드는 중으로 이보다 오래된 답 줄은 다시 시도 때 지우고 새로 만듦 (명세서 H-3)
 USABLE = (MatchStatus.AUTO, MatchStatus.USER_CONFIRMED)
 DRUG_SOURCE = "식약처 의약품 허가정보"  # 근거 번호 D:<약코드>:S12 (허가정보 문장)
+
+
+# CB-03 대화 카드 (제안). 제목을 고치지 않은 대화는 첫 질문 앞부분을 보임
+TITLE_MAX = 30
+PREVIEW_MAX = 60
+DEFAULT_TITLE = "대화"
 
 
 def _now() -> datetime:
@@ -97,6 +103,54 @@ async def today(user: User) -> dict[str, Any]:
         "hasHistory": await repo.has_session(user),
         "safetyModeUntil": until.isoformat() if until else None,
     }
+
+
+def _kst_midnight(d: date) -> datetime:
+    return datetime(d.year, d.month, d.day, tzinfo=config.TIMEZONE)
+
+
+async def days_with_sessions(user: User, month: str) -> dict[str, Any]:
+    """H-4 ?month=2026-09: 그달에 대화를 시작한 날짜 (CB-02)"""
+    try:
+        first = datetime.strptime(month, "%Y-%m").date()
+    except ValueError as e:
+        raise _bad_period("month") from e
+    next_first = (first + timedelta(days=32)).replace(day=1)
+    rows = await repo.sessions_between(user, _kst_midnight(first), _kst_midnight(next_first))
+    return {"dates": sorted({r.created_at.astimezone(config.TIMEZONE).date().isoformat() for r in rows})}
+
+
+async def sessions_on(user: User, day: str) -> dict[str, Any]:
+    """H-4 ?date=2026-09-16: 그날 시작한 대화 (CB-03). 제목을 고치지 않았으면 첫 질문 앞부분"""
+    try:
+        d = datetime.strptime(day, "%Y-%m-%d").date()
+    except ValueError as e:
+        raise _bad_period("date") from e
+    rows = await repo.sessions_between(user, _kst_midnight(d), _kst_midnight(d + timedelta(days=1)))
+    first = await repo.first_questions([r.id for r in rows])
+    return {
+        "items": [
+            {
+                "sessionId": r.id,
+                "title": r.title or first.get(r.id, "")[:TITLE_MAX] or DEFAULT_TITLE,
+                "preview": first.get(r.id, "")[:PREVIEW_MAX],
+                "createdAt": r.created_at.astimezone(config.TIMEZONE).isoformat(),
+                "updatedAt": r.updated_at.astimezone(config.TIMEZONE).isoformat(),
+            }
+            for r in rows
+        ]
+    }
+
+
+def _bad_period(field: str) -> AppError:
+    return AppError(status.HTTP_400_BAD_REQUEST, "VALIDATION_ERROR", "날짜 형식이 맞지 않아요.", field=field)
+
+
+async def rename_session(user: User, session_id: int, title: str) -> dict[str, Any]:
+    """H-5 대화 제목 수정"""
+    s = await _session(user, session_id)
+    await repo.set_title(s.id, title)
+    return {"sessionId": s.id, "title": title}
 
 
 async def delete_session(user: User, session_id: int) -> None:

@@ -23,6 +23,22 @@ class ChatRepository:
     async def last_session_since(self, user: User, since: datetime) -> ChatSession | None:
         return await ChatSession.filter(user=user, created_at__gte=since).order_by("-id").first()
 
+    async def sessions_between(self, user: User, start: datetime, end: datetime) -> list[ChatSession]:
+        return await ChatSession.filter(user=user, created_at__gte=start, created_at__lt=end).order_by("-created_at")
+
+    async def first_questions(self, session_ids: list[int]) -> dict[int, str]:
+        """대화마다 저장된 첫 질문. 1층이 잡은 질문은 원문이 없어 건너뜀"""
+        rows = (
+            await ChatMessage.filter(session_id__in=session_ids, role=MessageRole.USER)
+            .exclude(content="")
+            .order_by("-id")
+            .values("session_id", "content")
+        )
+        return {r["session_id"]: r["content"] for r in rows}  # 오래된 줄이 뒤에 와서 첫 질문이 남음
+
+    async def set_title(self, session_id: int, title: str) -> None:
+        await ChatSession.filter(id=session_id).update(title=title)
+
     async def has_session(self, user: User) -> bool:
         return await ChatSession.filter(user=user).exists()
 

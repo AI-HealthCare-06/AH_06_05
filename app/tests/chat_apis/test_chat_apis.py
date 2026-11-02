@@ -116,6 +116,49 @@ class TestSessions(ChatCase):
         s = await ChatSession.get(id=sid)
         assert (s.context_type, s.context_ref) == ("warning", 9001)
 
+    async def test_session_history_by_month_and_date(self):
+        """H-4: ?month=는 기록 있는 날짜, ?date=는 그날 대화. 날짜는 대화를 시작한 때(한국 시간). 제목이 없으면 첫 질문 앞부분"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f20@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "가슴이 조이고 숨이 차요", crid="q-e")  # 1층: 원문 없음
+            long_q = "혈압약을 아침에 먹는 게 좋은지 저녁에 먹는 게 좋은지 궁금해서 여쭤봐요 정말로요"
+            await self.ask(client, headers, sid, long_q, crid="q-1")
+            old = await self.session(client, headers, crid="s-2")
+            at = datetime(2026, 9, 16, 23, 30, tzinfo=config.TIMEZONE)
+            await ChatSession.filter(id=old).update(created_at=at)
+            today = datetime.now(config.TIMEZONE).date()
+
+            res = await client.get(f"{API}?month={today:%Y-%m}", headers=headers)
+            assert res.status_code == 200 and res.json() == {"dates": [today.isoformat()]}
+            assert (await client.get(f"{API}?month=2026-09", headers=headers)).json() == {"dates": ["2026-09-16"]}
+
+            items = (await client.get(f"{API}?date={today}", headers=headers)).json()["items"]
+            assert [i["sessionId"] for i in items] == [sid]
+            assert items[0]["title"] == long_q[:30] and items[0]["preview"] == long_q[:60]
+            assert items[0]["createdAt"] and items[0]["updatedAt"]
+            empty = (await client.get(f"{API}?date=2026-09-16", headers=headers)).json()["items"][0]
+            assert empty["sessionId"] == old and empty["title"] == "대화" and empty["preview"] == ""
+
+            for bad in ("", "?date=2026-13-40", "?month=2026", f"?date={today}&month=2026-09"):
+                assert (await client.get(f"{API}{bad}", headers=headers)).status_code == 400, bad
+
+    async def test_session_title_update(self):
+        """H-5: 앞뒤 공백을 지운 뒤 1~30자. 남의 대화는 404"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f21@example.com")
+            h2, _ = await self.auth(client, "f22@example.com")
+            sid = await self.session(client, headers)
+            res = await client.patch(f"{API}/{sid}", json={"title": " 혈압약 복용 시간 "}, headers=headers)
+            assert res.status_code == 200 and res.json() == {"sessionId": sid, "title": "혈압약 복용 시간"}
+            today = datetime.now(config.TIMEZONE).date()
+            items = (await client.get(f"{API}?date={today}", headers=headers)).json()["items"]
+            assert items[0]["title"] == "혈압약 복용 시간"
+            for title in ("   ", "가" * 31):
+                res = await client.patch(f"{API}/{sid}", json={"title": title}, headers=headers)
+                assert res.status_code == 400 and res.json()["error"]["code"] == "VALIDATION_ERROR"
+            assert (await client.patch(f"{API}/{sid}", json={"title": "남"}, headers=h2)).status_code == 404
+
     async def test_other_users_data_is_404(self):
         async with self.client() as client:
             h1, u1 = await self.auth(client, "c3@example.com")
