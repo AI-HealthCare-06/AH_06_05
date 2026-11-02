@@ -813,6 +813,24 @@ class TestFixedInfo(ChatCase):
         assert set(w.names) == {base_name(PRODUCTS[2][1]), "아스피린프로텍트정100밀리그람"}  # 수출명은 뗌
         assert w.summary == "함께 드시면 안 되는 약이에요"
 
+    async def test_single_drug_warnings_are_passed_separately(self):
+        """노인주의처럼 약 하나짜리 경고는 other_warnings로. ⑤의 약 두 개짜리(pair_warnings)와 섞지 않음 (11/2 멘토 피드백)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f33@example.com")
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            (a,) = await PrescriptionItem.filter(prescription=rx)
+            await AnalysisWarning.create(
+                analysis_id=aid, warning_type="elderly", severity="caution", item_a=a,
+                summary="어르신이 조심해야 하는 약이에요", source="심평원 DUR 노인주의",
+            )  # fmt: skip
+            sid = await self.session(client, headers, analysisId=aid)
+            await self.ask(client, headers, sid, "이번 분석에서 가장 조심할 건 뭔가요?")
+        info = self.fake.calls[0]["info"]  # 답은 가짜라 고정 정보만 봄. 답 글은 test_answer에서
+        assert info.pair_warnings == [] and len(info.other_warnings) == 1
+        assert info.other_warnings[0].names == (base_name(PRODUCTS[0][1]),)
+        assert info.other_warnings[0].summary == "어르신이 조심해야 하는 약이에요"
+
     async def test_safety_card_is_saved_and_returned(self):
         """점검 결과로 답하면 answerType은 normal, safetyCard는 H-2에 그대로 (명세서 v1.5 초안 H-2)"""
         card = {"analysisId": 7, "warningIds": [31, 32]}

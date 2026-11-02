@@ -23,10 +23,11 @@ class UserDrug:
 
 @dataclass
 class PairWarning:
-    """분석의 약 두 개짜리 경고 (병용금기, 동일성분, 효능군 중복). 문장은 점검 템플릿 그대로 (NFR-032)"""
+    """분석의 경고. 약 두 개짜리(병용금기, 동일성분, 효능군 중복)가 기본이고, 분석 전체를 물을 때는 약 하나짜리
+    (노인주의, 연령금기, 하루 최대량, 여러 약 복용)도 같은 모양으로 씀. 문장은 점검 템플릿 그대로 (NFR-032)"""
 
     id: int  # analysis_warnings.id (safetyCard warningIds)
-    names: tuple[str, str]  # 분석 화면과 같은 처방 이름
+    names: tuple[str, ...]  # 분석 화면과 같은 처방 이름 (약 하나짜리는 하나)
     summary: str
 
 
@@ -42,6 +43,8 @@ class FixedInfo:
     analysis_id: int | None = None  # 고정 정보를 가져온 분석
     # ⑤ 먹는 약끼리 묻는 질문에 그대로 보여 줄 경고 (AI에게는 보내지 않음, 설계 메모 7-12)
     pair_warnings: list[PairWarning] = field(default_factory=list)
+    # 약 하나짜리 경고 (노인주의, 연령금기, 하루 최대량, 여러 약 복용). 분석 칩처럼 분석 전체를 물을 때만 보여 줌 (11/2 멘토 피드백)
+    other_warnings: list[PairWarning] = field(default_factory=list)
     # "이 약 물어보기"로 붙인 맥락 카드의 약 이름. 질문의 "이 약"을 이 약으로 풀 때 씀 (AI에게는 지시어 풀이로만 감, 11/2)
     focus_drug: str | None = None
     # "이 경고 챗봇에 물어보기"로 붙인 맥락 카드의 경고 번호. ⑤ 점검 결과에서 이 경고만 보여 줌 (11/2)

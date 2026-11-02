@@ -417,17 +417,20 @@ def _item_name(it: PrescriptionItem) -> str:
     return display_name(it.drug.item_name) if it.drug else it.raw_name  # 분석 화면(R-4)과 같은 이름
 
 
-async def _pair_warnings(aid: int) -> list[PairWarning]:
-    rows = (
-        await AnalysisWarning.filter(analysis_id=aid, warning_type__in=PAIR_WARNINGS)
-        .order_by("id")
-        .prefetch_related("item_a__drug", "item_b__drug")
-    )
-    return [
+async def _pair_warnings(aid: int) -> tuple[list[PairWarning], list[PairWarning]]:
+    """(약 두 개짜리 경고, 약 하나짜리 경고). 처방을 지워 약이 빠진 경고는 뺌"""
+    rows = await AnalysisWarning.filter(analysis_id=aid).order_by("id").prefetch_related("item_a__drug", "item_b__drug")
+    pairs = [
         PairWarning(w.id, (_item_name(w.item_a), _item_name(w.item_b)), w.summary or "")
         for w in rows
-        if w.item_a and w.item_b  # 처방을 지워 약이 빠진 경고는 뺌
+        if w.warning_type in PAIR_WARNINGS and w.item_a and w.item_b
     ]
+    singles = [
+        PairWarning(w.id, (_item_name(w.item_a),), w.summary or "")
+        for w in rows
+        if w.warning_type not in PAIR_WARNINGS and w.item_a
+    ]
+    return pairs, singles
 
 
 # ── 고정 정보 (설계 메모 7-11) ─────────────────────────────────────────────────────────────
@@ -502,7 +505,7 @@ async def fixed_info(user: User, s: ChatSession) -> FixedInfo:
     if aid is None:
         return info
     info.analysis_id = aid
-    info.pair_warnings = await _pair_warnings(aid)
+    info.pair_warnings, info.other_warnings = await _pair_warnings(aid)
 
     rx_ids = await AnalysisPrescription.filter(analysis_id=aid).values_list("prescription_id", flat=True)
     items = (

@@ -793,19 +793,38 @@ async def test_this_drug_in_permit_becomes_drug_name():
 
 
 @sync
-async def test_analysis_chip_answers_with_guide_without_ai():
-    """분석 칩은 근거 검색과 답 AI 없이 분석 결과 화면 안내로. AI가 허가정보를 분석 결론처럼 말함 (10/27 측정 3번 중 3번)"""
+async def test_analysis_chip_without_warnings_says_what_was_checked():
+    """분석 칩은 근거 검색과 답 AI 없이 답함(AI가 허가정보를 분석 결론처럼 말함, 10/27 측정 3번 중 3번).
+    경고가 없으면 점검한 약과 기준, 점검하지 않는 것을 적음. "분석 화면에서 확인하세요"만으로 끝내지 않음 (11/2 멘토 피드백)"""
     chat, search = FakeChat(classify=classified(category="out_of_scope")), FakeSearch()
     r = await answer("이번 분석에서 가장 조심할 건 뭔가요?", S0, [], chat, search=search)
-    assert (r.answer_type, r.content) == ("normal", ANALYSIS_GUIDE)
-    assert "answer" not in chat.calls and search.calls == [] and r.sources == []
+    assert r.answer_type == "normal" and r.content != ANALYSIS_GUIDE
+    assert "노바스크정5밀리그람, 다이아벡스정500밀리그램 2개를 점검했어요" in r.content
+    assert "기준에 걸린 항목은 없었어요" in r.content and "점검하지 않아요" in r.content
+    assert "answer" not in chat.calls and search.calls == [] and r.sources == [] and r.safety_card is None
 
 
 @sync
-async def test_analysis_guide_takes_reworded_chip():
+async def test_analysis_chip_takes_reworded_chip_and_falls_back_without_drugs():
     chat = FakeChat(classify=classified(category="out_of_scope"))
     r = await answer("이번 분석에서 제일 주의할 약이 뭐예요?", S0, [], chat, search=FakeSearch())
-    assert r.content == ANALYSIS_GUIDE
+    assert "2개를 점검했어요" in r.content
+    r = await answer("이번 분석에서 제일 주의할 약이 뭐예요?", replace(S0, drugs=[]), [], chat, search=FakeSearch())
+    assert r.content == ANALYSIS_GUIDE  # 점검한 약이 없으면 적을 것이 없어 화면 안내
+
+
+ELDERLY = PairWarning(41, ("노바스크정5밀리그람",), "어르신이 조심해야 하는 약이에요")
+
+
+@sync
+async def test_analysis_chip_shows_single_drug_warnings():
+    """약 두 개짜리 경고가 없고 노인주의 같은 약 하나짜리만 있으면 그것을 ⑤와 같은 모양으로 답하고 카드를 붙임 (11/2)"""
+    chat = FakeChat(classify=classified(category="out_of_scope"))
+    info = replace(S0, analysis_id=7, other_warnings=[ELDERLY])
+    r = await answer("이번 분석에서 가장 조심할 건 뭔가요?", info, [], chat, search=FakeSearch())
+    assert r.content.splitlines()[0] == "분석에서 확인된, 같이 먹을 때 주의할 점이에요."
+    assert "노바스크정5밀리그람: 어르신이 조심해야 하는 약이에요" in r.content
+    assert r.safety_card == {"analysisId": 7, "warningIds": [41]} and "answer" not in chat.calls
 
 
 # ⑤ 이미 계산된 점검 결과로 답하기 (설계 메모 7-12, #116 safetyCard, 10/26 수인 결정)
@@ -961,6 +980,13 @@ async def test_analysis_chip_with_warnings_answers_with_check_result():
     chat = FakeChat(classify=classified(category="out_of_scope"))
     r = await answer("이번 분석에서 가장 조심할 건 뭔가요?", S_WARN, [], chat, search=FakeSearch())
     assert r.safety_card == {"analysisId": 7, "warningIds": [31, 32]} and "answer" not in chat.calls
+    # 분석 전체를 물으면 약 하나짜리 경고도 뒤에 붙음. 약끼리 묻는 질문에는 약 두 개짜리만 (11/2)
+    both = replace(S_WARN, other_warnings=[ELDERLY])
+    r = await answer("이번 분석에서 가장 조심할 건 뭔가요?", both, [], chat, search=FakeSearch())
+    assert r.safety_card["warningIds"] == [31, 32, 41] and "어르신이 조심해야" in r.content
+    own = FakeChat(classify=classified(about_user_drugs=True))
+    r = await answer("같이 먹으면 안 되는 약 있어?", both, [], own, search=FakeSearch())
+    assert r.safety_card["warningIds"] == [31, 32]
 
 
 @sync
