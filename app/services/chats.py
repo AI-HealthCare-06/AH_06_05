@@ -39,7 +39,7 @@ from app.services.drug_names import display_name
 from app.services.guide import lifestyle, medication
 from app.services.ocr import clova
 from app.services.ocr.mask import mask_numbers
-from app.services.prescriptions import has_health_consent, search_drugs, validate_uploads
+from app.services.prescriptions import check_photo_limit, has_health_consent, search_drugs, validate_uploads
 
 logger = logging.getLogger(__name__)
 repo = ChatRepository()
@@ -396,6 +396,7 @@ async def add_photo(
             status.HTTP_403_FORBIDDEN, "CONSENT_REQUIRED", "건강 정보 사용에 동의해야 사진을 보낼 수 있어요."
         )
     await _check_daily_limit(user)
+    await check_photo_limit(user)  # O-1과 합산한 하루 사진 상한 (CLOVA 호출 전에)
     try:
         result = await chat_photo.identify(blob)
     except clova.ClovaError as e:

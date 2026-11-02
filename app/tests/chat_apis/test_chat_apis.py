@@ -1029,6 +1029,17 @@ class TestFixedInfo(ChatCase):
         assert items[-1]["answerType"] == "no_evidence" and items[-1]["imageResult"] == "unreadable"
         assert "글자로 적어" in items[-1]["content"] and "chips" not in items[-1]
 
+    async def test_photo_pdf_is_read_like_a_photo(self):
+        """PDF도 사진과 같게 처리 (첫 쪽, 설계 메모 4-9)"""
+        p1, p2, p3 = self.photo_patches(self.ocr_text("노바스크정5밀리그람"))
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "h7@example.com")
+            sid = await self.session(client, headers)
+            with p1, p2, p3:
+                res = await self.photo(client, headers, sid, "p-pdf", content=b"%PDF-1.4\n" + b"0" * 40)
+            items = await self.items(client, headers, sid)
+        assert res.status_code == 201 and items[-1]["imageResult"] == "drug"
+
     async def test_photo_same_request_id_makes_one_pair_and_stays_out_of_history(self):
         p1, p2, p3 = self.photo_patches()
         async with self.client() as client:
@@ -1041,6 +1052,18 @@ class TestFixedInfo(ChatCase):
             items = await self.items(client, headers, sid)
         assert first == again and [i["role"] for i in items[:2]] == ["user", "assistant"] and len(items) == 4
         assert self.fake.calls[0]["history"] == []  # 사진 안내는 다음 답의 기억에 넣지 않음
+
+    async def test_photo_counts_toward_the_daily_ocr_limit(self):
+        """챗봇 사진도 O-1과 같은 하루 사진 상한에 합산해 챗봇으로 CLOVA를 무제한 부르지 못하게 함. 막히면 OCR을 부르지 않음 (점검, 11/2)"""
+        p1, p2, p3 = self.photo_patches()
+        with patch.object(config, "OCR_DAILY_FILE_LIMIT", 2):
+            async with self.client() as client:
+                headers, _ = await self.auth(client, "h6@example.com")
+                sid = await self.session(client, headers)
+                with p1, p2, p3:
+                    codes = [(await self.photo(client, headers, sid, f"p-l{i}")).status_code for i in range(3)]
+                    over = await self.photo(client, headers, sid, "p-l3")
+        assert codes == [201, 201, 429] and over.json()["error"]["code"] == "DAILY_LIMIT_EXCEEDED"
 
     async def test_photo_rejects_bad_file_without_consent_and_ocr_failure(self):
         p1, p2, p3 = self.photo_patches()
