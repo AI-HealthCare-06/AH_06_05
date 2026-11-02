@@ -144,7 +144,8 @@ async def test_target_drug_narrows_search_and_profile_diseases_are_passed():
     """대상 약이 있으면 그 약만, 질환은 처방전과 내 정보를 합친 id (#99 정할 것 4번, 10/20)"""
     search = FakeSearch()
     cls = classified(target_drug="노바스크정5밀리그람", target_source="question")
-    await answer("노바스크는 언제 먹어요?", S0, [], FakeChat(classify=cls), search=search)
+    # 먹는 때를 묻는 질문은 이제 처방에서 답해(11/2) 근거를 찾지 않으므로, 부작용 질문으로 범위를 봄
+    await answer("노바스크 부작용이 뭐예요?", S0, [], FakeChat(classify=cls), search=search)
     assert search.calls[0]["drugs"] == ["641900040"] and search.calls[0]["diseases"] == ["HTN", "DM2"]
 
 
@@ -1144,3 +1145,41 @@ async def test_drug_match_skips_my_drugs_generic_words_and_not_found():
     r = await answer("이상한정 먹어도 돼요?", S0, [], FakeChat(classify=cls), search=search, match=match)
     assert match.calls == ["이상한정"] and r.answer_type != "clarify" and r.drug_match is None
     assert search.calls[0]["drugs"] == ["641900040", "644300010"]
+
+
+@sync
+async def test_sentence_recommending_another_drug_instead_is_dropped():
+    """다른 약을 대신 권하는 문장만 뺌. 지시문 규칙이 있어도 실제 답 2번 중 1번 나옴 (11/2 골든셋 C3). 나머지 안내는 남김"""
+    r = await _guarded(
+        "이부프로펜은 신장 기능을 악화시킬 수 있어요. 이부프로펜 대신 아세트아미노펜을 고려하는 것이 좋습니다. 약사에게 확인해 주세요."
+    )
+    assert r.answer_type == "normal" and "아세트아미노펜" not in r.content and "악화시킬 수 있어요" in r.content
+    r = await _guarded("그 약 대신 타이레놀을 드세요.")
+    assert r.answer_type == "no_evidence"  # 남는 글이 없으면 근거 없음
+    r = await _guarded("보호자가 대신 약을 받아 오셔도 돼요. 약사에게 확인해 주세요.")
+    assert "대신 약을 받아" in r.content  # 다른 약을 권하는 말이 아님
+
+
+@sync
+async def test_when_to_take_answers_from_the_prescription_without_ai():
+    """먹는 때를 물으면 처방에 적힌 먹는 법으로 답함 (AI 없음, 출처 처방전). 허가정보에는 아침, 저녁이 없어 근거 없음이 됨 (11/2 골든셋 N1)"""
+    chat, search = (
+        FakeChat(classify=classified(target_drug="노바스크정5밀리그람", target_source="question")),
+        FakeSearch(),
+    )
+    r = await answer("혈압약은 아침에 먹어요 저녁에 먹어요?", S0, [], chat, search=search)
+    assert r.answer_type == "normal" and "1일 1회 아침" in r.content and "노바스크정5밀리그람" in r.content
+    assert r.sources == ["P:641900040"] and "answer" not in chat.calls and search.calls == []
+
+
+@sync
+async def test_when_to_take_falls_back_to_evidence_without_prescribed_timing():
+    """처방 먹는 법에 먹는 때가 없거나 약을 특정하지 못하면 지금처럼 근거 검색"""
+    no_time = replace(S0, drugs=[replace(S0.drugs[0], how="1일 1회")])
+    chat = FakeChat(classify=classified(target_drug="노바스크정5밀리그람", target_source="question"))
+    search = FakeSearch()
+    await answer("노바스크는 언제 먹어요?", no_time, [], chat, search=search)
+    assert search.calls  # 근거를 찾으러 감
+    chat2, search2 = FakeChat(classify=classified()), FakeSearch()
+    await answer("약은 언제 먹는 게 좋나요?", S0, [], chat2, search=search2)
+    assert search2.calls  # 약 하나를 특정하지 못함

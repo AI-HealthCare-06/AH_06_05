@@ -1,6 +1,6 @@
 """골든셋 챗봇 문항을 진짜 OpenAI와 로컬 근거 자료로 돌려 결과 표를 출력함 (#99, CI 밖)
 
-실행: DB_HOST=localhost PGDATABASE=postgres uv run python scripts/chatbot/run_golden.py [--repeat 2] [--only N1,B3] [--judge]
+실행: DB_HOST=localhost PGDATABASE=postgres uv run python scripts/chatbot/run_golden.py [--repeat 2] [--only N1,B3] [--judge] [--full]
 먼저 마이그레이션과 근거 조각 넣기(scripts/rag/load_evidence_chunks.py)를 마치고 .env에 OPENAI_API_KEY가 있어야 함. 키 값은 출력하지 않음.
 문항과 사용자 상황은 docs/testing/golden_set.md v1.0 그대로. 갈래(답 유형)는 기대값과 자동으로 비교하고,
 답 내용(반드시 들어갈 것, 들어가면 안 되는 것)은 사람이 읽고 판단하도록 앞부분을 표에 남김 (AGENTS.md: AI 부분은 결과 표로).
@@ -11,6 +11,7 @@ A1의 병용금기 경고는 분석이 있어야 생겨서, 점검 결과 카드
 import argparse
 import asyncio
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +26,8 @@ from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug  # noq
 from app.services.chatbot.llm import ChatClient, LLMError, Usage, make_client  # noqa: E402
 from app.services.chatbot.pipeline import answer  # noqa: E402
 
-SHOW = 90  # 답 앞부분을 표에 남길 글자 수
+SHOW = 90  # 답 앞부분을 표에 남길 글자 수 (--full이면 표 아래에 답 전체)
+GOLDEN_VERSION = "v1.0"  # docs/testing/golden_set.md 머리 버전
 
 # 골든셋 2절 사용자 상황 (약 이름과 코드는 2절 표 그대로)
 S0 = FixedInfo(
@@ -49,13 +51,17 @@ _S1_DRUGS = [
     UserDrug("이디졸캡슐100밀리그램(이트라코나졸)", "이트라코나졸", "", "", "662504490"),
     UserDrug("자나팜정1밀리그램(알프라졸람)", "알프라졸람", "", "", "651901760"),
 ]
+# 골든셋 2절 "S0의 약 대신": 약만 바꾸고 나이와 질환은 S0 그대로 (#156)
 S1 = FixedInfo(
     age=72,
+    diseases=list(S0.diseases),
+    disease_ids=list(S0.disease_ids),
     drugs=_S1_DRUGS,
     analysis_id=1,
     # 가정 경고: 카드가 붙는지만 봄. 실제 경고 문장은 분석의 DUR 조회에서 나오므로 여기서는 가정이라고만 적음
     pair_warnings=[PairWarning(1, (_S1_DRUGS[0].name, _S1_DRUGS[1].name), "(시험용 가정 경고)")],
 )
+# 나이 72는 골든셋 2절에 없는 가정(S0과 같게 둠, #156). 처방 약은 없음
 S9 = FixedInfo(age=72, diseases=["골관절염", "만성신장병"], disease_ids=["OA", "CKD"])
 
 
@@ -203,18 +209,31 @@ async def judge(it: Item, content: str | None, client: ChatClient, usage: Usage)
     return Verdict(all(oks) and not any(hits), f"꼭 {sum(oks)}/{len(oks)}, 금지 {sum(hits)}/{len(hits)}", notes)
 
 
-async def run(items: list[Item], repeat: int, judged: bool = False) -> int:
+async def run(items: list[Item], repeat: int, judged: bool = False, full: bool = False) -> int:
     client = make_client()
-    print("| 문항 | 기대 | 결과 (갈래별 횟수) | 일치 | 꼭, 금지 지킴 | 첫 답 앞부분 |")
-    print("|---|---|---|---|---|---|")
-    total, notes = 0, []
+    print(f"골든셋 {GOLDEN_VERSION}, 모델 {config.OPENAI_CHAT_MODEL}, 문항마다 {repeat}번\n")
+    print("| 문항 | 기대 | 결과 (갈래별 횟수) | 일치 | 꼭, 금지 지킴 | 시간(초) | 토큰 | 첫 답 앞부분 |")
+    print("|---|---|---|---|---|---|---|---|")
+    total, notes, whys, answers = 0, [], [], []
     for it in items:
         got: Counter[str] = Counter()
         first, kept, scored = "", 0, 0
+        secs: list[float] = []
+        tokens = 0
+        want = it.want + ("+카드" if it.card else "")
         for n in range(repeat):
+            started = time.perf_counter()
             r = await answer(it.question, it.info, [], client)
+            secs.append(time.perf_counter() - started)
+            tokens += r.usage.prompt_tokens + r.usage.completion_tokens
             kind = r.answer_type + ("+카드" if r.safety_card else "")
             got[kind] += 1
+            if kind != want:  # 어긋난 문항은 근거 없음 이유와 판정을 같이 (#156)
+                whys.append(
+                    f"{it.id} {n + 1}번째: {kind}, 갈래 {r.route.kind}, 이유 {r.evidence_reason}, 판정 {r.evidence_verdicts}"
+                )
+            if full:
+                answers.append(f"{it.id} {n + 1}번째 ({kind}): {r.content or '(화면 고정 카드)'}")
             if n == 0:
                 first = (r.content or "(화면 고정 카드)").replace("\n", " ")[:SHOW]
             v = await judge(it, r.content, client, Usage()) if judged else None
@@ -222,18 +241,22 @@ async def run(items: list[Item], repeat: int, judged: bool = False) -> int:
                 scored += 1
                 kept += v.passed
                 notes += [f"{it.id} {n + 1}번째 ({v.summary}): {x}" for x in v.notes]
-        want = it.want + ("+카드" if it.card else "")
         hit = got[want]
         total += hit
         result = ", ".join(f"{k} {v}" for k, v in got.most_common())
         rule = f"{kept}/{scored}" if scored else "-"
-        print(f"| {it.id} | {want} | {result} | {hit}/{repeat} | {rule} | {first} |")
+        sec = f"{sum(secs) / len(secs):.1f}"
+        print(f"| {it.id} | {want} | {result} | {hit}/{repeat} | {rule} | {sec} | {tokens // repeat} | {first} |")
     print(f"\n일치 {total}/{len(items) * repeat}.", end=" ")
     if judged:
         print("꼭, 금지는 LLM 채점(같은 모델이라 후할 수 있음). 처음에는 아래 이유를 사람이 답과 대조")
         print("\n".join(notes) or "못 지킨 항목 없음")
     else:
         print("답 내용은 골든셋 3절과 사람이 대조 (--judge로 LLM 채점)")
+    if whys:
+        print("\n어긋난 문항의 이유\n" + "\n".join(whys))
+    if answers:
+        print("\n답 전체\n" + "\n\n".join(answers))
     return total
 
 
@@ -244,6 +267,7 @@ async def main() -> int:
     parser.add_argument(
         "--judge", action="store_true", help="꼭 들어갈 것, 들어가면 안 될 것을 LLM으로 채점 (답마다 호출 1번 더)"
     )
+    parser.add_argument("--full", action="store_true", help="표 아래에 답 전체를 찍음 (꼭, 금지를 사람이 대조할 때)")
     args = parser.parse_args()
     if not config.OPENAI_API_KEY:
         print("OPENAI_API_KEY가 비어 있음")
@@ -252,7 +276,7 @@ async def main() -> int:
     items = [it for it in ITEMS if not only or it.id in only]
     await Tortoise.init(config=TORTOISE_ORM)
     try:
-        await run(items, args.repeat, args.judge)
+        await run(items, args.repeat, args.judge, args.full)
     finally:
         await Tortoise.close_connections()
     return 0

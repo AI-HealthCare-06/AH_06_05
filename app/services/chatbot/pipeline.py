@@ -271,6 +271,30 @@ def _check_reply(question: str, cls: dict[str, Any], info: FixedInfo, r: Route, 
     return Reply("normal", _check_result(shown), r, usage=usage, safety_card=card)
 
 
+# 먹는 때를 묻는 말 ("아침에 먹어요 저녁에 먹어요?", "언제 먹어요?", "밥 먹고 먹어요?")
+_WHEN = re.compile(
+    r"(아침|점심|저녁|언제|몇\s*시|자기\s*전|밤|식전|식후|밥\s*(?:먹고|먹기\s*전))\S*\s*\S*(먹|드시|드셔|복용)"
+)
+_PRESCRIBED_TIME = re.compile(r"(아침|점심|저녁|자기\s*전|취침|식전|식후|식사\s*중|공복)")
+
+
+def _prescribed_timing(question: str, cls: dict[str, Any], info: FixedInfo) -> tuple[str, str] | None:
+    """먹는 때를 묻고 그 약의 처방 먹는 법에 먹는 때가 적혀 있으면 처방대로 답함 (AI 없음, 출처 처방전 P:<약 코드>).
+    허가정보에는 아침, 저녁 같은 때가 없어 근거 없음이 됨 (11/2 골든셋 N1). 약을 하나로 특정하지 못하면 None"""
+    target = cls.get("target_drug") or ""
+    if not _WHEN.search(question) or not target:
+        return None
+    picked = [d for d in info.drugs if d.name[:3] in target or target[:3] in d.name]
+    if len(picked) != 1 or not _PRESCRIBED_TIME.search(picked[0].how or ""):
+        return None
+    d = picked[0]
+    text = (
+        f"처방에 적힌 {d.name}의 먹는 법은 {d.how}이에요.\n"
+        "처방대로 드시고, 먹는 시간을 바꾸고 싶으시면 약사나 의사와 먼저 상의해 주세요."
+    )
+    return text, f"P:{d.code}"
+
+
 def _analysis_reply(question: str, info: FixedInfo, r: Route, usage: Usage) -> Reply:
     """분석 칩에 ⑤(_check_reply)가 답하지 않았을 때(음식, 술 같은 점검하지 않는 말이 섞였거나 약 두 개짜리 경고가 없음).
     약끼리 경고와 약 하나짜리 경고를 함께 보고, 있으면 ⑤와 같은 모양으로 답하며 카드를 붙임. 둘 다 없을 때만 "걸린 항목이 없었어요".
@@ -329,6 +353,8 @@ async def answer(
     cls = r.classification or {}
     if (checked := _check_reply(question, cls, info, r, usage)) is not None:
         return checked
+    if r.kind == "medication" and (prescribed := _prescribed_timing(question, cls, info)):
+        return Reply("normal", prescribed[0], r, [prescribed[1]], usage=usage)
     if r.kind == "medication" and asks_this_analysis(question):
         return _analysis_reply(question, info, r, usage)
     if r.kind == "out_of_scope":

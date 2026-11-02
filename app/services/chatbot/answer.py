@@ -244,6 +244,19 @@ def _changes_drug(
     )
 
 
+# 다른 약을 대신 권하는 말 ("이부프로펜 대신 아세트아미노펜을 고려하세요"). 답 지시문에 금지가 있어도 나옴 (11/2 골든셋 C3, 2번 중 1번).
+# "보호자가 대신 약을 받아 오셔도"처럼 대신 뒤에 권하는 동사가 바로 오지 않으면 아님
+_SUBSTITUTE = re.compile(
+    r"대신\s*(?:에\s*)?[가-힣A-Za-z]+(?:을|를|이나|으로|로)?\s*(?:고려|드시|드셔|드세|복용|먹|사용|쓰시|권|추천)"
+)
+
+
+def drop_substitutes(content: str) -> str:
+    """다른 약을 대신 권하는 문장만 빼고 나머지를 돌려줌 (남는 글이 없으면 빈 글)"""
+    kept = [s for s in re.split(r"(?<=[.!?])\s+", content) if not _SUBSTITUTE.search(s)]
+    return " ".join(kept).strip()
+
+
 def output_guard(content: str, evidence: list[Evidence], info: FixedInfo) -> str | None:
     """근거 글과 고정 정보에 없는 숫자(number), 허가정보에 없는 빠뜨린 약 안내(missed), 양이나 복용을 바꾸라는 말(change),
     먹는 때(timing)가 있으면 그 종류.
@@ -344,6 +357,12 @@ async def write(
     draft = await _write(question, cls, info, past, first_turn, found, client, usage)
     if draft.content in (NO_EVIDENCE, *REFER.values()):
         return draft
+    kept = drop_substitutes(draft.content)
+    if kept != draft.content:
+        logger.warning("다른 약을 대신 권하는 문장을 뺌")  # 답 글은 건강 정보가 섞여 남기지 않음
+        if not kept:
+            return replace(_no_evidence(cls), blocked="substitute")
+        draft = replace(draft, content=kept)
     blocked = output_guard(draft.content, found.evidence if found else [], info)
     if blocked:
         logger.warning("출력 가드레일에 걸려 근거 없음으로 바꿈 (%s)", blocked)  # 답 글은 건강 정보가 섞여 남기지 않음

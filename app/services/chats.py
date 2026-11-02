@@ -387,7 +387,9 @@ def _sources(ids: list[str]) -> list[dict[str, str]]:
     titles: list[str] = []
     for i in ids:
         kind = i.split(":")[0]
-        titles += [DRUG_SOURCE] if kind == "D" else _fact_sources(i) if kind == "F" else []
+        titles += (
+            [DRUG_SOURCE] if kind == "D" else _fact_sources(i) if kind == "F" else ["처방전"] if kind == "P" else []
+        )
     return [{"title": t} for t in dict.fromkeys(titles)]
 
 
