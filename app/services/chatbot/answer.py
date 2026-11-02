@@ -263,14 +263,28 @@ def _changes_drug(
 
 # 다른 약을 대신 권하는 말 ("이부프로펜 대신 아세트아미노펜을 고려하세요"). 답 지시문에 금지가 있어도 나옴 (11/2 골든셋 C3, 2번 중 1번).
 # "보호자가 대신 약을 받아 오셔도"처럼 대신 뒤에 권하는 동사가 바로 오지 않으면 아님
-_SUBSTITUTE = re.compile(
-    r"대신\s*(?:에\s*)?[가-힣A-Za-z]+(?:을|를|이나|으로|로)?\s*(?:고려|드시|드셔|드세|복용|먹|사용|쓰시|권|추천)"
+# "대신" 뒤가 약일 때만 ("단 음료 대신 물을", "흰쌀밥 대신 잡곡밥을" 같은 생활습관 안내는 남김, #203 채연 리뷰).
+# 약으로 보는 말: 제형 어미(정, 캡슐, 시럽), 성분 이름 어미(펜, 핀, 프릴, 사르탄, 스타틴 등), "약", 영문 4글자 이상, 사용자의 약 이름과 성분
+_DRUG_WORD = (
+    r"(?:[가-힣A-Za-z0-9]*(?:정|캡슐|시럽|연고|패치|주사)"
+    r"|[가-힣]*(?:펜|센|낙|핀|틴|민|졸|롤|놀|프릴|사르탄|마이신|세틴|린|론|딘|돌|팜|람|마이드|콕시브|록시캄|스타틴|피린)"
+    r"|(?:다른\s*)?약|[A-Za-z]{4,})"
 )
+_SUBSTITUTE_TAIL = r"(?:을|를|이나|으로|로)?\s*(?:고려|드시|드셔|드세|복용|먹|사용|쓰시|권|추천)"
 
 
-def drop_substitutes(content: str) -> str:
+def drop_substitutes(content: str, info: FixedInfo | None = None) -> str:
     """다른 약을 대신 권하는 문장만 빼고 나머지를 돌려줌 (남는 글이 없으면 빈 글)"""
-    kept = [s for s in re.split(r"(?<=[.!?])\s+", content) if not _SUBSTITUTE.search(s)]
+    # 약 이름 앞 3글자 뒤에 나머지 이름이 이어짐 ("노바스" + "크를")
+    names = [
+        re.escape(k) + r"[가-힣A-Za-z0-9]*"
+        for d in (info.drugs if info else [])
+        for k in (d.name[:3], d.ingredient)
+        if k
+    ]
+    word = f"(?:{'|'.join(names)}|{_DRUG_WORD})" if names else _DRUG_WORD
+    pattern = re.compile(rf"대신\s*(?:에\s*)?{word}{_SUBSTITUTE_TAIL}")
+    kept = [s for s in re.split(r"(?<=[.!?])\s+", content) if not pattern.search(s)]
     return " ".join(kept).strip()
 
 
@@ -357,15 +371,24 @@ _CLASS_IN_TEXT = {
 _CLASS_IN_DRUG = {
     "ace": r"프릴|pril",
     "arb": r"사르탄|sartan",
-    "diuretic": r"티아지드|세미드|스피로노락톤|인다파미드|클로르탈리돈|thiazide|semide|spironolactone|indapamide|chlorthalidone",
+    "diuretic": (
+        r"티아지드|세미드|스피로노락톤|인다파미드|클로르탈리돈|아미로라이드|트리암테렌|에플레레논|메톨라존"
+        r"|thiazide|semide|spironolactone|indapamide|chlorthalidone|amiloride|triamterene|eplerenone|metolazone"
+    ),
     "beta": r"[가-힣]롤(?![가-힣])|olol|카르베딜롤|carvedilol",
-    "nsaid": r"프로펜|나프록센|페낙|콕시브|록시캄|아스피린|profen|naproxen|fenac|coxib|oxicam|aspirin",
-}
+    "nsaid": (
+        r"프로펜|나프록센|페낙|콕시브|록시캄|아스피린|케토롤락|에토돌락|메페남산|나부메톤|인도메타신|설린닥|니메술리드|탈니플루메이트"
+        r"|profen|naproxen|fenac|coxib|oxicam|aspirin|ketorolac|etodolac|mefenamic|nabumetone|indomethacin|sulindac|nimesulide"
+    ),
+}  # 케토롤락 등 빠진 약을 더함 (#203 채연 리뷰). 여전히 시작값이라 못 맞춘 약은 그 계열 문장이 빠질 수 있음
 _WITH = re.compile(r"병용|함께|같이|투여\s*중")
 
 
 def drop_other_class(evidence: list[Evidence], info: FixedInfo) -> list[Evidence]:
-    """사용자가 먹지 않는 계열과의 병용을 말하는 허가 문장을 뺌. 팩트표 근거는 그대로"""
+    """사용자가 먹지 않는 계열과의 병용을 말하는 허가 문장을 뺌. 팩트표 근거는 그대로.
+    먹는 약이 없으면 무엇을 먹지 않는지 알 수 없어 그대로 둠 (#203 채연 리뷰)"""
+    if not info.drugs:
+        return evidence
     mine = " ".join(f"{d.name} {d.ingredient}" for d in info.drugs)
     taken = {c for c, p in _CLASS_IN_DRUG.items() if re.search(p, mine, re.I)}
     out = []
@@ -409,7 +432,7 @@ async def write(
     draft = await _write(question, cls, info, past, first_turn, found, client, usage)
     if draft.content in (NO_EVIDENCE, *REFER.values()):
         return draft
-    kept = drop_substitutes(draft.content)
+    kept = drop_substitutes(draft.content, info)
     if kept != draft.content:
         logger.warning("다른 약을 대신 권하는 문장을 뺌")  # 답 글은 건강 정보가 섞여 남기지 않음
         if not kept:

@@ -298,10 +298,9 @@ def _prescribed_timing(question: str, cls: dict[str, Any], info: FixedInfo) -> t
     target = cls.get("target_drug") or ""
     if not _WHEN.search(question) or not target:
         return None
-    picked = [d for d in info.drugs if d.name[:3] in target or target[:3] in d.name]
-    if len(picked) != 1 or not _PRESCRIBED_TIME.search(picked[0].how or ""):
+    d = find_drug(target, info.drugs) or find_drug(question, info.drugs)  # 약 하나로 특정될 때만 (#203 채연 리뷰)
+    if d is None or not _PRESCRIBED_TIME.search(d.how or ""):
         return None
-    d = picked[0]
     text = (
         f"처방에 적힌 {d.name}의 먹는 법은 {d.how}이에요.\n"
         "처방대로 드시고, 먹는 시간을 바꾸고 싶으시면 약사나 의사와 먼저 상의해 주세요."

@@ -17,6 +17,7 @@ from app.services.chatbot.answer import (
     SPEECH,
     THANKS,
     clean_text,
+    drop_substitutes,
     output_guard,
 )
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
@@ -1191,6 +1192,25 @@ async def test_sentence_recommending_another_drug_instead_is_dropped():
     assert "대신 약을 받아" in r.content  # 다른 약을 권하는 말이 아님
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "단 음료 대신 물을 드세요.",
+        "흰쌀밥 대신 잡곡밥을 드시면 혈당 관리에 도움이 돼요.",
+        "소금 대신 허브를 사용해 보세요.",
+    ],
+)
+def test_lifestyle_substitutes_are_kept(content):
+    """약이 아닌 것을 대신 권하는 생활습관 안내는 남김 (#203 채연 리뷰)"""
+    assert drop_substitutes(content, S0) == content
+
+
+def test_substitute_uses_my_drug_names_too():
+    """사용자의 약 이름과 성분이 "대신" 뒤에 오면 약으로 봄"""
+    assert drop_substitutes("그것 대신 노바스크를 드세요.", S0) == ""
+    assert drop_substitutes("그것 대신 메트포르민을 드세요.", S0) == ""
+
+
 @sync
 async def test_when_to_take_answers_from_the_prescription_without_ai():
     """먹는 때를 물으면 처방에 적힌 먹는 법으로 답함 (AI 없음, 출처 처방전). 허가정보에는 아침, 저녁이 없어 근거 없음이 됨 (11/2 골든셋 N1)"""
@@ -1273,3 +1293,34 @@ async def test_permit_sentence_about_an_untaken_drug_class_is_not_sent():
         "노바스크 같이 먹으면 안 되는 약 있어요?", ace_user, [], chat2, search=FakeSearch(found(GRAPEFRUIT, ACE_LINE))
     )
     assert "ACE 저해제" in chat2.seen["answer"]
+
+
+NSAID_LINE = Evidence(
+    "D:641900040:S10",
+    "drug_permit",
+    "641900040",
+    None,
+    "S",
+    "상호작용",
+    "비스테로이드성 소염진통제와 병용 시 신장 기능이 나빠질 수 있다",
+)
+
+
+@sync
+async def test_other_class_filter_keeps_all_when_no_drugs_or_class_matched_by_name():
+    """먹는 약이 없으면 계열 문장을 지우지 않고, 케토롤락처럼 어미로 못 맞추는 소염진통제도 목록에 있어 그 계열 문장을 남김 (#203 채연 리뷰)"""
+    chat = FakeChat()
+    await answer(
+        "같이 먹으면 안 되는 약 있어요?",
+        replace(S0, drugs=[]),
+        [],
+        chat,
+        search=FakeSearch(found(ACE_LINE, NSAID_LINE)),
+    )
+    assert "ACE 저해제" in chat.seen["answer"] and "소염진통제" in chat.seen["answer"]
+    keto = replace(S0, drugs=[*S0.drugs, UserDrug("케토락정10밀리그램", "케토롤락트로메타민", "진통", "1일 3회 식후")])
+    chat2 = FakeChat()
+    await answer(
+        "노바스크 같이 먹으면 안 되는 약 있어요?", keto, [], chat2, search=FakeSearch(found(ACE_LINE, NSAID_LINE))
+    )
+    assert "ACE 저해제" not in chat2.seen["answer"] and "소염진통제" in chat2.seen["answer"]
