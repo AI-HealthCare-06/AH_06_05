@@ -37,6 +37,14 @@ COMBO = [
     ("카나브플러스정60/12.5mg_(1정)", "522000ATB"),
     ("카나브플러스정120/12.5mg_(1정)", "526800ATB"),
     ("코자엑스큐정10/50밀리그램_(1정)", "513900ATB"),
+    # 수인 리뷰(#188)에서 빠진다고 한 복합제: 성분코드를 약제급여목록 주성분명에서 뽑아 채움
+    ("세비엠에이치씨티정5/40/12.5밀리그램_(1정)", "519700ATB"),
+    ("텔미누보정40/2.5밀리그램_(1정)", "521200ATB"),
+    ("듀로텔정40/10밀리그램_(1정)", "629900ATB"),
+    ("로제텔정40/10/10밀리그램_(1정)", "702200ATB"),
+    ("일양로자탄플러스프로정_(1정)", "486900ATB"),
+    ("테베텐플러스정_(1정)", "460500ATB"),
+    ("아모잘탄정5/50밀리그램_(1정)", "503000ATB"),
 ]
 
 
@@ -90,3 +98,22 @@ def test_spironolactone_with_ckd_keeps_both_notices_and_chip():
     links = result["medicationLinks"]
     assert len(links) == 2
     assert all(link["requiresClinician"] for link in links)
+
+
+def test_spironolactone_htn_line_does_not_say_potassium_drops():
+    links = _links("I10", "알닥톤필름코팅정25밀리그람(스피로노락톤)_(25mg/1정)", "231101ATB")
+    text = " ".join(a["text"] for link in links for a in link["actions"])
+    assert "칼륨이 낮아질" not in text
+
+
+def test_finerenone_gets_chip_with_ckd_only():
+    name, ingr = "케렌디아정10밀리그램(피네레논)_(10mg/1정)", "729201ATB"
+    links = _links("N18", name, ingr)
+    assert links and all(link["requiresClinician"] for link in links)
+    assert _links("I10", name, ingr) == []
+
+
+def test_goal_recommendation_words_are_unchanged():
+    """목표 추천(challenges)이 쓰는 ingredient_words는 이번 수정으로 바뀌지 않음"""
+    assert lifestyle.ingredient_words("ACE억제제·ARB (에날라프릴, 로사르탄 등)") == {"에날라프릴", "로사르탄"}
+    assert lifestyle.ingredient_words("칼륨 보전 이뇨제·ACE억제제·ARB") == set()
