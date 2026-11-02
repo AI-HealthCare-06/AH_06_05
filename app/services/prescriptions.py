@@ -21,6 +21,7 @@ from tortoise.transactions import in_transaction
 
 from app.core import config
 from app.core.errors import AppError
+from app.models.chat import ChatPhotoUse
 from app.models.masters import Disease, DrugProduct
 from app.models.ocr import (
     DocType,
@@ -241,7 +242,10 @@ async def _check_daily_limit(user: User, new_files: int) -> None:
         return
     midnight = datetime.now(config.TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
     rows = await OcrJob.filter(user=user, created_at__gte=midnight).annotate(total=Sum("file_count")).values("total")
-    used = int(rows[0]["total"] or 0) if rows else 0
+    # 챗봇으로 보낸 사진(H-9)도 같은 상한에 합산: 챗봇으로 CLOVA를 무제한 부르지 못하게.
+    # 대화 메시지로 세면 대화를 지울 때 0으로 돌아가서 따로 남긴 기록으로 셈 (#199 채연 리뷰)
+    chat = await ChatPhotoUse.filter(user=user, created_at__gte=midnight).count()
+    used = (int(rows[0]["total"] or 0) if rows else 0) + chat
     if used + new_files > limit:
         raise AppError(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -249,6 +253,11 @@ async def _check_daily_limit(user: User, new_files: int) -> None:
             f"하루에 사진을 {limit}장까지 읽을 수 있어요. 내일 다시 올려 주세요.",
             detail={"limit": limit, "used": used},
         )
+
+
+async def check_photo_limit(user: User) -> None:
+    """챗봇 사진 한 장을 더 읽어도 하루 상한을 넘지 않는지 (H-9)"""
+    await _check_daily_limit(user, 1)
 
 
 # ── OCR 작업 실행 ─────────────────────────────────────────────────────────────────────────────

@@ -4,10 +4,11 @@
 """
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from starlette import status
 
@@ -16,13 +17,15 @@ from app.models.analysis import Analysis, AnalysisStatus, AnalysisWarning, DrugG
 from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import PrescriptionItem
 from app.models.users import ConsentType, UserConsent
-from app.services import chats, safety
+from app.services import chat_photo, chats, safety
 from app.services.chatbot import jev
 from app.services.chatbot.answer import DISTRESS, OUT_OF_SCOPE
 from app.services.chatbot.context import FixedInfo
 from app.services.chatbot.llm import Usage
 from app.services.chatbot.pipeline import Reply, Route
 from app.services.drug_names import base_name
+from app.services.ocr import clova
+from app.services.ocr.matcher import NameMatcher
 from app.tests.analysis_apis.test_analysis_apis import PRODUCTS, AnalysisCase
 
 API = "/api/v1/chat/sessions"
@@ -973,6 +976,186 @@ class TestFixedInfo(ChatCase):
             await self.ask(client, headers, sid, "타이레놀 먹어도 돼요?")
             items = await self.items(client, headers, sid)
         assert items[-1]["drugMatch"] == dm and "drugMatch" not in items[0]
+
+
+class TestPhoto(ChatCase):
+    """H-9 사진 첨부 (CB-04)"""
+
+    JPEG = b"\xff\xd8\xff" + b"0" * 64
+
+    @staticmethod
+    def ocr_text(*lines: str) -> dict[str, Any]:
+        """CLOVA 결과 모양: 줄마다 낱말 하나 (세로로 쌓음)"""
+        fields = [
+            {
+                "inferText": t,
+                "inferConfidence": 0.99,
+                "boundingPoly": {
+                    "vertices": [
+                        {"x": 10, "y": 40 * i},
+                        {"x": 400, "y": 40 * i},
+                        {"x": 400, "y": 40 * i + 30},
+                        {"x": 10, "y": 40 * i + 30},
+                    ]
+                },
+            }
+            for i, t in enumerate(lines)
+        ]
+        return {"images": [{"inferResult": "SUCCESS", "fields": fields}]}
+
+    async def photo(self, client, headers, sid: int, crid: str = "p-1", content: bytes | None = None):
+        return await client.post(
+            f"{API}/{sid}/attachments",
+            files={"file": ("a.jpg", content or self.JPEG, "image/jpeg")},
+            data={"clientRequestId": crid},
+            headers=headers,
+        )
+
+    def photo_patches(self, ocr: dict[str, Any] | Exception | None = None):
+        """사진 OCR 자리: 급여목록 대신 시험용 약 목록으로 이름을 맞춤. ocr가 None이면 가짜 처방전(키 없음)"""
+        matcher = NameMatcher([(e, n) for e, n, *_ in PRODUCTS])
+        matcher.prepare()
+
+        async def recognize(content, fmt, name):
+            if isinstance(ocr, Exception):
+                raise ocr
+            return ocr if ocr is not None else json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
+
+        async def get_codes():
+            return {}
+
+        return (
+            patch.object(chat_photo, "get_matcher", AsyncMock(return_value=matcher)),
+            patch.object(chat_photo, "get_codes", get_codes),
+            patch.object(clova, "recognize", recognize),
+        )
+
+    async def test_photo_of_prescription_points_to_analysis(self):
+        """처방전 사진이면 챗봇에서 분석하지 않고 분석하기로 안내. 사용자 줄에는 읽은 글자가 아닌 고정 글 (원문 저장 금지)"""
+        p1, p2, p3 = self.photo_patches()
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "h1@example.com")
+            sid = await self.session(client, headers)
+            with p1, p2, p3:
+                res = await self.photo(client, headers, sid)
+            items = await self.items(client, headers, sid)
+        assert res.status_code == status.HTTP_201_CREATED and res.json()["messageId"] == items[-1]["id"]
+        assert items[0]["content"] == chat_photo.PHOTO_TEXT and items[0]["role"] == "user"
+        assert items[-1]["answerType"] == "normal" and items[-1]["imageResult"] == "prescription"
+        assert items[-1]["action"] == "open_analysis" and "분석하기" in items[-1]["content"]
+        assert self.fake.calls == []  # 답 AI를 부르지 않음
+
+    async def test_photo_of_drug_box_asks_to_confirm_the_name(self):
+        """약 상자는 읽은 이름을 후보로 되물음 (늘 확인, 후보 하나여도 clarify)"""
+        p1, p2, p3 = self.photo_patches(self.ocr_text("전문의약품", "노바스크정5밀리그람", "30정"))
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "h2@example.com")
+            sid = await self.session(client, headers)
+            with p1, p2, p3:
+                await self.photo(client, headers, sid)
+            items = await self.items(client, headers, sid)
+        a = items[-1]
+        assert a["answerType"] == "clarify" and a["imageResult"] == "drug" and "action" not in a
+        assert a["chips"][0].startswith("노바스크정5밀리그람") and a["drugMatch"]["status"] in ("matched", "candidates")
+        assert a["drugMatch"]["items"][0]["ediCode"] == "641900040"
+
+    async def test_photo_without_readable_name_asks_for_text(self):
+        p1, p2, p3 = self.photo_patches(self.ocr_text("TYLENOL", "500mg", "24 CAPLETS"))
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "h3@example.com")
+            sid = await self.session(client, headers)
+            with p1, p2, p3:
+                await self.photo(client, headers, sid)
+            items = await self.items(client, headers, sid)
+        assert items[-1]["answerType"] == "no_evidence" and items[-1]["imageResult"] == "unreadable"
+        assert "글자로 적어" in items[-1]["content"] and "chips" not in items[-1]
+
+    async def test_photo_pdf_is_read_like_a_photo(self):
+        """PDF도 사진과 같게 처리 (첫 쪽, 설계 메모 4-9)"""
+        p1, p2, p3 = self.photo_patches(self.ocr_text("노바스크정5밀리그람"))
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "h7@example.com")
+            sid = await self.session(client, headers)
+            with p1, p2, p3:
+                res = await self.photo(client, headers, sid, "p-pdf", content=b"%PDF-1.4\n" + b"0" * 40)
+            items = await self.items(client, headers, sid)
+        assert res.status_code == 201 and items[-1]["imageResult"] == "drug"
+
+    async def test_photo_same_request_id_makes_one_pair_and_stays_out_of_history(self):
+        p1, p2, p3 = self.photo_patches()
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "h4@example.com")
+            sid = await self.session(client, headers)
+            with p1, p2, p3:
+                first = (await self.photo(client, headers, sid, "p-9")).json()["messageId"]
+                again = (await self.photo(client, headers, sid, "p-9")).json()["messageId"]
+            await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
+            items = await self.items(client, headers, sid)
+        assert first == again and [i["role"] for i in items[:2]] == ["user", "assistant"] and len(items) == 4
+        assert self.fake.calls[0]["history"] == []  # 사진 안내는 다음 답의 기억에 넣지 않음
+
+    async def test_photo_counts_toward_the_daily_ocr_limit(self):
+        """챗봇 사진도 O-1과 같은 하루 사진 상한에 합산해 챗봇으로 CLOVA를 무제한 부르지 못하게 함. 막히면 OCR을 부르지 않음 (점검, 11/2)"""
+        p1, p2, p3 = self.photo_patches()
+        with patch.object(config, "OCR_DAILY_FILE_LIMIT", 2):
+            async with self.client() as client:
+                headers, _ = await self.auth(client, "h6@example.com")
+                sid = await self.session(client, headers)
+                with p1, p2, p3:
+                    codes = [(await self.photo(client, headers, sid, f"p-l{i}")).status_code for i in range(3)]
+                    over = await self.photo(client, headers, sid, "p-l3")
+        assert codes == [201, 201, 429] and over.json()["error"]["code"] == "DAILY_LIMIT_EXCEEDED"
+
+    async def test_deleting_chats_does_not_reset_the_daily_photo_limit(self):
+        """대화를 지워도 하루 사진 상한이 0으로 돌아가지 않음. 지우고 다시 보내 CLOVA를 계속 부르지 못하게 (#199 채연 리뷰)"""
+        p1, p2, p3 = self.photo_patches()
+        with patch.object(config, "OCR_DAILY_FILE_LIMIT", 2):
+            async with self.client() as client:
+                headers, _ = await self.auth(client, "h8@example.com")
+                sid = await self.session(client, headers)
+                with p1, p2, p3:
+                    codes = [(await self.photo(client, headers, sid, f"p-d{i}")).status_code for i in range(2)]
+                    deleted = await client.delete(f"{API}/{sid}", headers=headers)
+                    sid2 = await self.session(client, headers)
+                    again = await self.photo(client, headers, sid2, "p-d2")
+        assert codes == [201, 201] and deleted.status_code == status.HTTP_204_NO_CONTENT
+        assert again.status_code == 429 and again.json()["error"]["detail"] == {"limit": 2, "used": 2}
+
+    async def test_photo_answers_have_no_feedback_buttons(self):
+        """사진 첨부 안내는 규칙으로 만든 답이라 피드백 버튼을 두지 않음 (#199 채연 리뷰)"""
+        p1, p2, p3 = self.photo_patches()
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "h9@example.com")
+            sid = await self.session(client, headers)
+            with p1, p2, p3:
+                await self.photo(client, headers, sid, "p-f")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["noFeedback"] is True and "noFeedback" not in items[0]
+
+    async def test_photo_rejects_bad_file_without_consent_and_ocr_failure(self):
+        p1, p2, p3 = self.photo_patches()
+        async with self.client() as client:
+            headers, user = await self.auth(client, "h5@example.com")
+            sid = await self.session(client, headers)
+            bad = await self.photo(client, headers, sid, "p-2", content=b"GIF89a" + b"0" * 20)
+            assert bad.status_code == 400 and bad.json()["error"]["code"] == "FILE_TYPE_NOT_SUPPORTED"
+            big = await self.photo(client, headers, sid, "p-3", content=self.JPEG + b"0" * (10 * 1024 * 1024))
+            assert big.status_code == 400 and big.json()["error"]["code"] == "FILE_TOO_LARGE"
+            with p1, p2, p3:
+                await UserConsent.filter(user=user, consent_type=ConsentType.SENSITIVE_HEALTH).update(
+                    agreed=False, withdrawn_at=datetime.now(config.TIMEZONE)
+                )
+                no = await self.photo(client, headers, sid, "p-4")
+            assert no.status_code == 403 and no.json()["error"]["code"] == "CONSENT_REQUIRED"
+            await UserConsent.filter(user=user, consent_type=ConsentType.SENSITIVE_HEALTH).update(
+                agreed=True, withdrawn_at=None
+            )
+            f1, f2, f3 = self.photo_patches(clova.ClovaError("timeout"))
+            with f1, f2, f3:
+                down = await self.photo(client, headers, sid, "p-5")
+            items = await self.items(client, headers, sid)
+        assert down.status_code == 502 and down.json()["error"]["code"] == "OCR_FAILED"
+        assert items == []  # 실패한 사진은 줄을 만들지 않음 (다시 시도)
 
     async def test_no_consent_means_general_info_only(self):
         async with self.client() as client:

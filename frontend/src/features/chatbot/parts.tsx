@@ -9,8 +9,11 @@ import { drugLabel } from '@/shared/drugName';
 import { C, L, R, T } from '@/shared/theme';
 import { dictationSeen, setDictationSeen } from '@/shared/storage/chat';
 import { Btn, Card, Chip } from '@/shared/ui';
-import { MicIcon, SpeakerIcon, StopIcon } from '@/shared/ui/icons';
+import { useRouter } from 'expo-router';
 
+import { MicIcon, PlusIcon, SpeakerIcon, StopIcon } from '@/shared/ui/icons';
+
+import type { Picked } from './attach';
 import { hasKoreanVoice, speak, stopSpeaking, useSpeaking } from './speech';
 import { analyzedAt } from './time';
 import type { ErrorKind } from './useChat';
@@ -146,6 +149,12 @@ export function SpeakButton({ id, text }: { id: string; text: string }) {
   );
 }
 
+// 처방전, 약봉투 사진이면 챗봇에서 분석하지 않고 분석하기(OC-01)로 안내 (설계 메모 4-9)
+function AnalysisButton() {
+  const router = useRouter();
+  return <Btn label={c.goAnalysis} onPress={() => router.push('/capture')} />;
+}
+
 export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boolean }) {
   const type = m.answerType ?? 'normal';
   const shown = useReveal(m.content, reveal);
@@ -157,6 +166,7 @@ export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boole
         {shown.text}
       </Text>
       {shown.done && !!m.sources?.length && <Sources sources={m.sources} />}
+      {shown.done && m.action === 'open_analysis' && <AnalysisButton />}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         {shown.done && <SpeakButton id={String(m.id)} text={spoken} />}
         {shown.done && FEEDBACK_ON.includes(type) && !m.noFeedback && <Feedback />}
@@ -455,7 +465,7 @@ export function Empty({ hasHistory, onPick, disabled }: { hasHistory: boolean | 
 
 // 입력창 (설계 메모 4-8, 4-10 항목): 여러 줄, 500자, 보낼 글자가 있고 답을 기다리지 않을 때만 보냄. 첨부는 2단계
 // 보낼 글자가 없으면 전송 자리에 🎤: 누르면 입력칸에 포커스가 가서 키보드가 올라옴 (키보드 마이크를 앱이 대신 누를 수는 없음)
-export function Composer({ onSend, busy }: { onSend: (text: string) => void; busy: boolean }) {
+export function Composer({ onSend, busy, onAttach }: { onSend: (text: string) => void; busy: boolean; onAttach?: () => void }) {
   const [text, setText] = useState('');
   const [tip, setTip] = useState(false);
   const [height, setHeight] = useState<number>(L.touch); // 웹 입력칸 높이 (아래 measure)
@@ -526,6 +536,17 @@ export function Composer({ onSend, busy }: { onSend: (text: string) => void; bus
         </Card>
       )}
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
+        {onAttach && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={c.attach}
+            accessibilityState={{ disabled: busy }}
+            onPress={busy ? undefined : onAttach}
+            style={{ width: L.touch, height: L.touch, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.4 : 1 }}
+          >
+            <PlusIcon />
+          </Pressable>
+        )}
         <TextInput
           ref={input}
           value={text}
@@ -569,5 +590,45 @@ export function SafetyLine() {
     <Pressable accessibilityRole="link" onPress={() => open('tel:109')} style={{ minHeight: L.touch, justifyContent: 'center' }}>
       <Text style={[T.caption, { color: C.info }]}>{c.safetyLine}</Text>
     </Pressable>
+  );
+}
+
+// CB-04 첨부 메뉴: 바텀시트. 배경이나 [취소]로 닫음 (설계 메모 4-9)
+export function AttachSheet({ visible, onPick, onClose }: { visible: boolean; onPick: (how: 'camera' | 'library' | 'file') => void; onClose: () => void }) {
+  const rows = [
+    ['camera', c.takePhoto],
+    ['library', c.pickPhoto],
+    ['file', c.pickFile],
+  ] as const;
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable accessibilityLabel={c.attachClose} onPress={onClose} style={{ flex: 1, backgroundColor: C.dim, justifyContent: 'flex-end' }}>
+        <Pressable onPress={() => undefined} style={{ backgroundColor: C.card, borderTopLeftRadius: R.card, borderTopRightRadius: R.card, padding: 20, gap: 8 }} accessibilityViewIsModal>
+          <Text style={[T.caption, { marginBottom: 4 }]}>{c.attachNote}</Text>
+          {rows.map(([how, label]) => (
+            <Btn key={how} label={label} kind="secondary" onPress={() => onPick(how)} />
+          ))}
+          <Btn label={copy.common.cancel} kind="ghost" onPress={onClose} />
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+// 입력창 위 미리보기: [사진 보내기]와 빼기. 보내는 중이면 읽는 중 표시, 실패하면 이유와 다시 시도 (설계 메모 4-9)
+export function PhotoDraftBar({ file, busy, error, onSend, onDrop }: { file: Picked; busy: boolean; error?: string; onSend: () => void; onDrop: () => void }) {
+  return (
+    <Card style={{ gap: 8 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <Text style={[T.bodyM, { flex: 1 }]}>{file.pdf ? c.photoFile : c.photoReady}</Text>
+        {!busy && (
+          <Pressable accessibilityRole="button" accessibilityLabel={c.attachRemove} onPress={onDrop} style={{ minHeight: L.touch, minWidth: L.touch, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={[T.heading, { color: C.text2 }]}>×</Text>
+          </Pressable>
+        )}
+      </View>
+      {error && <Text style={{ fontSize: 14, color: C.danger }}>※ {error}</Text>}
+      <Btn label={busy ? c.photoSending : error ? copy.common.retry : c.sendPhoto} disabled={busy} onPress={onSend} />
+    </Card>
   );
 }

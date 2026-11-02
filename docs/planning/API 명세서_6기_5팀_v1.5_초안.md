@@ -1314,6 +1314,8 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 | API | 용도 | 비고 |
 |---|---|---|
 | H-9 `POST /chat/sessions/{id}/attachments` | CB-04 사진, 파일 올리기 | `multipart/form-data`로 보내고 `{ attachmentId }`를 받음. H-3 요청의 `attachmentIds`로 씀. REQ-079 |
+| (제안, 11/2) H-9 바꾼 모양 | 위 표의 `attachmentId`와 H-3 `attachmentIds`는 쓰지 않음 | 사진을 저장하지 않으므로 올린 사진을 가리킬 번호가 필요 없음. 요청은 `file`(사진, PDF 1개, 10MB 이하, JPG, PNG, PDF)과 `clientRequestId`, 응답은 `201 { messageId }`(답 줄 번호). 사용자 줄(고정 글 "사진 1장을 보냈어요.")과 답 줄을 한 번에 만들고 앱은 H-2로 받음. 같은 `clientRequestId`면 새로 만들지 않고 처음 답 줄 번호를 돌려줌. 건강 정보 동의가 없으면 `403 CONSENT_REQUIRED`, 형식이나 크기가 어긋나면 `400`(`FILE_TYPE_NOT_SUPPORTED`, `FILE_TOO_LARGE`), 하루 질문 상한에 걸리면 `429`, O-1과 합산한 하루 사진 상한(`OCR_DAILY_FILE_LIMIT`)에 걸려도 `429 DAILY_LIMIT_EXCEEDED`(챗봇 사진은 대화와 따로 남긴 기록으로 세어 대화를 지워도 줄지 않음, #199 채연 리뷰), OCR이 실패하면 `502 OCR_FAILED`(줄을 만들지 않으니 다시 시도, 상한에는 셈). 사진 답 줄에는 `noFeedback: true`(규칙으로 만든 안내라 피드백 버튼 없음). 글자와 함께 보내기는 하지 않음(사진만, 글은 다음 질문으로) |
+| (제안, 11/2) H-2 답 줄 `imageResult`, `action` | (없음) | 사진 첨부의 답 줄에만. `imageResult`는 `prescription`(처방전, 약봉투: OCR이 표를 읽음, `answerType` normal, `action: "open_analysis"`도 함께), `drug`(약 이름을 읽음: `answerType` clarify, `chips`에 후보 이름, `drugMatch`에 `{ status, items }`), `unreadable`(`answerType` no_evidence). 약은 후보가 하나여도 늘 되물음 |
 | H-10 `POST /chat/sessions/{id}/safety-events` | 앱에서 먼저 감지한 긴급, 자해 기록 | 원문 없이 `{ types, overdose, rule, clientRequestId }`. 긴급 기록 표는 민감정보 보관 문제로 팀 확인 뒤에 정함 |
 | H-11 `POST /chat/messages/{id}/feedback` | 답변 피드백 | 지금은 화면만 있음 |
 

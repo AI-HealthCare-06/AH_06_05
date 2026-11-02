@@ -6,12 +6,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatLauncher } from '@/features/chatbot/launcher';
 import {
   AnswerBubble,
+  AttachSheet,
   Composer,
   ContextCard,
   Empty,
   ErrorCard,
   FollowUps,
   Generating,
+  PhotoDraftBar,
   QuoteLine,
   ResentCard,
   SafetyCards,
@@ -19,6 +21,7 @@ import {
   SuggestChips,
   UserBubble,
 } from '@/features/chatbot/parts';
+import { pickFile, pickPhoto, takePhoto, type PickResult } from '@/features/chatbot/attach';
 import { stopSpeaking } from '@/features/chatbot/speech';
 import { useChat, type Pending } from '@/features/chatbot/useChat';
 import type { Message } from '@/features/chatbot/types';
@@ -42,6 +45,8 @@ export default function Chat() {
   const params = useMemo(() => (past ? { from: 'CB-03' as const, sessionId: Number(past) } : chatParams), [past, chatParams]);
   const chat = useChat(params);
   const scroll = useRef<ScrollView>(null);
+  const [sheet, setSheet] = useState(false); // CB-04 첨부 메뉴
+  const [pickNote, setPickNote] = useState<string | null>(null);
   // 위험 판단용 AI(TypeSafe) 전달 동의를 아직 안 한 사람에게 한 번 물음. Jev가 켜진 서버에서만 동의 목록에 이 줄이 나옴 (11/2)
   const [askRisk, setAskRisk] = useState(false);
   const [riskBusy, setRiskBusy] = useState(false);
@@ -79,6 +84,17 @@ export default function Chat() {
   useEffect(() => {
     if (chat.focusCard === null) scroll.current?.scrollToEnd({ animated: true });
   }, [chat.messages, chat.pending, chat.focusCard]);
+  const pick = async (how: 'camera' | 'library' | 'file') => {
+    setSheet(false);
+    setPickNote(null);
+    const r: PickResult = await (how === 'camera' ? takePhoto() : how === 'library' ? pickPhoto() : pickFile());
+    if (!r) return;
+    if ('error' in r) {
+      setPickNote({ permission: c.cameraDenied, tooBig: c.photoTooBig, type: c.photoType, fail: c.photoPick }[r.error]);
+      return;
+    }
+    chat.attach(r.file);
+  };
   const toCard = (e: LayoutChangeEvent) => scroll.current?.scrollTo({ y: e.nativeEvent.layout.y, animated: true });
 
   // 서버 질문 줄 번호 → 그 질문에 걸린 실패 (답 줄이 지워졌거나 30초가 지남)
@@ -246,7 +262,14 @@ export default function Chat() {
             </Card>
           )}
           {chat.safetyMode && <SafetyLine />}
-          <Composer onSend={chat.ask} busy={chat.busy || chat.loading} />
+          {pickNote && <Text style={{ fontSize: 14, color: C.danger, marginBottom: 8 }}>※ {pickNote}</Text>}
+          {chat.photo && (
+            <View style={{ marginBottom: 8 }}>
+              <PhotoDraftBar file={chat.photo.file} busy={chat.photo.busy} error={chat.photo.error} onSend={() => void chat.sendPhoto()} onDrop={chat.dropPhoto} />
+            </View>
+          )}
+          <Composer onSend={chat.ask} busy={chat.busy || chat.loading} onAttach={() => setSheet(true)} />
+          <AttachSheet visible={sheet} onPick={(how) => void pick(how)} onClose={() => setSheet(false)} />
         </View>
       </KeyboardAvoidingView>
     </Screen>
