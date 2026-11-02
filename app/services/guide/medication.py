@@ -1,7 +1,7 @@
 # mypy: disable-error-code=union-attr
 """복약 안내 (RG-04) — AI 없이: 약효분류로 종류 · 쓰임, 처방 숫자로 먹는 법. 주의할 점은 허가정보를 넣기 전까지 null
 
-null이면 화면이 "허가정보에 내용이 없어요"로 보여 줌 (API 명세서 R-4 medication.items)
+null이면 화면이 "아직 확인된 내용이 없어요"로 보여 줌 (API 명세서 R-4 medication.items)
 """
 
 from decimal import Decimal
