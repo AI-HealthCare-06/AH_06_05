@@ -45,9 +45,14 @@ async def _typesafe(question: str) -> tuple[str, float]:
     return answer.choice, float(p_none)
 
 
+def enabled() -> bool:
+    """Jev를 쓸 수 있는 서버인지 (켜져 있고 키가 있음). 동의 화면과 호출이 같은 기준을 씀"""
+    return bool(config.SAFETY_JEV and config.TYPESAFE_API_KEY)
+
+
 async def check(question: str, emergency_dismissed: bool = False) -> str | None:
     """막을 갈래(emergency, crisis) 또는 None. 꺼져 있거나 늦거나 실패하면 None"""
-    if not config.SAFETY_JEV or not config.TYPESAFE_API_KEY:
+    if not enabled():
         return None
     try:
         choice, p_none = await asyncio.wait_for(_typesafe(question), timeout=config.SAFETY_JEV_TIMEOUT_SEC)

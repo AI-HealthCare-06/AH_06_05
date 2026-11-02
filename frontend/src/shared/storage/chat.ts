@@ -10,6 +10,7 @@ import { Platform } from 'react-native';
 const isWeb = Platform.OS === 'web';
 const INDEX = 'chatFailed';
 const ITEM = (crid: string) => `chatFailed_${crid}`;
+const RISK_LATER = 'chat.riskCheckLater';
 const DICTATION = 'chatDictationSeen';
 const KST_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -116,3 +117,10 @@ export async function dictationSeen(): Promise<number> {
 }
 
 export const setDictationSeen = (n: number) => write(DICTATION, String(n));
+
+// 위험 판단용 AI 전달 동의 카드에서 [나중에]를 눌렀는지 (기기에만 저장, 내 정보의 동의 내역에서는 늘 켤 수 있음)
+export async function riskCheckLater(): Promise<boolean> {
+  return (await read(RISK_LATER)) === '1';
+}
+
+export const setRiskCheckLater = () => write(RISK_LATER, '1');
