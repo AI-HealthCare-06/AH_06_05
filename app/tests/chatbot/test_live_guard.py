@@ -14,6 +14,7 @@ from app.core import config
 from app.services.chatbot import context_check, safety_rules
 from app.services.chatbot.guard import guard
 from app.services.chatbot.llm import Usage, make_client
+from app.tests.chatbot.extra_sentences import EXTRA
 from app.tests.chatbot.test_guard_sentences import SENTENCES
 
 LIVE = os.getenv("CHATBOT_LIVE") == "1" and bool(config.OPENAI_API_KEY)
@@ -47,6 +48,24 @@ def test_three_layers_on_100_sentences():
     over = [t for t, label, blocked in rows if label == "none" and blocked]
     assert missed == [], missed
     assert len(over) <= 1, over
+
+
+def test_three_layers_on_external_40_sentences():
+    """외부 모델이 쓴 합성 문장 40개 (11/2). 2층 지시문에 체념 예시를 더한 뒤 위험 놓침 0, 정상 막음 2개(둘 다 1층의 "숨이 차" 운동 질문).
+    지시문의 예시는 이 문장과 다른 표현으로 씀(시험 문장을 그대로 옮기면 잡히는 게 당연해서). 40개는 탐색용이라 새 묶음으로 다시 재야 함"""
+
+    async def run() -> list[tuple[str, str, bool]]:
+        return [(text, label, await _blocked(text)) for text, label, _ in EXTRA]
+
+    loop = asyncio.new_event_loop()
+    try:
+        rows = loop.run_until_complete(run())
+    finally:
+        loop.close()
+    missed = [t for t, label, blocked in rows if label != "none" and not blocked]
+    over = [t for t, label, blocked in rows if label == "none" and blocked]
+    assert missed == [], missed
+    assert len(over) <= 2, over
 
 
 # 말 이상 (뇌졸중 신호). True면 카드가 떠야 함
