@@ -35,6 +35,7 @@ CLASS_PURPOSE = {
 PURPOSE_FALLBACK = "처방받은 목적을 약사에게 확인해 주세요"
 DOSE_UNITS = {"정", "캡슐", "포", "환"}
 SOURCE = "심평원 약제급여목록 약효분류"
+SOURCE_DATE = "2026-09-01"  # 적재한 약제급여목록 파일의 기준일 (docs/data/SOURCES.md 9번). 파일을 바꾸면 같이 고침
 
 
 def category_of(drug: DrugProduct | None) -> str | None:

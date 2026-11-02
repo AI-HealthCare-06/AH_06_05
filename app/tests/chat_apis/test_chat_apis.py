@@ -5,7 +5,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
@@ -739,7 +739,7 @@ class TestFixedInfo(ChatCase):
             assert res.status_code == 201
             first = res.json()["firstMessage"]
             assert "혈압 관리에 쓰는 약이에요" in first["content"] and first["answerType"] == "normal"
-            assert first["sources"] == [{"title": "심평원 약제급여목록 약효분류"}]
+            assert first["sources"] == [{"title": "심평원 약제급여목록 약효분류", "basedOn": "2026-09-01"}]
             again = await client.post(f"{API}/{sid}/context", json=body, headers=headers)
             assert again.json()["firstMessage"]["id"] == first["id"]
             items = await self.items(client, headers, sid)
@@ -755,14 +755,14 @@ class TestFixedInfo(ChatCase):
             a, b = await PrescriptionItem.filter(prescription=rx).order_by("id")
             w = await AnalysisWarning.create(
                 analysis_id=aid, warning_type="contra", severity="high", item_a=a, item_b=b,
-                summary="함께 먹으면 안 되는 약이에요", source="병용금기 고시",
+                summary="함께 먹으면 안 되는 약이에요", source="병용금기 고시", notice_date=date(2025, 3, 31),
             )  # fmt: skip
             sid = await self.session(client, headers, analysisId=aid)
             body = {"analysisId": aid, "context": {"type": "warning", "id": w.id}, "clientRequestId": "ctx-1"}
             first = (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).json()["firstMessage"]
         assert "함께 먹으면 안 되는 약이에요" in first["content"]
         assert first["content"].endswith("처방한 의사나 약사에게 꼭 알려 주세요.")
-        assert first["sources"] == [{"title": "병용금기 고시"}]
+        assert first["sources"] == [{"title": "병용금기 고시", "basedOn": "2025-03-31"}]  # 고시일
 
     async def test_first_message_for_warning_card_adds_reason_as_written(self):
         """H-7: DUR 사유가 있으면 경고 자세히 화면처럼 "원문:"으로 그대로 붙임. "-"처럼 내용이 없으면 뺌 (설계 메모 4-4)"""

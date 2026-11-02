@@ -239,7 +239,8 @@ async def _warning_first(analysis_id: int, warning_id: int) -> tuple[str, list[d
     reason = (w.reason or "").strip(" -")  # DUR 사유. 쉬운 말로 바꾸지 않고 경고 자세히 화면(RG-03)처럼 원문 그대로
     if reason:
         text += f"\n원문: {reason}"
-    return f"{text}\n\n{WARNING_FIRST_TAIL}", [{"title": w.source}] if w.source else []
+    source = {"title": w.source, **({"basedOn": w.notice_date.isoformat()} if w.notice_date else {})}  # 고시일
+    return f"{text}\n\n{WARNING_FIRST_TAIL}", [source] if w.source else []
 
 
 async def _drug_first(analysis_id: int, item_id: int) -> tuple[str, list[dict[str, str]]] | None:
@@ -254,7 +255,9 @@ async def _drug_first(analysis_id: int, item_id: int) -> tuple[str, list[dict[st
     body = "\n".join(x for x in lines if x)
     if not body:
         return None
-    return f"{_item_name(it)}\n{body}", [{"title": medication.SOURCE}] if purpose else []
+    return f"{_item_name(it)}\n{body}", [
+        {"title": medication.SOURCE, "basedOn": medication.SOURCE_DATE}
+    ] if purpose else []
 
 
 # ── H-3 질문 보내기 ────────────────────────────────────────────────────────────────────────
