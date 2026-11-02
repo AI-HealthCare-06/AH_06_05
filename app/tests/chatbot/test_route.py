@@ -3,6 +3,7 @@
 import asyncio
 import functools
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot.context import FixedInfo, UserDrug
@@ -178,6 +179,60 @@ async def test_food_chip_goes_to_medication():
     ):
         r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
         assert r.kind == "medication", q
+
+
+@sync
+async def test_how_to_take_question_is_not_out_of_scope():
+    """추천 칩 "약은 언제 먹는 게 좋나요?"를 분류가 범위 밖으로 봐도 약 갈래로. 먹는 약이 없으면 어떤 약인지 되물음
+    (11/2 서버 E2E와 실제 분류 6번 중 6번 범위 밖)"""
+    for q in (
+        "약은 언제 먹는 게 좋나요?",
+        "약을 어떻게 먹어야 해요?",
+        "약 먹는 법 알려 주세요",
+        "약 복용 시간이 궁금해요",
+        "노바스크는 언제 드시는 게 좋아요?",
+    ):
+        for cat in ("out_of_scope", "clarify"):
+            r = await route(q, S0, [], FakeChat(classify=classified(category=cat)))
+            assert r.kind == "medication", (q, cat)
+    r = await route("약은 언제 먹는 게 좋나요?", NO_DRUGS, [], FakeChat(classify=classified(category="out_of_scope")))
+    assert (r.kind, r.clarify_question) == ("clarify", "어떤 약을 말씀하시는지 알려 주시겠어요?")
+    # 약 이야기가 아닌 먹는 때 질문, 이미 다른 갈래로 간 질문은 그대로
+    for q in ("밥은 언제 먹는 게 좋아요?", "아침은 어떻게 먹어야 해요?"):
+        r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+        assert r.kind == "out_of_scope", q
+    r = await route("약은 언제 먹는 게 좋나요?", S0, [], FakeChat(classify=classified(category="lifestyle")))
+    assert r.kind == "lifestyle"
+
+
+@sync
+async def test_how_to_take_question_with_distress_stays_out_of_scope():
+    """힘들다는 말이 섞이면 약 갈래로 바꾸지 않아 도움 연결 문구가 나가게 (#187 채연 리뷰, may_eat 규칙과 같음)"""
+    q = "너무 힘들어서 약을 어떻게 먹어야 할지 모르겠어요"
+    r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+    assert r.kind == "out_of_scope"
+
+
+@sync
+async def test_this_drug_means_the_card_drug():
+    """ "이 약 물어보기"로 연 대화에서 "이 약"은 맥락 카드의 약. 분류는 카드를 몰라 되묻거나 앞 대화의 약을 고름
+    (11/2 서버 E2E와 실제 분류 6번 중 6번 되물음). 지시어 풀이와 같은 길로 코드가 정함"""
+    info = replace(S0, focus_drug="리피토정10밀리그램")
+    for q in ("이 약은 언제 먹는 게 좋아요?", "이약 부작용이 뭐예요?", "이거 저녁에 먹어도 돼요?"):
+        chat = FakeChat(classify=classified(category="clarify"))
+        r = await route(q, info, [], chat)
+        assert (r.kind, r.classification["target_drug"]) == ("medication", "리피토정10밀리그램"), q
+        assert "리피토정10밀리그램" in chat.seen["classify"]
+    # 질문에 다른 약 이름이 있으면 그 약, 카드가 없으면 지금처럼 되물음
+    r = await route(
+        "이 약이랑 노바스크 같이 먹어도 돼요?",
+        info,
+        [],
+        FakeChat(classify=classified(target_drug="노바스크정5밀리그람", target_source="question")),
+    )
+    assert r.classification["target_drug"] == "노바스크정5밀리그람"
+    r = await route("이 약은 언제 먹는 게 좋아요?", S0, [], FakeChat(classify=classified(category="clarify")))
+    assert r.kind == "clarify"
 
 
 @sync

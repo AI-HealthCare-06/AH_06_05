@@ -14,6 +14,7 @@ from starlette import status
 from app.core import config
 from app.models.analysis import Analysis, AnalysisStatus, DrugGuide, ReviewStatus
 from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
+from app.models.ocr import PrescriptionItem
 from app.models.users import ConsentType, UserConsent
 from app.services import chats, safety
 from app.services.chatbot.answer import OUT_OF_SCOPE
@@ -424,6 +425,35 @@ class TestFixedInfo(ChatCase):
         assert [d.code for d in info.drugs] == ["641900040"]  # 가장 최근에 붙은 맥락 카드의 분석
         assert info.drugs[0].name.startswith("노바스크정") and info.drugs[0].purpose == "혈압 관리에 쓰는 약이에요"
         assert info.disease_ids == ["HTN"] and info.age is not None
+
+    async def test_card_drug_is_the_focus_drug(self):
+        """ "이 약 물어보기"로 붙인 맥락 카드의 약을 고정 정보에 남김 ("이 약"을 그 약으로 풀게, 11/2 서버 E2E).
+        카드 뒤에 다른 약을 물었거나, 경고 카드거나, 그 분석의 약이 아니면 남기지 않음"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f11@example.com")
+            rx = await self.prescription(user, ["641900040", "644300010"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            ids = await PrescriptionItem.filter(prescription=rx).order_by("id").values_list("id", flat=True)
+            sid = await self.session(client, headers, analysisId=aid)
+            body = {"analysisId": aid, "context": {"type": "drug", "id": ids[1]}, "clientRequestId": "ctx-d"}
+            assert (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).status_code == 201
+            await self.ask(client, headers, sid, "이 약은 언제 먹어요?", crid="q-1")
+            first = self.fake.calls[-1]["info"]
+            await self.ask(client, headers, sid, "노바스크는요?", crid="q-2")
+            await self.ask(client, headers, sid, "이 약 부작용은요?", crid="q-3")
+            after_other = self.fake.calls[-1]["info"]
+            body = {"analysisId": aid, "context": {"type": "warning", "id": 1}, "clientRequestId": "ctx-w"}
+            await client.post(f"{API}/{sid}/context", json=body, headers=headers)
+            await self.ask(client, headers, sid, "이 약은요?", crid="q-4")
+            warning = self.fake.calls[-1]["info"]
+            body = {"analysisId": aid, "context": {"type": "drug", "id": 999999}, "clientRequestId": "ctx-x"}
+            await client.post(f"{API}/{sid}/context", json=body, headers=headers)
+            await self.ask(client, headers, sid, "이 약은요?", crid="q-5")
+            missing = self.fake.calls[-1]["info"]
+        assert first.focus_drug is not None and first.focus_drug.startswith("다이아벡스")
+        assert after_other.focus_drug is None
+        assert warning.focus_drug is None and missing.focus_drug is None
+        assert warning.focus_warning == 1 and first.focus_warning is None and missing.focus_warning is None
 
     async def test_home_chat_uses_latest_done_analysis(self):
         """홈에서 연 대화(analysisId도 맥락 카드도 없음)는 가장 최근 완료 분석을 쓰고 대화에 적음 (#159).

@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from app.services.chatbot.answer import is_distress
-from app.services.chatbot.context import FixedInfo, dialogue, fixed_info_text, target_in_memory
+from app.services.chatbot.context import FixedInfo, dialogue, find_drug, fixed_info_text, target_in_memory
 from app.services.chatbot.llm import ChatClient, LLMError, Usage
 from app.services.chatbot.prompts import CLASSIFY_SCHEMA, CLASSIFY_SYSTEM
 
@@ -23,6 +23,13 @@ _FOOD_AVOID = re.compile(r"((같이|함께)\s*먹으면\s*안\s*되는|피해야
 # 범위 밖으로 고름 (10/29 실제 분류 4번 중 4번, #145 채연 리뷰). 음식 이름 목록 대신 묻는 꼴만 봄 (10/29 수인 결정)
 _MAY_EAT = re.compile(r"(먹어도|마셔도|드셔도|먹으면|마시면|드시면)\s*(안\s*)?(돼|되|괜찮)")
 # 무엇을 먹을지 묻는 말은 메뉴 질문이라 약 갈래로 바꾸지 않음 ("오늘 저녁 뭐 먹으면 돼요?", #147 채연 리뷰)
+# 약을 언제, 어떻게 먹는지 묻는 말. 앱 추천 칩 "약은 언제 먹는 게 좋나요?"를 분류가 범위 밖으로 골라 사과 문구로 끝남
+# (11/2 서버 E2E, 실제 분류 6번 중 6번). 약 이야기일 때만 봄 ("밥은 언제 먹는 게 좋아요?"는 그대로)
+_HOW_TAKE = re.compile(
+    r"(언제|어떻게)\s*(먹|드시|드셔|복용)|(먹는|드시는|복용하는)\s*(법|방법|시간|때)|복용\s*(법|방법|시간)"
+)
+_POINTS_AT = re.compile(r"[이그]\s*약(?![속국간])|이거|그거|이것|그것")
+_MED_TALK = re.compile(r"(?<![계절요공규언예])약(?![속국간])|복용")
 _MENU = re.compile(r"(뭐|뭘|무엇|무얼|어떤\s*(?:것|걸|거))\S*\s*(먹|마시|드시)")
 # 분석 칩처럼 분석 전체에서 가장 조심할 것을 물을 때만. "이번 분석에 나온 노바스크 복용법"처럼 약 하나를 물으면 분류대로 (#135 채연 리뷰)
 _THIS_ANALYSIS = re.compile(r"이번\s*분석.*(가장|제일).*(조심|주의)")
@@ -58,6 +65,22 @@ async def classify(message: str, client: ChatClient, usage: Usage) -> dict[str, 
     return result
 
 
+def _how_to_take_fix(cls: dict[str, Any], question: str, info: FixedInfo) -> None:
+    """약을 언제, 어떻게 먹는지 묻는데 대상 약 없이 범위 밖이나 되묻기면 고침. 약 이야기일 때만 ("밥은 언제 먹는 게 좋아요?"는 아님).
+    먹는 약이 있으면 먹는 약 전체로 근거를 찾고, 없으면 어떤 약인지 되물음 (11/2 수인 결정)"""
+    # 되묻기도 같음: 대상 약 없이 되묻기로 고르면 "어떤 약을 말씀하시는 건가요?"로 끝남 (11/2 실제 분류에서 범위 밖과 섞여 나옴)
+    if cls["category"] not in ("out_of_scope", "clarify") or cls["target_drug"] or not _HOW_TAKE.search(question):
+        return
+    if is_distress(question):
+        return  # 괴로움 낱말이 있으면 그대로 둬서 도움 연결 문구가 나가게 (may_eat과 같음, #187 채연 리뷰)
+    if not (_MED_TALK.search(question) or find_drug(question, info.drugs)) or _POINTS_AT.search(question):
+        return  # "이 약", "그 약"처럼 약 하나를 가리키면 되묻기 그대로 (맥락 카드의 약은 pipeline이 먼저 풂)
+    if info.drugs:
+        cls["category"] = "medication"
+    else:
+        cls["category"], cls["target_drug"], cls["clarify_question"] = "clarify", None, None
+
+
 def check_classification(
     cls: dict[str, Any],
     question: str,
@@ -87,6 +110,7 @@ def check_classification(
     may_eat = _MAY_EAT.search(question) and not _MENU.search(question) and "추천" not in question
     if may_eat and cls["category"] == "out_of_scope" and info.drugs and not is_distress(question):
         cls["category"] = "medication"
+    _how_to_take_fix(cls, question, info)
     if _THIS_ANALYSIS.search(question) and cls["category"] in ("out_of_scope", "medication"):
         # 경고가 있으면 ⑤ 점검 결과, 없으면 pipeline의 분석 안내
         cls["category"], cls["about_user_drugs"] = "medication", True
@@ -94,6 +118,11 @@ def check_classification(
     if _PREGNANCY.search(question) and cls["category"] != "refer":
         cls["category"], cls["refer_kind"] = "refer", "next_visit"
     return cls
+
+
+def asks_food_to_avoid(question: str) -> bool:
+    """앱 추천 칩 "같이 먹으면 안 되는 음식이 있나요?"처럼 피할 음식을 묻는지"""
+    return bool(_FOOD_AVOID.search(question))
 
 
 def asks_this_analysis(question: str) -> bool:

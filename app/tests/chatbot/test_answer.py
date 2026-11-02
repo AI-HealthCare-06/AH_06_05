@@ -835,6 +835,62 @@ async def test_own_drugs_question_answers_with_check_result_without_ai():
 
 
 @sync
+async def test_warning_card_answers_with_that_warning_only():
+    """ "이 경고 챗봇에 물어보기"(RG-03)로 연 대화는 카드의 경고만 보여 줌. 분석 전체를 묻는 분석 칩은 경고를 다 보여 줌
+    (11/2 서버 E2E: 카드는 경고 1건인데 답은 2건)"""
+    info = replace(S_WARN, focus_warning=32)
+    chat = FakeChat(classify=classified(about_user_drugs=True))
+    r = await answer("이 두 약 같이 먹어도 돼요?", info, [], chat, search=FakeSearch())
+    assert r.safety_card == {"analysisId": 7, "warningIds": [32]}
+    assert "로바가정" in r.content and "스로펜정" not in r.content
+    r = await answer(
+        "이번 분석에서 가장 조심할 건 뭔가요?",
+        info,
+        [],
+        FakeChat(classify=classified(category="out_of_scope")),
+        search=FakeSearch(),
+    )
+    assert r.safety_card == {"analysisId": 7, "warningIds": [31, 32]}
+    # 카드의 경고가 이 분석에 없으면 지금처럼 다 보여 줌
+    r = await answer(
+        "이 두 약 같이 먹어도 돼요?",
+        replace(S_WARN, focus_warning=99),
+        [],
+        FakeChat(classify=classified(about_user_drugs=True)),
+        search=FakeSearch(),
+    )
+    assert r.safety_card == {"analysisId": 7, "warningIds": [31, 32]}
+
+
+@sync
+async def test_food_question_uses_only_food_evidence():
+    """피할 음식을 물으면 허가정보 근거 중 음식, 술, 식사 말이 든 문장만 답에 씀. 약끼리 상호작용 문장을 음식 답처럼 옮김
+    (11/2 서버 E2E: 앞 대화의 아토르스타정 CYP3A4 문장, 로컬 재현 4번 중 4번). 팩트표 근거는 그대로"""
+    cyp = Evidence(
+        "D:657203250:S9", "drug_permit", "657203250", None, "S", "상호작용", "강력한 CYP3A4 억제제와 병용 시 주의"
+    )
+    surgery = Evidence("D:647200310:E1", "drug_permit", "647200310", None, "E", "효능", "수술후 동통")
+    alcohol = Evidence(
+        "D:647200310:S1", "drug_permit", "647200310", None, "S", "경고", "매일 세잔 이상 술을 마시는 사람"
+    )
+    fact = Evidence("F:HTN:3", "lifestyle_fact", None, "HTN", None, "식사", "소금을 줄여요")
+    chat = FakeChat(classify=classified(category="medication"))
+    await answer(
+        "같이 먹으면 안 되는 음식이 있나요?", S0, [], chat, search=FakeSearch(found(cyp, surgery, alcohol, fact))
+    )
+    assert "D:647200310:S1" in chat.seen["answer"] and "F:HTN:3" in chat.seen["answer"]
+    assert "D:657203250:S9" not in chat.seen["answer"] and "D:647200310:E1" not in chat.seen["answer"]
+    # 음식 문장이 하나도 없으면 답 AI를 부르지 않고 근거 없음
+    chat = FakeChat(classify=classified(category="medication"))
+    r = await answer("같이 먹으면 안 되는 음식이 있나요?", S0, [], chat, search=FakeSearch(found(cyp)))
+    assert r.answer_type == "no_evidence" and "answer" not in chat.calls
+    # 음식을 묻지 않으면 그대로
+    chat = FakeChat(classify=classified(category="medication"))
+    await answer("같이 먹으면 안 되는 약이 있나요?", S0, [], chat, search=FakeSearch(found(cyp)))
+    assert "D:657203250:S9" in chat.seen["answer"]
+
+
+@sync
 async def test_analysis_question_for_doctor_stays_refer():
     chat = FakeChat(classify=classified(category="refer", refer_kind="next_visit"))
     r = await answer("이번 분석 보고 약을 끊어도 되나요?", S0, [], chat, search=FakeSearch())
