@@ -320,8 +320,8 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
         <Chip label={r.withDrugs} tone="info" />
         <Text style={[T.label, { flex: 1 }]}>{r.withDrugsTitle}</Text>
       </View>
-      {life.medicationLinks.map((l) => (
-        <View key={l.itemId} style={{ gap: 2 }}>
+      {life.medicationLinks.map((l, i) => (
+        <View key={`${l.itemId}-${i}`} style={{ gap: 2 }}>
           <Text style={T.bodyM}>{drugLabel(l.itemName)}</Text>
           <Actions actions={l.actions} />
           {l.requiresClinician && <Chip label={r.clinician} tone="caution" />}

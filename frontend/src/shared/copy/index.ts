@@ -279,7 +279,7 @@ export const copy = {
     warningTitle: '경고 자세히 보기',
     together: (n: number) => `${n}가지 약을 같이 드시고 있어요.`,
     askWarning: '이 경고 챗봇에 물어보기',
-    missingField: '허가정보에 내용이 없어요',
+    missingField: '아직 확인된 내용이 없어요',
     notFoundChip: '찾지 못함',
     notFoundBody: '자료에서 찾지 못해 안내를 만들 수 없어요. 약사에게 확인해 주세요.',
     notOralChip: '점검 대상 아님',
@@ -513,7 +513,7 @@ export const copy = {
     birthYearValue: (y: number) => `${y}년`,
     sex: '성별',
     health: '건강 정보',
-    healthNote: '앞으로 안내와 챗봇 답변에 쓸 예정이에요.',
+    healthNote: '질환은 생활습관 안내와 챗봇 답변에, 음주는 실천 목표 추천에 써요. 나머지는 앞으로 맞춤 안내에 쓸 예정이에요.',
     smoking: '흡연',
     drinking: '음주 (최근 1년)',
     diseases: '앓고 있는 질환',
@@ -529,7 +529,7 @@ export const copy = {
     examName: '검사 이름',
     examNameHelper: (max: number) => `${max}자 이내 (예: 조영 CT, 내시경)`,
     examDate: '날짜',
-    examDateHelper: '예: 2026-10-27',
+    examDateHelper: '예: 2026-12-15',
     examDateValue: (d: string) => {
       const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d);
       return m ? `${Number(m[1])}월 ${Number(m[2])}일` : d;
