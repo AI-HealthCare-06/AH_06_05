@@ -720,6 +720,27 @@ class TestFixedInfo(ChatCase):
         assert first["content"].endswith("처방한 의사나 약사에게 꼭 알려 주세요.")
         assert first["sources"] == [{"title": "병용금기 고시"}]
 
+    async def test_first_message_for_warning_card_adds_reason_as_written(self):
+        """H-7: DUR 사유가 있으면 경고 자세히 화면처럼 "원문:"으로 그대로 붙임. "-"처럼 내용이 없으면 뺌 (설계 메모 4-4)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f32@example.com")
+            rx = await self.prescription(user, ["641900040", "644300010"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            a, b = await PrescriptionItem.filter(prescription=rx).order_by("id")
+            common = {"analysis_id": aid, "warning_type": "contra", "severity": "high", "item_a": a, "item_b": b}
+            w1 = await AnalysisWarning.create(
+                **common, summary="문장", source="고시", reason="근육병증의 위험 증가 가능"
+            )
+            w2 = await AnalysisWarning.create(**common, summary="문장", source="고시", reason=" - ")
+            sid = await self.session(client, headers, analysisId=aid)
+            texts = []
+            for i, w in enumerate((w1, w2)):
+                body = {"analysisId": aid, "context": {"type": "warning", "id": w.id}, "clientRequestId": f"ctx-r{i}"}
+                res = await client.post(f"{API}/{sid}/context", json=body, headers=headers)
+                texts.append(res.json()["firstMessage"]["content"])
+        assert "원문: 근육병증의 위험 증가 가능" in texts[0]
+        assert "원문" not in texts[1]
+
     async def test_no_first_message_without_target(self):
         """분석 요약 카드, 그 분석에 없는 번호에는 첫 답이 없음. 남의 경고가 새지 않음"""
         async with self.client() as client:

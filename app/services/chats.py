@@ -222,6 +222,9 @@ async def _warning_first(analysis_id: int, warning_id: int) -> tuple[str, list[d
         return None
     names = ", ".join(_item_name(it) for it in (w.item_a, w.item_b) if it)
     text = f"{names}: {w.summary}" if names else w.summary
+    reason = (w.reason or "").strip(" -")  # DUR 사유. 쉬운 말로 바꾸지 않고 경고 자세히 화면(RG-03)처럼 원문 그대로
+    if reason:
+        text += f"\n원문: {reason}"
     return f"{text}\n\n{WARNING_FIRST_TAIL}", [{"title": w.source}] if w.source else []
 
 
