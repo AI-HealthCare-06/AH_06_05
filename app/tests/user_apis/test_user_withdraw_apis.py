@@ -14,7 +14,7 @@ from tortoise.contrib.test import TestCase
 from app.core import config
 from app.main import app
 from app.models.analysis import Analysis, AnalysisStatus
-from app.models.chat import ChatMessage, ChatSession, MessageRole
+from app.models.chat import ChatMessage, ChatPhotoUse, ChatSession, MessageRole
 from app.models.ocr import DocType, MatchStatus, OcrJob, Prescription, PrescriptionFileHash, PrescriptionItem
 from app.models.users import ConsentType, User, UserConsent, UserHealthProfile
 from app.services import prescriptions as rx_svc
@@ -129,9 +129,18 @@ class TestWithdrawConsent(WithdrawCase):
         async with self.client() as client:
             user, headers = await self.member(client, "w1@example.com")
             ids = await self.fill(user)
+            await ChatPhotoUse.create(user=user)
             response = await client.delete("/api/v1/users/me/consents/sensitiveHealth", headers=headers)
             assert response.status_code == status.HTTP_204_NO_CONTENT
+            await ChatPhotoUse.filter(
+                user=user
+            ).delete()  # 철회 때는 남김 (아래 확인). 공통 검사는 user_id가 있는 모든 표를 봄
             await self.assert_erased(user, ids)
+            # 사진 횟수 기록은 철회 뒤에도 남아서 다시 동의해 하루 상한을 피하지 못함 (#199 채연 리뷰, 11/2 합의)
+            await ChatPhotoUse.create(user=user)
+            response = await client.delete("/api/v1/users/me/consents/sensitiveHealth", headers=headers)
+            assert await ChatPhotoUse.filter(user=user).count() == 1
+            await ChatPhotoUse.filter(user=user).delete()
 
             consent = await UserConsent.get(user=user, consent_type=ConsentType.SENSITIVE_HEALTH)
             assert consent.agreed is False and consent.withdrawn_at is not None and consent.agreed_at is not None
@@ -261,6 +270,9 @@ class TestWithdrawUser(WithdrawCase):
             self.addAsyncCleanup(unknown_email_attempts.clear, "u1@example.com")
             user, headers = await self.member(client, "u1@example.com")
             ids = await self.fill(user)
+            await ChatPhotoUse.create(
+                user=user
+            )  # 탈퇴 때는 지움 (assert_erased의 user_id 표 공통 검사가 봄, #199 채연 리뷰)
             response = await self.delete_me(client, headers, {"confirmed": True})
             assert response.status_code == status.HTTP_204_NO_CONTENT
             assert 'refresh_token=""' in response.headers.get("set-cookie", "")  # 재발급권 쿠키를 지움

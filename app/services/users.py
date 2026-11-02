@@ -8,7 +8,7 @@ from app.core import config
 from app.core.errors import AppError
 from app.dtos.users import CONSENT_TYPE_NAMES, UserUpdateRequest
 from app.models.analysis import Analysis, GuideFeedback
-from app.models.chat import ChatSession
+from app.models.chat import ChatPhotoUse, ChatSession
 from app.models.ocr import OcrJob, Prescription
 from app.models.users import ConsentType, Sex, User, UserConsent, UserHealthProfile
 from app.repositories.user_repository import UserRepository
@@ -120,6 +120,8 @@ class UserManageService:
         await habits.delete_goals(user)
         async with in_transaction():
             await UserConsent.filter(user=user).delete()
+            # 챗봇 사진 횟수 기록은 동의 철회 때는 남기고(철회 뒤 다시 동의해 상한을 피하지 못하게) 탈퇴 때만 지움 (#199 채연 리뷰)
+            await ChatPhotoUse.filter(user=user).delete()
             # 이메일은 다시 가입할 수 있게 비움. 출생연도와 성별은 칸을 비울 수 없어서 자리 값(0, M)으로 채움
             await User.filter(id=user.id).update(
                 login_id=f"withdrawn-{user.id}",
