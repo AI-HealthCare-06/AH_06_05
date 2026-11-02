@@ -279,7 +279,7 @@ export const copy = {
     warningTitle: '경고 자세히 보기',
     together: (n: number) => `${n}가지 약을 같이 드시고 있어요.`,
     askWarning: '이 경고 챗봇에 물어보기',
-    missingField: '허가정보에 내용이 없어요',
+    missingField: '아직 확인된 내용이 없어요',
     notFoundChip: '찾지 못함',
     notFoundBody: '자료에서 찾지 못해 안내를 만들 수 없어요. 약사에게 확인해 주세요.',
     notOralChip: '점검 대상 아님',

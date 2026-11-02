@@ -43,3 +43,27 @@ def test_display_name_drops_export_name(raw, want):
 def test_base_name_keeps_export_name_for_matching():
     """이름 맞추기(base_name, normalize_name)는 그대로 둠. DB의 item_name_norm과 어긋나지 않게"""
     assert "수출명" in base_name("스로펜정(이부프로펜) 수출명:Korus Ibuprofen Tab._(0.2g/1정)")
+
+
+def test_ingredient_label_prefers_korean_name_in_parentheses():
+    """경고 자세히 보기의 성분이 영어로 보이던 것 (11/2 E2E)"""
+    from app.services.drug_names import ingredient_label
+
+    assert (
+        ingredient_label("노바스크정5밀리그람(암로디핀베실산염)_(6.944mg/1정)", "amlodipine besylate")
+        == "암로디핀베실산염"
+    )
+    assert (
+        ingredient_label("아이스타플러스정80/5/10밀리그램(텔미사르탄,암로디핀,로수바스타틴)_(1정)", "x")
+        == "텔미사르탄,암로디핀,로수바스타틴"
+    )
+    # 이름에 성분이 없으면 흔한 성분만 한글로, 나머지는 영어 그대로
+    assert ingredient_label("알파아세트아미노펜정500밀리그람_(0.5g/1정)", "acetaminophen") == "아세트아미노펜"
+    assert ingredient_label("게보린정_(1정)", "caffeine anhydrous") == "무수카페인"
+    assert ingredient_label("어떤약정_(1정)", "polmacoxib") == "polmacoxib"
+    assert ingredient_label("어떤약정_(1정)", None) is None
+    assert (
+        ingredient_label("리피토정10밀리그램(아토르바스타틴칼슘삼수화물)_(1정)", "아토르바스타틴") == "아토르바스타틴"
+    )
+    # 수출명 괄호는 성분으로 보지 않음
+    assert ingredient_label("파무정(수출명:Pamu)_(1정)", "pamu") == "pamu"

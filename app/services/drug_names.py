@@ -73,3 +73,32 @@ def strip_maker(name: str, pattern: re.Pattern[str] | None = None) -> str:
 def normalize_name(name: str) -> str:
     """NFKC로 호환 문자를 먼저 풀어 줌 (㎎ → mg · ㎖ → ml · 전각 괄호 → 반각). 그다음 규격 · 공백 · 표기 통일"""
     return unify(base_name(unicodedata.normalize("NFKC", name)))
+
+
+# 점검 DB의 성분명은 영어라 화면에 영어가 그대로 보였음 (11/2 E2E). 약 이름 괄호에 한글 성분이 있으면 그것을 쓰고,
+# 없으면 흔한 성분만 한글로 바꿈. 표에 없는 성분은 영어 그대로
+_INGREDIENT_KO = {
+    "acetaminophen": "아세트아미노펜",
+    "caffeine anhydrous": "무수카페인",
+    "isopropylantipyrine": "이소프로필안티피린",
+    "ibuprofen": "이부프로펜",
+    "naproxen": "나프록센",
+    "aspirin": "아스피린",
+    "atorvastatin": "아토르바스타틴",
+    "rosuvastatin": "로수바스타틴",
+    "metformin": "메트포르민",
+    "amlodipine": "암로디핀",
+    "telmisartan": "텔미사르탄",
+}
+
+
+def ingredient_label(item_name: str, english: str | None) -> str | None:
+    """경고 자세히 보기에 보여 줄 성분명. 점검 DB 값이 이미 한글이면 그대로"""
+    if english and re.search(r"[가-힣]", english):
+        return english
+    for inner in re.findall(r"\(([^()]*)\)", base_name(item_name).split("수출명")[0]):
+        if re.fullmatch(r"[가-힣,·/-]+", inner):
+            return inner
+    if not english:
+        return english
+    return _INGREDIENT_KO.get(english.strip().lower(), english)
