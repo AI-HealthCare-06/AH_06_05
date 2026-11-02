@@ -35,7 +35,8 @@ def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
 
 # ── P-1 생활습관 추천 ─────────────────────────────────────────────────────────────────────────
 async def recommendations(user: User, analysis_id: int) -> dict[str, Any]:
-    """분석의 질환과 약으로 다시 계산해 저장함 (질환 직접 선택 R-6 뒤에도 맞게). 같은 챌린지는 번호를 그대로 둠"""
+    """분석의 질환과 약으로 다시 계산해 저장함 (질환 직접 선택 R-6 뒤에도 맞게). 같은 챌린지는 번호를 그대로 둠.
+    뒤에는 다른 분석에서 고른 실천 중 목표를 덧붙임"""
     a = await Analysis.get_or_none(id=analysis_id, user=user)
     if a is None:
         raise AppError(status.HTTP_404_NOT_FOUND, "NOT_FOUND")
@@ -52,8 +53,17 @@ async def recommendations(user: User, analysis_id: int) -> dict[str, Any]:
     profile = await UserHealthProfile.get_or_none(user=user)
     picked = challenges.recommend(codes, names, profile.drinking.value if profile else None)
 
+    goals = (
+        await HabitGoal.filter(user=user, status=HabitStatus.ACTIVE).order_by("id").prefetch_related("recommendation")
+    )
+    held = [g.recommendation_id for g in goals if g.recommendation_id]  # 실천 중인 목표가 가리키는 추천은 지우지 않음
     async with in_transaction():
-        await Recommendation.filter(analysis=a).exclude(challenge_key__in=[p["key"] for p in picked]).delete()
+        await (
+            Recommendation.filter(analysis=a)
+            .exclude(challenge_key__in=[p["key"] for p in picked])
+            .exclude(id__in=held)
+            .delete()
+        )
         rows = []
         for rank, p in enumerate(picked, start=1):
             fields = {k: p[k] for k in ("title", "desc", "reason_label", "caution_label", "goal_type", "unit")}
@@ -63,7 +73,17 @@ async def recommendations(user: User, analysis_id: int) -> dict[str, Any]:
                 defaults={**fields, "target_value": p["target_value"], "fact_refs": p["fact_refs"], "rank": rank},
             )
             rows.append(row)
-    return {"items": [_rec_view(r) for r in rows], "hasDiseases": bool(codes)}
+    # 다른 분석에서 고른 실천 중 목표도 함께 내려 줌. 안 그러면 다시 고르기에서 안 보이고, 시작하기를 누를 때 조용히 끝남
+    # (같은 챌린지는 이 분석 것을 우선하고, 고른 추천이 지워져 이유가 없는 목표는 다시 고를 수 없어 뺌)
+    kept: list[Recommendation] = []
+    if codes:
+        have = {r.challenge_key for r in rows}
+        for g in goals:
+            r = g.recommendation
+            if r is not None and r.challenge_key not in have:
+                have.add(r.challenge_key)
+                kept.append(r)
+    return {"items": [_rec_view(r) for r in rows + kept], "hasDiseases": bool(codes)}
 
 
 def _rec_view(r: Recommendation) -> dict[str, Any]:
