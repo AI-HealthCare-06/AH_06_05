@@ -1,6 +1,6 @@
-import { useRouter } from 'expo-router';
-import { Fragment, useEffect, useRef, type ReactNode } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Fragment, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useChatLauncher } from '@/features/chatbot/launcher';
@@ -22,8 +22,9 @@ import {
 import { useChat, type Pending } from '@/features/chatbot/useChat';
 import type { Message } from '@/features/chatbot/types';
 import { copy } from '@/shared/copy';
-import { C, S, T } from '@/shared/theme';
+import { C, L, S, T } from '@/shared/theme';
 import { Btn, Screen } from '@/shared/ui';
+import { CalendarIcon } from '@/shared/ui/icons';
 
 const c = copy.chatbot;
 
@@ -32,7 +33,10 @@ export default function Chat() {
   const router = useRouter();
   const ins = useSafeAreaInsets();
   const { chatParams } = useChatLauncher();
-  const chat = useChat(chatParams);
+  // CB-03에서 연 지난 대화는 주소로 받음: 아래에 남은 오늘 대화 창이 함께 바뀌지 않게
+  const { sessionId: past } = useLocalSearchParams<{ sessionId?: string }>();
+  const params = useMemo(() => (past ? { from: 'CB-03' as const, sessionId: Number(past) } : chatParams), [past, chatParams]);
+  const chat = useChat(params);
   const scroll = useRef<ScrollView>(null);
 
   // 새 줄이 생기면 맨 아래로. 이미 있던 맥락 카드로 들어왔으면 그 카드에 머묾 (설계 메모 3-4 항목)
@@ -120,7 +124,25 @@ export default function Chat() {
   const empty = !chat.loading && chat.messages.length === 0 && local.length === 0 && !chat.pendingCard;
 
   return (
-    <Screen title={c.title} onBack={() => router.back()} scroll={false}>
+    <Screen
+      title={c.title}
+      onBack={() => router.back()}
+      scroll={false}
+      right={
+        // 지난 대화에서는 숨김: 챗봇 → 달력 → 목록 → 챗봇으로 쌓이지 않게 (설계 메모 4-1)
+        past ? undefined : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={c.historyTitle}
+            hitSlop={8}
+            onPress={() => router.push({ pathname: '/chat-history', params: chat.sessionId ? { current: chat.sessionId } : {} })}
+            style={{ width: L.touch, height: L.touch, alignItems: 'flex-end', justifyContent: 'center' }}
+          >
+            <CalendarIcon color={C.text2} />
+          </Pressable>
+        )
+      }
+    >
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
           ref={scroll}

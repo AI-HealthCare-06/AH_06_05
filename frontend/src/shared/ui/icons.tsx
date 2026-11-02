@@ -44,6 +44,16 @@ export function BackIcon({ color = C.text, size = 24 }: IconProps) {
 }
 
 // 문서 (근거와 출처 카드 머리)
+// 달력 (챗봇 창 머리, 대화 기록)
+export function CalendarIcon({ color = C.text2, size = 24 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" {...line} strokeWidth={2} stroke={color}>
+      <Rect x={3} y={5} width={18} height={16} rx={2} />
+      <Path d="M3 10h18M8 3v4M16 3v4" />
+    </Svg>
+  );
+}
+
 export function DocIcon({ color = C.text2, size = 18 }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" {...line} stroke={color}>
