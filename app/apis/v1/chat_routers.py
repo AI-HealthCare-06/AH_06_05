@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from starlette import status
 from starlette.responses import Response
 
@@ -11,6 +11,7 @@ from app.dependencies.security import get_request_user
 from app.dtos.chat import ContextCreateRequest, MessageCreateRequest, SessionCreateRequest, SessionTitleRequest
 from app.models.users import User
 from app.services import chats as svc
+from app.services import prescriptions
 from app.services.chatbot import queue as chat_queue
 
 chat_router = APIRouter(prefix="/chat/sessions", tags=["chat"])
@@ -60,6 +61,18 @@ async def ask(
     if run and not await chat_queue.enqueue_answer(message_id, body.emergency_dismissed):
         background.add_task(svc.generate, message_id, body.emergency_dismissed)
     return {"messageId": message_id}
+
+
+@chat_router.post("/{session_id}/attachments", status_code=status.HTTP_201_CREATED)
+async def add_attachment(
+    session_id: int,
+    user: CurrentUser,
+    file: Annotated[UploadFile, File(description="사진 또는 PDF 1개, 10MB 이하, JPG, PNG, PDF")],
+    client_request_id: Annotated[str, Form(alias="clientRequestId", min_length=1, max_length=64)],
+) -> dict[str, Any]:
+    """H-9 사진 첨부 (CB-04). 사진을 OCR로 읽어 처방전이면 분석하기 안내, 약이면 후보 확인, 못 읽으면 글자 안내. 답은 H-2로 받음"""
+    content = await file.read(prescriptions.MAX_BYTES + 1)
+    return await svc.add_photo(user, session_id, client_request_id, file.filename or "", content)
 
 
 @chat_router.patch("/{session_id}")

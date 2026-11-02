@@ -151,6 +151,16 @@ class ChatRepository:
             )
             return await ChatMessage.create(session=session, role=MessageRole.ASSISTANT, reply_to=q, **answer)
 
+    async def create_photo_pair(
+        self, session: ChatSession, client_request_id: str, question: str, answer: dict[str, Any]
+    ) -> ChatMessage:
+        """사진 첨부(H-9): 사용자 줄(고정 글)과 답 줄을 한 번에 만듦. 답 줄을 돌려줌"""
+        async with in_transaction():
+            q = await ChatMessage.create(
+                session=session, role=MessageRole.USER, content=question, client_request_id=client_request_id
+            )
+            return await ChatMessage.create(session=session, role=MessageRole.ASSISTANT, reply_to=q, **answer)
+
     async def create_generating(self, question: ChatMessage) -> ChatMessage:
         return await ChatMessage.create(
             session_id=question.session_id,

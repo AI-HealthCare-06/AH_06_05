@@ -28,7 +28,7 @@ from app.models.chat import AnswerType, ChatMessage, ChatSession, MessageRole, M
 from app.models.ocr import MatchStatus, PrescriptionItem
 from app.models.users import User
 from app.repositories.chat import ChatRepository
-from app.services import safety
+from app.services import chat_photo, safety
 from app.services.chatbot import pipeline, safety_rules
 from app.services.chatbot.answer import DISTRESS
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug, find_drug
@@ -37,8 +37,9 @@ from app.services.chatbot.llm import make_client
 from app.services.chatbot.pipeline import Reply, Route
 from app.services.drug_names import display_name
 from app.services.guide import lifestyle, medication
+from app.services.ocr import clova
 from app.services.ocr.mask import mask_numbers
-from app.services.prescriptions import has_health_consent, search_drugs
+from app.services.prescriptions import has_health_consent, search_drugs, validate_uploads
 
 logger = logging.getLogger(__name__)
 repo = ChatRepository()
@@ -190,9 +191,12 @@ def _item(m: ChatMessage) -> dict[str, Any]:
         ("safety", m.safety),
         ("chips", m.chips),
         ("drugMatch", m.drug_match),
+        ("imageResult", m.image_result),
     ):
         if value:
             row[key] = value
+    if m.image_result == chat_photo.PRESCRIPTION:
+        row["action"] = "open_analysis"  # 앱이 [처방전 · 약봉투 분석하러 가기]를 보임
     if m.answer_type and m.content == DISTRESS:
         row["noFeedback"] = True  # 범위 밖 괴로움의 도움 연결 답에는 피드백 버튼을 두지 않음 (#144 채연 리뷰, #117)
     row["createdAt"] = m.created_at.isoformat()
@@ -372,14 +376,42 @@ def _sources(ids: list[str]) -> list[dict[str, str]]:
     return [{"title": t} for t in dict.fromkeys(titles)]
 
 
+async def add_photo(
+    user: User, session_id: int, client_request_id: str, filename: str, content: bytes
+) -> dict[str, Any]:
+    """H-9 사진 첨부 (CB-04). 사진 한 장을 OCR로 읽어 사용자 줄과 답 줄을 한 번에 만듦. 사진과 읽은 글자는 저장하지 않음.
+    같은 clientRequestId면 새로 만들지 않고 처음의 답 줄 번호를 돌려줌"""
+    s = await _session(user, session_id)
+    if (first := await repo.get_by_request(s, client_request_id)) and (done := await repo.last_answer_to(first)):
+        return {"messageId": done.id}
+    blob = validate_uploads([(filename, content)])[0]
+    if not await has_health_consent(user):
+        raise AppError(
+            status.HTTP_403_FORBIDDEN, "CONSENT_REQUIRED", "건강 정보 사용에 동의해야 사진을 보낼 수 있어요."
+        )
+    await _check_daily_limit(user)
+    try:
+        result = await chat_photo.identify(blob)
+    except clova.ClovaError as e:
+        logger.warning("챗봇 사진 OCR 실패 (%s)", e)  # 사진과 글자는 남기지 않음
+        raise AppError(
+            status.HTTP_502_BAD_GATEWAY, "OCR_FAILED", "사진을 읽지 못했어요. 잠시 후 다시 시도해 주세요."
+        ) from e
+    answer = await repo.create_photo_pair(
+        s, client_request_id, chat_photo.PHOTO_TEXT, {"route_kind": "image", **chat_photo.answer_fields(result)}
+    )
+    return {"messageId": answer.id}
+
+
 def _history(rows: list[ChatMessage]) -> list[dict[str, str]]:
     """빈 글 줄(1층이 잡은 질문, 긴급 답, 맥락 카드)은 대화 기억에 넣지 않음.
     범위 밖으로 걸러진 질문과 그 답도 뺌. 앞 대화가 다음 답의 노이즈가 됨 (5회차 멘토링 시연, #99)"""
-    skip = {m.reply_to_id for m in rows if m.route_kind == "out_of_scope"}
+    out = ("out_of_scope", "image")  # 사진 첨부(안내 답)도 다음 답의 노이즈라 뺌
+    skip = {m.reply_to_id for m in rows if m.route_kind in out}
     return [
         {"role": m.role.value, "content": m.content}
         for m in rows
-        if m.content and m.route_kind != "out_of_scope" and m.id not in skip
+        if m.content and m.route_kind not in out and m.id not in skip
     ]
 
 
