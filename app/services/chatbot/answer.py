@@ -344,7 +344,42 @@ def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
 _THIS_DRUG = re.compile(r"(?<![가-힣])이\s?약(?:물)?(?=을|를|의|은|는|이|과|와|으로|로|에|도|만|[^가-힣]|$)")
 
 
+# 처방에 없는 약 계열과의 병용 문장 (#116, #135): 허가 원문의 "ACE 저해제와 병용 시"가 그 계열 약을 먹지 않는 사람의 답에 나옴
+# (10/26 채연 서버 시험, 10/27 측정 3번 중 3번, 지시문 한 줄로는 안 고쳐짐). 계열 이름이 나오고 병용을 말하는 허가 문장 중
+# 사용자 약(이름, 성분)에 그 계열이 없으면 답 AI에 넘기지 않음. 계열과 성분 어미 목록은 시작값 (11/2, 제안)
+_CLASS_IN_TEXT = {
+    "ace": r"ACE\s*(?:저해제|억제제)|안지오텐신\s*전환\s*효소",
+    "arb": r"안지오텐신\s*(?:II\s*)?수용체\s*(?:차단|길항)|ARB",
+    "diuretic": r"이뇨제",
+    "beta": r"베타\s*(?:차단제|수용체\s*차단)",
+    "nsaid": r"비스테로이드성|NSAID|소염\s*진통제",
+}
+_CLASS_IN_DRUG = {
+    "ace": r"프릴|pril",
+    "arb": r"사르탄|sartan",
+    "diuretic": r"티아지드|세미드|스피로노락톤|인다파미드|클로르탈리돈|thiazide|semide|spironolactone|indapamide|chlorthalidone",
+    "beta": r"[가-힣]롤(?![가-힣])|olol|카르베딜롤|carvedilol",
+    "nsaid": r"프로펜|나프록센|페낙|콕시브|록시캄|아스피린|profen|naproxen|fenac|coxib|oxicam|aspirin",
+}
+_WITH = re.compile(r"병용|함께|같이|투여\s*중")
+
+
+def drop_other_class(evidence: list[Evidence], info: FixedInfo) -> list[Evidence]:
+    """사용자가 먹지 않는 계열과의 병용을 말하는 허가 문장을 뺌. 팩트표 근거는 그대로"""
+    mine = " ".join(f"{d.name} {d.ingredient}" for d in info.drugs)
+    taken = {c for c, p in _CLASS_IN_DRUG.items() if re.search(p, mine, re.I)}
+    out = []
+    for e in evidence:
+        text = f"{e.heading} {e.text}"
+        other = [c for c, p in _CLASS_IN_TEXT.items() if c not in taken and re.search(p, text)]
+        if e.source == "drug_permit" and other and _WITH.search(text):
+            continue
+        out.append(e)
+    return out
+
+
 def _evidence_json(evidence: list[Evidence], info: FixedInfo) -> str:
+    evidence = drop_other_class(evidence, info)
     names = {d.code: d.name for d in info.drugs if d.code}
     rows = [
         {

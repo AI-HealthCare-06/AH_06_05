@@ -1212,3 +1212,32 @@ def test_output_guard_catches_half_ten_and_more_timing_words(content):
 def test_output_guard_keeps_right_advice(content):
     """#116 출력 가드레일 보완: 맞는 안내를 거르던 것. 두 배로 먹지 말라는 말, 의사 말을 전하는 말, 처방의 "식후"를 "식사 후"로 쓴 말"""
     assert asyncio.run(_guarded(content)).answer_type == "normal", content
+
+
+ACE_LINE = Evidence(
+    "D:641900040:S9",
+    "drug_permit",
+    "641900040",
+    None,
+    "S",
+    "상호작용",
+    "ACE 저해제와 병용 투여 시 혈압이 지나치게 떨어질 수 있다",
+)
+
+
+@sync
+async def test_permit_sentence_about_an_untaken_drug_class_is_not_sent():
+    """처방에 없는 계열(ACE 저해제)과의 병용 문장은 답 AI에 넘기지 않음. 그 계열 약을 먹으면 넘김 (#116, #135)"""
+    chat = FakeChat()
+    await answer(
+        "노바스크 같이 먹으면 안 되는 약 있어요?", S0, [], chat, search=FakeSearch(found(GRAPEFRUIT, ACE_LINE))
+    )
+    assert "ACE 저해제" not in chat.seen["answer"] and "자몽" in chat.seen["answer"]
+    ace_user = replace(
+        S0, drugs=[*S0.drugs, UserDrug("레니프릴정5밀리그램(에날라프릴말레산염)", "에날라프릴", "혈압", "1일 1회")]
+    )
+    chat2 = FakeChat()
+    await answer(
+        "노바스크 같이 먹으면 안 되는 약 있어요?", ace_user, [], chat2, search=FakeSearch(found(GRAPEFRUIT, ACE_LINE))
+    )
+    assert "ACE 저해제" in chat2.seen["answer"]
