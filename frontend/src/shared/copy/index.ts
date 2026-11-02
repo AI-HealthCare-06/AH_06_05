@@ -487,7 +487,7 @@ export const copy = {
     birthYearValue: (y: number) => `${y}년`,
     sex: '성별',
     health: '건강 정보',
-    healthNote: '앞으로 안내와 챗봇 답변에 쓸 예정이에요.',
+    healthNote: '질환은 생활습관 안내와 챗봇 답변에, 음주는 실천 목표 추천에 써요. 나머지는 앞으로 맞춤 안내에 쓸 예정이에요.',
     smoking: '흡연',
     drinking: '음주 (최근 1년)',
     diseases: '앓고 있는 질환',
@@ -503,7 +503,7 @@ export const copy = {
     examName: '검사 이름',
     examNameHelper: (max: number) => `${max}자 이내 (예: 조영 CT, 내시경)`,
     examDate: '날짜',
-    examDateHelper: '예: 2026-10-27',
+    examDateHelper: '예: 2026-12-15',
     examDateValue: (d: string) => {
       const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d);
       return m ? `${Number(m[1])}월 ${Number(m[2])}일` : d;
