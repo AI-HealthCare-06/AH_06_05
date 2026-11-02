@@ -27,8 +27,13 @@ def budget(elapsed: float) -> float:
     return JOB_LIMIT_SEC - elapsed - TIMEOUT_SEC
 
 
-async def gather(question: str, cls: dict[str, Any], info: FixedInfo, search: Search, elapsed: float) -> SearchResult:
+async def gather(
+    question: str, cls: dict[str, Any], info: FixedInfo, search: Search, elapsed: float, codes: list[str] | None = None
+) -> SearchResult:
+    """codes: 이름 맞추기(drugMatch)로 찾은 약 코드. 있으면 내 약 대신 그 약 범위로"""
     left = budget(elapsed)
     if left <= 0:
         return SearchResult(reason="timeout")
-    return await search(question, drug_codes(info, cls.get("target_drug")), list(info.disease_ids), budget_sec=left)
+    return await search(
+        question, codes or drug_codes(info, cls.get("target_drug")), list(info.disease_ids), budget_sec=left
+    )

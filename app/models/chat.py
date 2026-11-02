@@ -92,6 +92,9 @@ class ChatMessage(models.Model):
     )
     safety: Any = fields.JSONField(null=True, description="{ types, overdose, rule }. 원문 없음")
     chips: Any = fields.JSONField(null=True, description='답 줄만. 되물음(clarify) 아래 예상 답 칩 ["아침 약이요"]')
+    drug_match: Any = fields.JSONField(
+        null=True, description="답 줄만. 질문의 약 이름 맞추기 { status, items } (O-4 모양)"
+    )
     route_kind = fields.CharField(
         max_length=20, null=True, description="답 줄만. 답을 만든 갈래(Route.kind). out_of_scope면 대화 기억에서 뺌"
     )

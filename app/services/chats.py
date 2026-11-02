@@ -38,7 +38,7 @@ from app.services.chatbot.pipeline import Reply, Route
 from app.services.drug_names import display_name
 from app.services.guide import lifestyle, medication
 from app.services.ocr.mask import mask_numbers
-from app.services.prescriptions import has_health_consent
+from app.services.prescriptions import has_health_consent, search_drugs
 
 logger = logging.getLogger(__name__)
 repo = ChatRepository()
@@ -189,6 +189,7 @@ def _item(m: ChatMessage) -> dict[str, Any]:
         ("safetyCard", m.safety_card),
         ("safety", m.safety),
         ("chips", m.chips),
+        ("drugMatch", m.drug_match),
     ):
         if value:
             row[key] = value
@@ -333,7 +334,18 @@ async def run_pipeline(
     question: str, info: FixedInfo, history: list[dict[str, str]], emergency_dismissed: bool = False
 ) -> Reply:
     """답 만들기 (OpenAI). 시험에서는 가짜로 바꿈"""
-    return await pipeline.answer(question, info, history, make_client(), emergency_dismissed=emergency_dismissed)
+    return await pipeline.answer(
+        question, info, history, make_client(), emergency_dismissed=emergency_dismissed, match=_drug_match
+    )
+
+
+async def _drug_match(name: str) -> dict[str, Any] | None:
+    """질문의 약 이름을 O-4와 같은 이름 맞추기로 찾음. 목록을 못 읽으면 없는 것으로 (답은 계속 만듦)"""
+    try:
+        return await search_drugs(name, 3)
+    except Exception:  # noqa: BLE001  이름 맞추기 실패가 답을 막지 않게
+        logger.warning("drug_match 실패", exc_info=True)
+        return None
 
 
 def _fact_sources(sentence_id: str) -> list[str]:
@@ -407,6 +419,7 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         safety=_safety(r) if r.safety_types else None,
         safety_card=reply.safety_card,
         chips=reply.chips or None,
+        drug_match=reply.drug_match,
         route_kind=r.kind,
         analysis_id=info.analysis_id,
         model=config.OPENAI_CHAT_MODEL if reply.usage.calls else None,

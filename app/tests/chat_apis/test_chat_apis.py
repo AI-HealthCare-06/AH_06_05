@@ -867,6 +867,23 @@ class TestFixedInfo(ChatCase):
             items = await self.items(client, headers, sid)
         assert items[-1]["noFeedback"] is True and "noFeedback" not in items[0]
 
+    async def test_drug_match_is_saved_and_returned(self):
+        """질문의 약 이름 맞추기 결과는 H-2 답 줄 drugMatch로 (명세서 O-4 챗봇 줄, 제안)"""
+        dm = {"status": "candidates", "items": [{"ediCode": "672300240", "itemName": "타이레놀정500밀리그램"}]}
+        self.fake.reply = Reply(
+            "clarify",
+            "말씀하신 약이 아래 중 하나인가요?",
+            Route(kind="clarify"),
+            chips=["타이레놀정500밀리그램"],
+            drug_match=dm,
+        )
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f36@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "타이레놀 먹어도 돼요?")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["drugMatch"] == dm and "drugMatch" not in items[0]
+
     async def test_no_consent_means_general_info_only(self):
         async with self.client() as client:
             headers, user = await self.auth(client, "f3@example.com")
