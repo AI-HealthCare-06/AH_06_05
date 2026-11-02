@@ -1,6 +1,5 @@
 """질문부터 답까지 (#99 PR 2-1). 근거 검색과 OpenAI는 가짜로 바꿔 흐름만 확인 (CI에서 부르지 않음)."""
 
-import asyncio
 from dataclasses import replace
 from typing import Any
 
@@ -1196,9 +1195,10 @@ async def test_when_to_take_falls_back_to_evidence_without_prescribed_timing():
         "노바스크는 열 알까지 괜찮아요.",
     ],
 )
-def test_output_guard_catches_half_ten_and_more_timing_words(content):
+@sync
+async def test_output_guard_catches_half_ten_and_more_timing_words(content):
     """#116 출력 가드레일 보완: 거르지 못하던 "반 알", "열 알", "밤에", "잠들기 전", "식사와 관계없이" (11/2)"""
-    assert asyncio.run(_guarded(content)).answer_type == "no_evidence", content
+    assert (await _guarded(content)).answer_type == "no_evidence", content
 
 
 @pytest.mark.parametrize(
@@ -1209,9 +1209,10 @@ def test_output_guard_catches_half_ten_and_more_timing_words(content):
         "다이아벡스는 처방대로 식사 후에 드세요.",
     ],
 )
-def test_output_guard_keeps_right_advice(content):
+@sync
+async def test_output_guard_keeps_right_advice(content):
     """#116 출력 가드레일 보완: 맞는 안내를 거르던 것. 두 배로 먹지 말라는 말, 의사 말을 전하는 말, 처방의 "식후"를 "식사 후"로 쓴 말"""
-    assert asyncio.run(_guarded(content)).answer_type == "normal", content
+    assert (await _guarded(content)).answer_type == "normal", content
 
 
 ACE_LINE = Evidence(
