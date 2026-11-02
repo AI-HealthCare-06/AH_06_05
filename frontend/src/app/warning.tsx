@@ -68,7 +68,7 @@ export default function WarningScreen() {
       <Section title={r.whyTitle}>
         <Card>
           <Text style={T.body}>{w.explanation}</Text>
-          <Text style={[T.caption, { marginTop: 8 }]}>{r.original(w.reasonOriginal)}</Text>
+          {w.reasonOriginal ? <Text style={[T.caption, { marginTop: 8 }]}>{r.original(w.reasonOriginal)}</Text> : null}
         </Card>
       </Section>
       <Section title={r.sourceTitle}>

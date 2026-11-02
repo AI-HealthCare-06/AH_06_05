@@ -194,6 +194,20 @@ def _drug_scope(dm: dict[str, Any] | None) -> tuple[dict[str, Any] | None, list[
     return None, None
 
 
+async def _picked_drug(
+    question: str, history: list[dict[str, str]], match: DrugMatch
+) -> tuple[str, dict[str, Any]] | None:
+    """바로 앞 답이 후보 칩 되묻기(DRUG_PICK)이고 질문이 칩 글자(후보 이름)이면 (앞 질문, 그 약 하나의 drugMatch).
+    분류가 적는 약 이름은 칩 글자와 달라져 좁혀지지 않음 (#197 채연 리뷰, 실제 분류로 칩 18번 중 0번)"""
+    if len(history) < 2 or history[-1] != {"role": "assistant", "content": DRUG_PICK} or history[-2]["role"] != "user":
+        return None
+    name = question.strip()
+    items = ((await match(name)) or {}).get("items") or []
+    if not items or items[0].get("itemName") != name or not items[0].get("ediCode"):
+        return None
+    return history[-2]["content"], {"status": "matched", "items": items[:1]}
+
+
 def _needs_lookup(cls: dict[str, Any], question: str, info: FixedInfo, kind: str) -> bool:
     target = cls.get("target_drug") or ""
     if len(target) < 2 or cls.get("target_source") != "question" or kind not in ("medication", "refer"):
@@ -345,6 +359,14 @@ async def answer(
     # 1층과 2층이 막지 않은 말 이상은 분류와 상관없이 고정 안내. 범위 밖 사과, 약 되묻기, "며칠 안에 진료"로 끝나던 것 (#132 채연 리뷰)
     if r.kind in ("clarify", "medication", "lifestyle", "refer", "out_of_scope") and safety_rules.odd_speech(question):
         return Reply("refer", SPEECH, r, usage=usage)
+    if r.kind in ("clarify", "medication", "lifestyle", "refer", "out_of_scope") and (
+        picked := await _picked_drug(question, history, match)
+    ):
+        asked, dm = picked
+        cls = {**(r.classification or {}), "category": "medication", "target_drug": question.strip()}
+        cls["target_source"] = "question"
+        r = replace(r, kind="medication", classification=cls)
+        return await _answer_from_evidence(asked, cls, info, history, client, search, match, r, usage, started, dm)
     if r.kind == "clarify":
         return Reply("clarify", r.clarify_question, r, usage=usage, chips=r.clarify_chips)
     if r.kind not in ("medication", "lifestyle", "refer", "out_of_scope"):
@@ -375,11 +397,12 @@ async def _answer_from_evidence(  # noqa: PLR0913
     r: Route,
     usage: Usage,
     started: float,
+    picked: dict[str, Any] | None = None,
 ) -> Reply:
-    """⑥ 근거 검색과 답 만들기. 앞에 drugMatch(내 약에 없는 약 이름 맞추기)"""
+    """⑥ 근거 검색과 답 만들기. 앞에 drugMatch(내 약에 없는 약 이름 맞추기). picked는 후보 칩으로 고른 약"""
     # drugMatch: 내 약에 없는 약 이름이면 이름 맞추기. 후보가 여럿이면 후보 칩으로 되묻고, 하나면 그 약 범위로 근거를 찾음
-    matched, codes = None, None
-    if _needs_lookup(cls, question, info, r.kind):
+    matched, codes = _drug_scope(picked)
+    if picked is None and _needs_lookup(cls, question, info, r.kind):
         dm = await match(cls["target_drug"])
         if (ask := _drug_pick(dm)) is not None:
             return Reply("clarify", DRUG_PICK, r, usage=usage, chips=ask, drug_match=dm)

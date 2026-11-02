@@ -38,7 +38,7 @@ from app.models.ocr import MatchStatus, Prescription, PrescriptionDisease, Presc
 from app.models.users import User, UserHealthProfile
 from app.repositories.chat import ChatRepository
 from app.services import safety
-from app.services.drug_names import display_name
+from app.services.drug_names import display_name, ingredient_label
 from app.services.guide import lifestyle, medication, store
 from app.services.prescriptions import has_health_consent
 
@@ -459,7 +459,7 @@ async def get_warning(user: User, analysis_id: int, warning_id: int) -> dict[str
                 "itemName": display_name(r.drug.item_name) if r.drug else r.raw_name,
                 "hospitalName": r.prescription.hospital_name,
                 "category": medication.category_of(r.drug),
-                "ingredient": names.get(r.drug.edi_code) if r.drug else None,
+                "ingredient": ingredient_label(r.drug.item_name, names.get(r.drug.edi_code)) if r.drug else None,
             }
             for r in refs
         ],

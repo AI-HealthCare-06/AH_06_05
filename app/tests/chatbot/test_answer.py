@@ -21,7 +21,7 @@ from app.services.chatbot.answer import (
 )
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
 from app.services.chatbot.llm import LLMError, OpenAIChat, Usage
-from app.services.chatbot.pipeline import ANALYSIS_GUIDE, answer
+from app.services.chatbot.pipeline import ANALYSIS_GUIDE, DRUG_PICK, answer
 from app.services.rag.gate import Verdicts
 from app.services.rag.pipeline import Evidence, SearchResult
 from app.tests.chatbot.test_route import classified, sync
@@ -1128,6 +1128,37 @@ async def test_drug_match_exact_searches_that_drug_only():
         "타이레놀정500밀리그램 하루에 몇 번 먹어요?", S0, [], FakeChat(classify=cls), search=search, match=match
     )
     assert search.calls[0]["drugs"] == ["672300240"] and r.drug_match["status"] == "matched"
+
+
+PICK_HISTORY = [
+    {"role": "user", "content": "타이레놀 하루에 몇 번 먹어요?"},
+    {"role": "assistant", "content": DRUG_PICK},
+]
+
+
+@sync
+async def test_pressing_a_drug_chip_answers_the_earlier_question_for_that_drug():
+    """후보 칩을 누르면 분류가 적은 약 이름 대신 칩 글자로 이름 맞추기를 하고, 앞 질문을 그 약 범위로 답함
+    (#197 채연 리뷰: 실제 분류로 칩 18번 중 좁혀진 것 0번)"""
+    cls = classified(category="clarify", target_drug="타이레놀", target_source="history")
+    match, search, chat = FakeMatch({"status": "matched", "items": [TYLENOL]}), FakeSearch(), FakeChat(classify=cls)
+    r = await answer("타이레놀정500밀리그램", S0, PICK_HISTORY, chat, search=search, match=match)
+    assert match.calls == ["타이레놀정500밀리그램"] and search.calls[0]["drugs"] == ["672300240"]
+    assert r.answer_type != "clarify" and r.drug_match["status"] == "matched"
+    assert "타이레놀 하루에 몇 번 먹어요?" in chat.seen["answer"]
+
+
+@sync
+async def test_drug_chip_also_narrows_when_the_name_lists_candidates_first():
+    """칩 글자가 후보 맨 앞 이름과 같으면 그 약으로 좁힘. 칩이 아닌 말이면 지금처럼 분류대로"""
+    cls = classified(target_drug="타이레놀", target_source="question")
+    match = FakeMatch({"status": "candidates", "items": [TYLENOL, TYLENOL_ER]})
+    search = FakeSearch()
+    r = await answer("타이레놀정500밀리그램", S0, PICK_HISTORY, FakeChat(classify=cls), search=search, match=match)
+    assert search.calls[0]["drugs"] == ["672300240"] and r.answer_type != "clarify"
+    match2 = FakeMatch({"status": "candidates", "items": [TYLENOL, TYLENOL_ER]})
+    r2 = await answer("잘 모르겠어요", S0, PICK_HISTORY, FakeChat(classify=cls), search=FakeSearch(), match=match2)
+    assert match2.calls == ["잘 모르겠어요", "타이레놀"] and r2.answer_type == "clarify"
 
 
 @sync

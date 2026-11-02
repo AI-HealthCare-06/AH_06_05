@@ -103,6 +103,7 @@
         { "drug_class": "티아지드·루프 이뇨제 (히드로클로로티아지드, 푸로세미드 등 — 칼륨 보전 이뇨제 제외)", "caution": "칼륨이 낮아질 수 있음", "advice": "칼륨을 더 먹을지는 혈액검사 결과를 보고 의료진이 정함. 칼륨이 많은 음식·보충제를 임의로 늘리지 말 것. 다리 경련·근력 약화·심한 피로가 있으면 의료진 상담", "requires_clinician": true, "goal_eligible": false },
         { "drug_class": "칼슘차단제 (암로디핀, 니페디핀 등)", "caution": "자몽주스가 약물 혈중농도를 높일 수 있음", "advice": "자몽·자몽주스 피하기. 발목 부종이 생기면 의료진에게 알리기" },
         { "drug_class": "ACE억제제·ARB (에날라프릴, 로사르탄 등)", "caution": "칼륨 상승 가능", "advice": "칼륨 보충제·저염소금(염화칼륨) 임의 사용 주의. 마른기침이 지속되면 의료진 상담", "requires_clinician": true, "goal_eligible": false },
+        { "drug_class": "칼륨 보전 이뇨제 (스피로노락톤)", "caution": "칼륨 상승 가능(고칼륨혈증)", "advice": "칼륨 보충제·칼륨이 많은 음식·저염소금(염화칼륨)을 임의로 늘리거나 쓰지 말 것. 정기 혈액검사(혈청 칼륨) 필수", "requires_clinician": true, "goal_eligible": false, "source": "약학정보원(health.kr) 스피로노락톤 의약품 정보, 사용상의 주의사항 (11/2 확인)" },
         { "drug_class": "베타차단제 (비소프롤롤, 카르베딜롤 등)", "caution": "갑작스러운 중단 시 혈압 급상승 위험", "advice": "임의로 끊지 말 것. 맥박이 느려지면 의료진에게 알리기" }
       ],
       "warning_signs": ["수축기 180 또는 이완기 120 이상", "심한 두통·시야장애·가슴통증", "한쪽 팔다리 힘 빠짐·말 어눌해짐(뇌졸중 의심)"]
@@ -254,7 +255,7 @@
       "medication_link": [
         { "drug_class": "NSAIDs (소염진통제)", "caution": "신기능 악화", "advice": "가능하면 아세트아미노펜으로 대체. 자가 구입 주의" },
         { "drug_class": "조영제 사용 검사", "caution": "조영제 신독성", "advice": "CT 등 조영제 검사 전 신장병을 반드시 알릴 것. 메트포르민 복용 중이면 중단 여부 확인" },
-        { "drug_class": "칼륨 보전 이뇨제·ACE억제제·ARB", "caution": "고칼륨혈증 위험", "advice": "저염소금(염화칼륨) 사용 금지. 정기 혈액검사 필수" },
+        { "drug_class": "칼륨 보전 이뇨제·ACE억제제·ARB", "caution": "고칼륨혈증 위험", "advice": "저염소금(염화칼륨) 사용 금지. 정기 혈액검사 필수", "requires_clinician": true, "goal_eligible": false },
         { "drug_class": "한약·건강보조식품", "caution": "성분 미상 신독성", "advice": "임의 복용 전 반드시 상담" }
       ],
       "warning_signs": ["소변량 급감", "전신 부종·호흡곤란", "심한 피로·구역", "근력 약화(고칼륨 의심)"]
