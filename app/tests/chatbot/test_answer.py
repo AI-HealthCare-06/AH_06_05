@@ -3,6 +3,9 @@
 from dataclasses import replace
 from typing import Any
 
+import httpx
+import pytest
+
 from app.services.chatbot.answer import (
     DISTRESS,
     FAREWELL,
@@ -17,7 +20,7 @@ from app.services.chatbot.answer import (
     output_guard,
 )
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
-from app.services.chatbot.llm import LLMError, Usage
+from app.services.chatbot.llm import LLMError, OpenAIChat, Usage
 from app.services.chatbot.pipeline import ANALYSIS_GUIDE, answer
 from app.services.rag.gate import Verdicts
 from app.services.rag.pipeline import Evidence, SearchResult
@@ -883,7 +886,7 @@ async def test_food_question_uses_only_food_evidence():
     # 음식 문장이 하나도 없으면 답 AI를 부르지 않고 근거 없음
     chat = FakeChat(classify=classified(category="medication"))
     r = await answer("같이 먹으면 안 되는 음식이 있나요?", S0, [], chat, search=FakeSearch(found(cyp)))
-    assert r.answer_type == "no_evidence" and "answer" not in chat.calls
+    assert r.answer_type == "no_evidence" and "answer" not in chat.calls and r.evidence_reason == "no_food_evidence"
     # 음식을 묻지 않으면 그대로
     chat = FakeChat(classify=classified(category="medication"))
     await answer("같이 먹으면 안 되는 약이 있나요?", S0, [], chat, search=FakeSearch(found(cyp)))
@@ -969,3 +972,27 @@ async def test_this_analysis_drug_question_answers_from_evidence():
             chat = FakeChat(classify=classified(category="medication"))
             r = await answer(q, info, [], chat, search=FakeSearch())
             assert r.content != ANALYSIS_GUIDE and r.safety_card is None and "answer" in chat.calls, q
+
+
+class _FailedOpenAI:
+    """httpx.AsyncClient 자리. OpenAI가 401을 돌려줌"""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+    async def post(self, url: str, **_: Any) -> httpx.Response:
+        return httpx.Response(401, request=httpx.Request("POST", url), json={"error": {"code": "expired"}})
+
+
+@sync
+async def test_openai_failure_logs_status_only(caplog, monkeypatch):
+    """키 만료(401)가 로그에 남지 않아 서버에서 원인을 못 찾음 (10/31). 상태 코드만 남기고 질문은 남기지 않음"""
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: _FailedOpenAI())
+    with pytest.raises(LLMError):
+        await OpenAIChat().complete_json(
+            "지시문", [{"role": "user", "content": "자몽주스 질문"}], {}, "answer", Usage()
+        )
+    assert "status=401" in caplog.text and "자몽" not in caplog.text
