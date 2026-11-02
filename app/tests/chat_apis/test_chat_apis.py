@@ -455,6 +455,25 @@ class TestFixedInfo(ChatCase):
         assert warning.focus_drug is None and missing.focus_drug is None
         assert warning.focus_warning == 1 and first.focus_warning is None and missing.focus_warning is None
 
+    async def test_daily_question_limit(self):
+        """하루 질문 상한은 1층을 지난 질문만 셈. 긴급 질문과 같은 질문 다시 보내기는 막지 않음. 0이면 끔 (#116)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f12@example.com")
+            sid = await self.session(client, headers)
+            with patch.object(config, "CHAT_DAILY_QUESTION_LIMIT", 2):
+                assert (await self.ask(client, headers, sid, "약은 언제 먹어요?", crid="q-1")).status_code == 202
+                assert (await self.ask(client, headers, sid, "가슴이 조이고 숨이 차요", crid="q-e")).status_code == 202
+                assert (await self.ask(client, headers, sid, "운동해도 돼요?", crid="q-2")).status_code == 202
+                res = await self.ask(client, headers, sid, "술 마셔도 돼요?", crid="q-3")
+                assert res.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                err = res.json()["error"]
+                assert err["code"] == "DAILY_LIMIT_EXCEEDED" and err["detail"] == {"limit": 2, "used": 2}
+                # 상한에 닿아도 긴급과 다시 보내기는 그대로
+                assert (await self.ask(client, headers, sid, "가슴이 조이고 숨이 차요", crid="q-e2")).status_code == 202
+                assert (await self.ask(client, headers, sid, "운동해도 돼요?", crid="q-2")).status_code == 202
+            with patch.object(config, "CHAT_DAILY_QUESTION_LIMIT", 0):
+                assert (await self.ask(client, headers, sid, "술 마셔도 돼요?", crid="q-3")).status_code == 202
+
     async def test_home_chat_uses_latest_done_analysis(self):
         """홈에서 연 대화(analysisId도 맥락 카드도 없음)는 가장 최근 완료 분석을 쓰고 대화에 적음 (#159).
         적어 두면 그 분석을 지울 때 이 대화도 같이 지워짐 (R-8, #100)"""

@@ -56,6 +56,14 @@ class ChatRepository:
             "id"
         )
 
+    async def questions_since(self, user: User, since: datetime) -> int:
+        """1층을 지난 질문 수. 1층이 잡은 질문은 원문을 저장하지 않아 빈 글이고, 맥락 카드는 질문이 아님"""
+        return (
+            await ChatMessage.filter(session__user=user, role=MessageRole.USER, created_at__gte=since)
+            .exclude(content="")
+            .count()
+        )
+
     async def get_by_request(self, session: ChatSession, client_request_id: str) -> ChatMessage | None:
         return await ChatMessage.get_or_none(session=session, client_request_id=client_request_id)
 

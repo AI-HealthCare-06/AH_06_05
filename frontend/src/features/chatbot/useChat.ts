@@ -34,6 +34,7 @@ export type PendingCard = { analysisId: number; context?: ChatContext };
 
 function toErrorKind(e: unknown): ErrorKind {
   if (e instanceof ApiError) {
+    if (e.code === 'DAILY_LIMIT_EXCEEDED') return { message: e.message }; // 내일까지 풀리지 않아 [다시 시도]를 숨김
     if (e.status === 429) return 'tooMany';
     if (e.status === 403) return { message: e.message };
   }

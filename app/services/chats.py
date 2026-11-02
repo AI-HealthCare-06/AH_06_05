@@ -150,6 +150,21 @@ def _in_safety_mode(s: ChatSession) -> bool:
     return bool(s.safety_mode_until and s.safety_mode_until > _now())
 
 
+async def _check_daily_limit(user: User) -> None:
+    """하루 질문 수가 상한에 닿으면 429. 1층을 지난 질문만 세고, 1층에 걸린 긴급과 자해는 여기까지 오지 않음 (#116)"""
+    limit = config.CHAT_DAILY_QUESTION_LIMIT
+    if limit <= 0:
+        return
+    used = await repo.questions_since(user, _now().replace(hour=0, minute=0, second=0, microsecond=0))
+    if used >= limit:
+        raise AppError(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "DAILY_LIMIT_EXCEEDED",
+            "오늘 질문을 다 쓰셨어요. 내일 다시 물어봐 주세요. 급한 내용은 약사나 의료진에게 확인해 주세요.",
+            detail={"limit": limit, "used": used},
+        )
+
+
 async def ask(
     user: User, session_id: int, content: str, client_request_id: str, emergency_dismissed: bool
 ) -> tuple[int, bool]:
@@ -182,6 +197,7 @@ async def ask(
         if "crisis" in blocked.safety_types:
             await repo.set_safety_mode(s.id, _next_midnight())
         return answer.id, False
+    await _check_daily_limit(user)
     # 입력 정책: 주민번호, 전화번호 같은 번호는 저장과 OpenAI로 가기 전에 가림. 1층은 위에서 원문을 봄 (10/31 수인 결정)
     answer = await repo.create_question_and_answer(
         s, mask_numbers(content), client_request_id, status=MessageStatus.GENERATING

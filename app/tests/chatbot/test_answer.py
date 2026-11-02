@@ -996,3 +996,19 @@ async def test_openai_failure_logs_status_only(caplog, monkeypatch):
             "지시문", [{"role": "user", "content": "자몽주스 질문"}], {}, "answer", Usage()
         )
     assert "status=401" in caplog.text and "자몽" not in caplog.text
+
+
+@sync
+async def test_openai_call_sets_max_tokens(monkeypatch):
+    """답이 끝없이 길어지지 않게 상한을 보냄 (#116)"""
+    seen: dict[str, Any] = {}
+
+    class Capture(_FailedOpenAI):
+        async def post(self, url: str, **kw: Any) -> httpx.Response:
+            seen.update(kw["json"])
+            return await super().post(url)
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: Capture())
+    with pytest.raises(LLMError):
+        await OpenAIChat().complete_json("지시문", [{"role": "user", "content": "질문"}], {}, "answer", Usage())
+    assert seen["max_tokens"] == 500
