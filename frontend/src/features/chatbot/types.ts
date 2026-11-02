@@ -5,9 +5,10 @@ export type ChatContext = { type: 'warning' | 'drug'; id: number };
 
 // 챗봇 창을 열 때 넘기는 값 (설계 메모 3-4 항목). from은 기록용이고 창 모양은 바꾸지 않음
 export type ChatParams = {
-  from: 'fab' | 'CM-03' | 'RG-02' | 'RG-03' | 'RG-04';
+  from: 'fab' | 'CM-03' | 'RG-02' | 'RG-03' | 'RG-04' | 'CB-03';
   analysisId?: number;
   context?: ChatContext;
+  sessionId?: number; // from = 'CB-03': 지난 대화 열기
 };
 
 // 서버 긴급, 자해 감지 결과 (원문 없음)
@@ -27,5 +28,8 @@ export type Message = {
   safety?: SafetyInfo;
   createdAt: string;
 };
+
+// H-4 ?date= 그날 대화 한 줄
+export type SessionItem = { sessionId: number; title: string; preview: string; createdAt: string; updatedAt: string };
 
 export type TodayResponse = { sessionId: number | null; hasHistory: boolean; safetyModeUntil: string | null };

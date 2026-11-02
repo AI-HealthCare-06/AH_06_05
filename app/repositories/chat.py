@@ -23,11 +23,49 @@ class ChatRepository:
     async def last_session_since(self, user: User, since: datetime) -> ChatSession | None:
         return await ChatSession.filter(user=user, created_at__gte=since).order_by("-id").first()
 
+    async def sessions_between(self, user: User, start: datetime, end: datetime) -> list[ChatSession]:
+        """줄이 없는 대화는 빼서 달력에 "기록 있음"으로 찍히지 않게 (설계 메모 3-5)"""
+        return (
+            await ChatSession.filter(
+                user=user, created_at__gte=start, created_at__lt=end, messages__id__not_isnull=True
+            )
+            .distinct()
+            .order_by("-created_at")
+        )
+
+    async def first_questions(self, session_ids: list[int]) -> dict[int, str]:
+        """대화마다 저장된 첫 질문. 1층이 잡은 질문은 원문이 없어 건너뜀"""
+        rows = (
+            await ChatMessage.filter(session_id__in=session_ids, role=MessageRole.USER)
+            .exclude(content="")
+            .order_by("-id")
+            .values("session_id", "content")
+        )
+        return {r["session_id"]: r["content"] for r in rows}  # 오래된 줄이 뒤에 와서 첫 질문이 남음
+
+    async def set_title(self, session_id: int, title: str) -> None:
+        await ChatSession.filter(id=session_id).update(title=title)
+
     async def has_session(self, user: User) -> bool:
         return await ChatSession.filter(user=user).exists()
 
     async def delete_session(self, session: ChatSession) -> None:
         await session.delete()  # 메시지는 DB가 같이 지움 (ON DELETE CASCADE)
+
+    async def clear_session(self, session: ChatSession) -> None:
+        """글은 모두 지우고 안전 모드 시각만 남김 (설계 메모 4-6). 줄이 없는 대화는 목록에 보이지 않음"""
+        await ChatMessage.filter(session=session).delete()
+        await ChatSession.filter(id=session.id).update(title=None)
+
+    async def sessions_of(self, user: User) -> list[ChatSession]:
+        return await ChatSession.filter(user=user)
+
+    async def safety_until(self, user: User, now: datetime) -> datetime | None:
+        """사용자의 대화 가운데 지금 켜진 안전 모드가 끝나는 시각"""
+        rows = await ChatSession.filter(user=user, safety_mode_until__gt=now).values_list(
+            "safety_mode_until", flat=True
+        )
+        return max(rows, default=None)
 
     async def delete_sessions_for_analysis(self, user: User, analysis_id: int) -> None:
         """R-8: 그 분석으로 시작한 대화, 그 분석의 맥락 카드가 붙은 대화, 그 분석으로 답한 대화를 지움 (명세서 R-8, #119 리뷰 10/23, #159).
@@ -56,6 +94,14 @@ class ChatRepository:
             "id"
         )
 
+    async def questions_since(self, user: User, since: datetime) -> int:
+        """1층을 지난 질문 수. 1층이 잡은 질문은 원문을 저장하지 않아 빈 글이고, 맥락 카드는 질문이 아님"""
+        return (
+            await ChatMessage.filter(session__user=user, role=MessageRole.USER, created_at__gte=since)
+            .exclude(content="")
+            .count()
+        )
+
     async def get_by_request(self, session: ChatSession, client_request_id: str) -> ChatMessage | None:
         return await ChatMessage.get_or_none(session=session, client_request_id=client_request_id)
 
@@ -69,6 +115,31 @@ class ChatRepository:
         return await ChatMessage.create(
             session=session, role=MessageRole.ASSISTANT, client_request_id=client_request_id, context_card=card
         )
+
+    async def create_card_with_answer(
+        self,
+        session: ChatSession,
+        client_request_id: str,
+        card: dict[str, Any],
+        content: str,
+        sources: list[dict[str, str]],
+    ) -> ChatMessage:
+        """맥락 카드 줄과 첫 답 줄을 한 번에 만듦. 첫 답 줄을 돌려줌 (H-7)"""
+        async with in_transaction():
+            await self.create_card(session, client_request_id, card)
+            return await ChatMessage.create(
+                session=session,
+                role=MessageRole.ASSISTANT,
+                content=content,
+                answer_type=AnswerType.NORMAL,
+                status=MessageStatus.DONE,
+                sources=sources,
+            )
+
+    async def first_message_after(self, card: ChatMessage) -> ChatMessage | None:
+        """카드 바로 뒤에 만든 첫 답 줄. 질문의 답 줄은 reply_to가 있고 다른 카드는 context_card가 있음"""
+        row = await ChatMessage.filter(session_id=card.session_id, id__gt=card.id).order_by("id").first()
+        return row if row and row.answer_type and not row.reply_to_id else None
 
     async def create_question_and_answer(
         self, session: ChatSession, content: str, client_request_id: str, **answer: Any

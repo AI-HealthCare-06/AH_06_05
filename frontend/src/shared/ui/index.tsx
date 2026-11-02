@@ -144,6 +144,7 @@ export function Screen({
   scroll = true,
   fab = false,
   onBack,
+  right,
 }: {
   title: string;
   children: ReactNode;
@@ -152,6 +153,7 @@ export function Screen({
   scroll?: boolean;
   fab?: boolean; // 챗봇 버튼이 떠 있는 탭 화면: 맨 아래 내용이 버튼에 가려지지 않게 여백을 둠
   onBack?: () => void;
+  right?: ReactNode; // 제목 줄 오른쪽 버튼
 }) {
   const router = useRouter();
   const ins = useSafeAreaInsets();
@@ -174,6 +176,7 @@ export function Screen({
           <Text style={st.barTitle} numberOfLines={1} accessibilityRole="header">
             {title}
           </Text>
+          {right}
         </View>
       </View>
       {scroll ? (

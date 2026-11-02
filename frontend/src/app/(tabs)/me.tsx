@@ -2,10 +2,12 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
+import { deleteAllSessions } from '@/features/chatbot/api';
 import { getMe, type Me as MeInfo } from '@/features/common/api';
 import { copy } from '@/shared/copy';
+import { clearFailed } from '@/shared/storage/chat';
 import { C, L, T } from '@/shared/theme';
-import { Btn, Card, Screen, Section } from '@/shared/ui';
+import { Btn, Card, Confirm, Screen, Section } from '@/shared/ui';
 
 const c = copy.me;
 
@@ -23,6 +25,8 @@ export default function Me() {
   const router = useRouter();
   const [me, setMe] = useState<MeInfo | null>(null);
   const [failed, setFailed] = useState(false);
+  const [asking, setAsking] = useState(false); // MY-S1-E1 전체 삭제 확인
+  const [notice, setNotice] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -35,6 +39,17 @@ export default function Me() {
       };
     }, []),
   );
+
+  const removeChats = async () => {
+    setAsking(false);
+    try {
+      await deleteAllSessions();
+      await clearFailed(); // 기기에 남긴 실패한 질문도
+      setNotice(c.chatsDeleted);
+    } catch {
+      setNotice(c.chatsDeleteFail);
+    }
+  };
 
   const h = me?.health;
   const or = (v: string | null | undefined) => v ?? c.none;
@@ -88,8 +103,20 @@ export default function Me() {
                   <Text style={[T.body, { color: C.text3 }]}>›</Text>
                 </Pressable>
               ))}
+              <Pressable accessibilityRole="button" onPress={() => setAsking(true)} style={{ minHeight: L.touch, justifyContent: 'center' }}>
+                <Text style={[T.body, { color: C.danger }]}>{c.chatsDelete}</Text>
+              </Pressable>
             </Card>
+            {notice && <Text style={T.caption}>{notice}</Text>}
           </Section>
+          <Confirm
+            visible={asking}
+            title={c.chatsDeleteTitle}
+            body={c.chatsDeleteBody}
+            ok={copy.chatbot.sessionDelete}
+            onOk={() => void removeChats()}
+            onCancel={() => setAsking(false)}
+          />
         </>
       )}
     </Screen>

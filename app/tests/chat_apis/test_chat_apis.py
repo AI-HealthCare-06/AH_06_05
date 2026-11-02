@@ -5,14 +5,14 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
 from starlette import status
 
 from app.core import config
-from app.models.analysis import Analysis, AnalysisStatus, DrugGuide, ReviewStatus
+from app.models.analysis import Analysis, AnalysisStatus, AnalysisWarning, DrugGuide, ReviewStatus
 from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import PrescriptionItem
 from app.models.users import ConsentType, UserConsent
@@ -115,6 +115,53 @@ class TestSessions(ChatCase):
             sid = await self.session(client, headers, context={"type": "warning", "id": 9001})
         s = await ChatSession.get(id=sid)
         assert (s.context_type, s.context_ref) == ("warning", 9001)
+
+    async def test_session_history_by_month_and_date(self):
+        """H-4: ?month=는 기록 있는 날짜, ?date=는 그날 대화. 날짜는 대화를 시작한 때(한국 시간). 제목이 없으면 첫 질문 앞부분"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f20@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "가슴이 조이고 숨이 차요", crid="q-e")  # 1층: 원문 없음
+            long_q = "혈압약을 아침에 먹는 게 좋은지 저녁에 먹는 게 좋은지 궁금해서 여쭤봐요 정말로요"
+            await self.ask(client, headers, sid, long_q, crid="q-1")
+            old = await self.session(client, headers, crid="s-2")
+            await self.ask(client, headers, old, "가슴이 조이고 숨이 차요", crid="q-o")  # 원문이 없어 제목은 "대화"
+            nothing = await self.session(client, headers, crid="s-3")  # 줄이 없는 대화는 목록에 없음
+            await ChatSession.filter(id=nothing).update(created_at=datetime(2026, 9, 3, 9, tzinfo=config.TIMEZONE))
+            at = datetime(2026, 9, 16, 23, 30, tzinfo=config.TIMEZONE)
+            await ChatSession.filter(id=old).update(created_at=at)
+            today = datetime.now(config.TIMEZONE).date()
+
+            res = await client.get(f"{API}?month={today:%Y-%m}", headers=headers)
+            assert res.status_code == 200 and res.json() == {"dates": [today.isoformat()]}
+            assert (await client.get(f"{API}?month=2026-09", headers=headers)).json() == {"dates": ["2026-09-16"]}
+
+            items = (await client.get(f"{API}?date={today}", headers=headers)).json()["items"]
+            assert [i["sessionId"] for i in items] == [sid]
+            assert items[0]["title"] == long_q[:30] and items[0]["preview"] == long_q[:60]
+            assert items[0]["createdAt"] and items[0]["updatedAt"]
+            empty = (await client.get(f"{API}?date=2026-09-16", headers=headers)).json()["items"][0]
+            assert empty["sessionId"] == old and empty["title"] == "대화" and empty["preview"] == ""
+
+            for bad in ("", "?date=2026-13-40", "?month=2026", f"?date={today}&month=2026-09"):
+                assert (await client.get(f"{API}{bad}", headers=headers)).status_code == 400, bad
+
+    async def test_session_title_update(self):
+        """H-5: 앞뒤 공백을 지운 뒤 1~30자. 남의 대화는 404"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f21@example.com")
+            h2, _ = await self.auth(client, "f22@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "혈압약은 언제 먹어요?")
+            res = await client.patch(f"{API}/{sid}", json={"title": " 혈압약 복용 시간 "}, headers=headers)
+            assert res.status_code == 200 and res.json() == {"sessionId": sid, "title": "혈압약 복용 시간"}
+            today = datetime.now(config.TIMEZONE).date()
+            items = (await client.get(f"{API}?date={today}", headers=headers)).json()["items"]
+            assert items[0]["title"] == "혈압약 복용 시간"
+            for title in ("   ", "가" * 31):
+                res = await client.patch(f"{API}/{sid}", json={"title": title}, headers=headers)
+                assert res.status_code == 400 and res.json()["error"]["code"] == "VALIDATION_ERROR"
+            assert (await client.patch(f"{API}/{sid}", json={"title": "남"}, headers=h2)).status_code == 404
 
     async def test_other_users_data_is_404(self):
         async with self.client() as client:
@@ -378,6 +425,46 @@ class TestAsk(ChatCase):
         assert items[-2]["content"] == "" and items[-1]["safety"]["types"] == ["crisis"]
         assert items[-1]["safety"]["rule"] == "safety_mode_amount"
 
+    async def test_safety_mode_follows_user_to_past_chat(self):
+        """지난 대화를 열어(CB-03) 물어도 오늘 안전 모드가 그대로. 양 질문은 원문 없이 E5로 (제안, 11/2)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "a14@example.com")
+            old = await self.session(client, headers, crid="s-old")
+            await ChatSession.filter(id=old).update(created_at=datetime.now(config.TIMEZONE) - timedelta(days=3))
+            sid = await self.session(client, headers, crid="s-new")
+            await self.ask(client, headers, sid, CRISIS_TEXT)
+            await self.ask(client, headers, old, "노바스크 한 번에 몇 알 먹어요?", crid="q-2")
+            items = await self.items(client, headers, old)
+        assert self.fake.calls == []
+        assert items[-1]["safety"]["rule"] == "safety_mode_amount"
+
+    async def test_deleting_chats_keeps_safety_mode(self):
+        """대화를 지워도(H-6, 전체 삭제) 자정까지 안전 모드가 남고, 글은 모두 지워지며 목록에 보이지 않음 (설계 메모 4-6)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "a15@example.com")
+            for how in ("one", "all"):
+                sid = await self.session(client, headers, crid=f"s-{how}")
+                await self.ask(client, headers, sid, CRISIS_TEXT, crid=f"q-{how}")
+                url = f"{API}/{sid}" if how == "one" else API
+                assert (await client.delete(url, headers=headers)).status_code == 204
+                today = (await client.get(f"{API}/today", headers=headers)).json()
+                assert datetime.fromisoformat(today["safetyModeUntil"]) == next_midnight()
+                assert await ChatMessage.filter(session_id=sid).count() == 0
+                day = datetime.now(config.TIMEZONE).date().isoformat()
+                listed = (await client.get(f"{API}?date={day}", headers=headers)).json()["items"]
+                assert listed == []
+
+    async def test_delete_all_sessions_only_mine(self):
+        """전체 삭제 (MY-S1): 내 대화만 지움"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "a16@example.com")
+            other, _ = await self.auth(client, "a17@example.com")
+            mine = await self.session(client, headers, crid="s-1")
+            theirs = await self.session(client, other, crid="s-2")
+            assert (await client.delete(API, headers=headers)).status_code == 204
+            assert (await client.get(f"{API}/{mine}/messages", headers=headers)).status_code == 404
+            assert (await client.get(f"{API}/{theirs}/messages", headers=other)).status_code == 200
+
     async def test_amount_question_without_safety_mode_goes_to_answer(self):
         """안전 모드가 아니면 같은 질문도 보통 흐름으로. 안전 모드여도 때를 묻는 질문은 보통 흐름"""
         async with self.client() as client:
@@ -454,6 +541,25 @@ class TestFixedInfo(ChatCase):
         assert after_other.focus_drug is None
         assert warning.focus_drug is None and missing.focus_drug is None
         assert warning.focus_warning == 1 and first.focus_warning is None and missing.focus_warning is None
+
+    async def test_daily_question_limit(self):
+        """하루 질문 상한은 1층을 지난 질문만 셈. 긴급 질문과 같은 질문 다시 보내기는 막지 않음. 0이면 끔 (#116)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f12@example.com")
+            sid = await self.session(client, headers)
+            with patch.object(config, "CHAT_DAILY_QUESTION_LIMIT", 2):
+                assert (await self.ask(client, headers, sid, "약은 언제 먹어요?", crid="q-1")).status_code == 202
+                assert (await self.ask(client, headers, sid, "가슴이 조이고 숨이 차요", crid="q-e")).status_code == 202
+                assert (await self.ask(client, headers, sid, "운동해도 돼요?", crid="q-2")).status_code == 202
+                res = await self.ask(client, headers, sid, "술 마셔도 돼요?", crid="q-3")
+                assert res.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                err = res.json()["error"]
+                assert err["code"] == "DAILY_LIMIT_EXCEEDED" and err["detail"] == {"limit": 2, "used": 2}
+                # 상한에 닿아도 긴급과 다시 보내기는 그대로
+                assert (await self.ask(client, headers, sid, "가슴이 조이고 숨이 차요", crid="q-e2")).status_code == 202
+                assert (await self.ask(client, headers, sid, "운동해도 돼요?", crid="q-2")).status_code == 202
+            with patch.object(config, "CHAT_DAILY_QUESTION_LIMIT", 0):
+                assert (await self.ask(client, headers, sid, "술 마셔도 돼요?", crid="q-3")).status_code == 202
 
     async def test_home_chat_uses_latest_done_analysis(self):
         """홈에서 연 대화(analysisId도 맥락 카드도 없음)는 가장 최근 완료 분석을 쓰고 대화에 적음 (#159).
@@ -614,6 +720,102 @@ class TestFixedInfo(ChatCase):
                 await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
             items = await self.items(client, headers, sid)
         assert self.fake.calls[0]["info"].drugs[0].ingredient == "" and items[-1]["status"] == "done"
+
+    async def test_first_message_for_drug_card(self):
+        """H-7: 약 카드는 쓰임과 먹는 법으로 첫 답. AI 없이 만들고, 같은 요청을 다시 보내면 줄을 새로 만들지 않음 (#116)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f30@example.com")
+            await DrugGuide.create(
+                edi_code="641900040",
+                content={"purpose": "혈압 관리에 쓰는 약이에요"},
+                review_status=ReviewStatus.APPROVED,
+            )
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            item = (await PrescriptionItem.filter(prescription=rx).first()).id
+            sid = await self.session(client, headers, analysisId=aid)
+            body = {"analysisId": aid, "context": {"type": "drug", "id": item}, "clientRequestId": "ctx-1"}
+            res = await client.post(f"{API}/{sid}/context", json=body, headers=headers)
+            assert res.status_code == 201
+            first = res.json()["firstMessage"]
+            assert "혈압 관리에 쓰는 약이에요" in first["content"] and first["answerType"] == "normal"
+            assert first["sources"] == [{"title": "심평원 약제급여목록 약효분류", "basedOn": "2026-09-01"}]
+            again = await client.post(f"{API}/{sid}/context", json=body, headers=headers)
+            assert again.json()["firstMessage"]["id"] == first["id"]
+            items = await self.items(client, headers, sid)
+        assert [i["id"] for i in items if i.get("answerType")] == [first["id"]]
+        assert self.fake.calls == []  # 답 AI를 부르지 않음
+
+    async def test_first_message_source_follows_the_guide_source(self):
+        """시연 약은 "무엇에 쓰나요"가 허가정보에서 나옴: 안내문의 source를 출처로 (복약 안내 카드와 같게). 없을 때만 약효분류와 기준일 (#193 채연 리뷰)"""
+        permit = "식약처 의약품 허가정보 (품목기준코드 199603456, 허가일 2018-05-02)"
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f37@example.com")
+            await DrugGuide.create(
+                edi_code="641900040",
+                content={"purpose": "혈압 관리에 쓰는 약이에요", "source": permit},
+                review_status=ReviewStatus.APPROVED,
+            )
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            item = (await PrescriptionItem.filter(prescription=rx).first()).id
+            sid = await self.session(client, headers, analysisId=aid)
+            body = {"analysisId": aid, "context": {"type": "drug", "id": item}, "clientRequestId": "ctx-s1"}
+            first = (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).json()["firstMessage"]
+        assert first["sources"] == [{"title": permit}]
+
+    async def test_first_message_for_warning_card_uses_template(self):
+        """H-7: 경고 카드는 점검 문장(템플릿) 그대로 + 상담 안내. 경고 문구를 AI가 만들지 않음 (NFR-032, 설계 메모 4-4)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f31@example.com")
+            rx = await self.prescription(user, ["641900040", "644300010"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            a, b = await PrescriptionItem.filter(prescription=rx).order_by("id")
+            w = await AnalysisWarning.create(
+                analysis_id=aid, warning_type="contra", severity="high", item_a=a, item_b=b,
+                summary="함께 먹으면 안 되는 약이에요", source="병용금기 고시", notice_date=date(2025, 3, 31),
+            )  # fmt: skip
+            sid = await self.session(client, headers, analysisId=aid)
+            body = {"analysisId": aid, "context": {"type": "warning", "id": w.id}, "clientRequestId": "ctx-1"}
+            first = (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).json()["firstMessage"]
+        assert "함께 먹으면 안 되는 약이에요" in first["content"]
+        assert first["content"].endswith("처방한 의사나 약사에게 꼭 알려 주세요.")
+        assert first["sources"] == [{"title": "병용금기 고시", "basedOn": "2025-03-31"}]  # 고시일
+
+    async def test_first_message_for_warning_card_adds_reason_as_written(self):
+        """H-7: DUR 사유가 있으면 경고 자세히 화면처럼 "원문:"으로 그대로 붙임. "-"처럼 내용이 없으면 뺌 (설계 메모 4-4)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f32@example.com")
+            rx = await self.prescription(user, ["641900040", "644300010"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            a, b = await PrescriptionItem.filter(prescription=rx).order_by("id")
+            common = {"analysis_id": aid, "warning_type": "contra", "severity": "high", "item_a": a, "item_b": b}
+            w1 = await AnalysisWarning.create(
+                **common, summary="문장", source="고시", reason="근육병증의 위험 증가 가능"
+            )
+            w2 = await AnalysisWarning.create(**common, summary="문장", source="고시", reason=" - ")
+            sid = await self.session(client, headers, analysisId=aid)
+            texts = []
+            for i, w in enumerate((w1, w2)):
+                body = {"analysisId": aid, "context": {"type": "warning", "id": w.id}, "clientRequestId": f"ctx-r{i}"}
+                res = await client.post(f"{API}/{sid}/context", json=body, headers=headers)
+                texts.append(res.json()["firstMessage"]["content"])
+        assert "원문: 근육병증의 위험 증가 가능" in texts[0]
+        assert "원문" not in texts[1]
+
+    async def test_no_first_message_without_target(self):
+        """분석 요약 카드, 그 분석에 없는 번호에는 첫 답이 없음. 남의 경고가 새지 않음"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f32@example.com")
+            aid = (await self.start(client, headers, await self.prescription(user, ["641900040"]))).json()["analysisId"]
+            sid = await self.session(client, headers, analysisId=aid)
+            plain = {"analysisId": aid, "clientRequestId": "ctx-1"}
+            assert "firstMessage" not in (await client.post(f"{API}/{sid}/context", json=plain, headers=headers)).json()
+            for kind in ("drug", "warning"):
+                body = {"analysisId": aid, "context": {"type": kind, "id": 999999}, "clientRequestId": f"ctx-{kind}"}
+                assert (
+                    "firstMessage" not in (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).json()
+                )
 
     async def test_pair_warnings_of_the_analysis_are_passed(self):
         """⑤에 쓰는 약 두 개짜리 경고. 이름은 분석 화면과 같은 처방 이름 그대로 (10/26 수인 결정)"""

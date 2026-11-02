@@ -204,5 +204,5 @@ function routeFlow(method: Method, path: string, body: Record<string, unknown>):
   if (method === 'POST' && route(/^\/habit-goals$/)) return mc.createGoalsMock(body);
   if (method === 'GET' && route(/^\/habit-goals\/today$/)) return mc.todayMock();
   if (method === 'POST' && (m = route(/^\/habit-goals\/(\d+)\/records$/))) return mc.recordMock(Number(m[1]), body);
-  return routeChat(method, p, body);
+  return routeChat(method, p + url.search, body);
 }

@@ -4,12 +4,24 @@
 // - "끊김"이 들어간 질문: 처음 한 번은 질문을 저장하지 않고 500 (서버에 닿지 못한 E6). 다시 시도하면 받음
 // - 그 밖의 질문: 3초 뒤 답 완성 (그동안 generating)
 type Row = Record<string, unknown> & { id: number; role: 'user' | 'assistant'; status: 'generating' | 'done' };
-type Session = { id: number; crid: string; createdAt: number; rows: Row[]; safetyUntil: string | null };
+type Session = { id: number; crid: string; createdAt: number; rows: Row[]; safetyUntil: string | null; title?: string };
 
 const ANSWER_MS = 3000;
 const KST_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const sessions: Session[] = [];
+// 대화 기록 화면 확인용 지난 대화 하나 (사흘 전)
+const sessions: Session[] = [
+  {
+    id: 9001,
+    crid: 'seed',
+    createdAt: Date.now() - 3 * DAY_MS,
+    safetyUntil: null,
+    rows: [
+      { id: 9002, role: 'user', status: 'done', content: '혈압약은 아침에 먹는 게 좋아요?', createdAt: new Date(Date.now() - 3 * DAY_MS).toISOString() },
+      { id: 9003, role: 'assistant', status: 'done', replyTo: 9002, answerType: 'normal', content: '혈압약은 매일 같은 시간에 드시는 게 좋아요.', sources: [{ title: '식약처 의약품 허가정보' }], createdAt: new Date(Date.now() - 3 * DAY_MS).toISOString() },
+    ],
+  },
+];
 const crids = new Map<string, number>(); // clientRequestId → 질문 줄 번호
 const failOnce = new Set<number>(); // 한 번 실패시킬 질문 줄
 const readyAt = new Map<number, number>(); // 답 줄 → 완성 시각
@@ -54,6 +66,22 @@ export function routeChat(method: string, p: string, body: Record<string, unknow
     const today = [...sessions].reverse().find((s) => kstDay(s.createdAt) === kstDay(Date.now()));
     return reply(200, { sessionId: today?.id ?? null, hasHistory: sessions.length > 0, safetyModeUntil: today?.safetyUntil ?? null });
   }
+  if (method === 'GET' && p.startsWith('/chat/sessions?')) {
+    const q = new URLSearchParams(p.split('?')[1]);
+    const dayOf = (s: Session) => iso(s.createdAt).slice(0, 10);
+    const used = sessions.filter((s) => s.rows.length > 0);
+    const month = q.get('month');
+    if (month) return reply(200, { dates: [...new Set(used.map(dayOf).filter((d) => d.startsWith(month)))].sort() });
+    const first = (s: Session) => String(s.rows.find((r) => r.role === 'user' && r.content)?.content ?? '');
+    const items = used
+      .filter((s) => dayOf(s) === q.get('date'))
+      .map((s) => ({ sessionId: s.id, title: s.title || first(s).slice(0, 30) || '대화', preview: first(s).slice(0, 60), createdAt: iso(s.createdAt), updatedAt: iso(s.createdAt) }));
+    return reply(200, { items });
+  }
+  if (method === 'DELETE' && p === '/chat/sessions') {
+    sessions.length = 0;
+    return reply(204, null);
+  }
   if (method === 'POST' && p === '/chat/sessions') {
     const crid = String(body.clientRequestId);
     const found = sessions.find((s) => s.crid === crid);
@@ -76,6 +104,8 @@ export function routeChat(method: string, p: string, body: Record<string, unknow
       crids.set(crid, id);
       const card = { analysisId: body.analysisId, ...(body.context ? { context: body.context } : {}) };
       s.rows.push({ id, role: 'assistant', content: '', status: 'done', contextCard: card, createdAt: iso() });
+      // 경고나 약을 고른 카드는 서버처럼 첫 답 줄을 같이 만듦 (H-7)
+      if (body.context) s.rows.push({ id: ++seq, role: 'assistant', content: '분석 결과에서 확인한 내용이에요.', answerType: 'normal', sources: [], status: 'done', createdAt: iso() });
     }
     return reply(201, {});
   }
@@ -120,6 +150,10 @@ export function routeChat(method: string, p: string, body: Record<string, unknow
     readyAt.set(a.id, Date.now() + ANSWER_MS);
     s.rows.push(a);
     return reply(202, { messageId: a.id });
+  }
+  if (method === 'PATCH' && /^\/chat\/sessions\/\d+$/.test(p)) {
+    s.title = String(body.title ?? '').trim();
+    return reply(200, { sessionId: s.id, title: s.title });
   }
   if (method === 'DELETE' && /^\/chat\/sessions\/\d+$/.test(p)) {
     sessions.splice(sessions.indexOf(s), 1);

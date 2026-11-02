@@ -52,6 +52,7 @@ class OpenAIChat:
         body = {
             "model": config.OPENAI_CHAT_MODEL,
             "temperature": 0,
+            "max_tokens": config.OPENAI_CHAT_MAX_TOKENS,
             "messages": [{"role": "system", "content": system}, *messages],
             "response_format": {"type": "json_schema", "json_schema": {"name": name, "schema": schema, "strict": True}},
         }

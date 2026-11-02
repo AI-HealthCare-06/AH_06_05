@@ -12,6 +12,8 @@ function RootStack({ signedIn }: { signedIn: boolean }) {
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="chat" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="chat-history" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="chat-history-day" options={{ presentation: 'modal' }} />
         <Stack.Screen name="capture" />
         <Stack.Screen name="recognize" />
         <Stack.Screen name="analyzing" options={{ gestureEnabled: false }} />

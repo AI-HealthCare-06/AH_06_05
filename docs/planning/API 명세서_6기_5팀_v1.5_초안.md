@@ -369,8 +369,8 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | H-1 | POST | `/chat/sessions` | 대화 시작 | CB-01 · CB-01-E1 · CB-01-E2 | 수인 | ✅ |
 | H-2 | GET | `/chat/sessions/{id}/messages` | 이전 대화 조회 | CB-01 | 수인 | ✅ |
 | H-3 | POST | `/chat/sessions/{id}/messages` | 질문 보내기 (`202`로 받고 답은 H-2로 확인) | CB-01 · CB-01-E2 | 수인 | ✅ |
-| H-4 | GET | `/chat/sessions?date=` · `?month=` | 날짜별 대화 목록 | CB-02 · CB-03 | 수인 | ⚪ |
-| H-5 | PATCH | `/chat/sessions/{id}` | 대화 제목 수정 | CB-03 | 수인 | ⚪ |
+| H-4 | GET | `/chat/sessions?date=` · `?month=` | 날짜별 대화 목록 | CB-02 · CB-03 | 수인 | 🟡 |
+| H-5 | PATCH | `/chat/sessions/{id}` | 대화 제목 수정 | CB-03 | 수인 | 🟡 |
 | H-6 | DELETE | `/chat/sessions/{id}` | 대화 삭제 | CB-03 · MY-S1 | 수인 | ✅ |
 | H-7 | POST | `/chat/sessions/{id}/context` | 오늘 대화에 분석 맥락 붙이기 (1단계) | CB-01-E2 | 수인 | ✅ |
 | H-8 | GET | `/chat/sessions/today` | 오늘 대화 찾기 (찾기만 하고 만들지 않음) | CB-01 · CB-01-E1 | 수인 | 🟡 |
@@ -1172,8 +1172,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 ```json
 { "sessionId": 301, "firstMessage": { "id": 9103, "role": "assistant", "content": "...", "answerType": "normal", "sources": [], "createdAt": "2026-10-12T09:10:00+09:00" } }
 ```
-- `firstMessage`는 `context`가 있을 때만 있음 (H-7 응답과 같은 모양). `context`가 없으면 칸을 생략
-- #100에서는 `firstMessage`를 아직 보내지 않음 (#116)
+- (제안, 11/2) `firstMessage`는 맥락 카드를 만드는 H-7에서만 줌. 앱은 H-1 뒤에 H-7을 부르므로 H-1 응답에는 칸이 없음
 - 대화는 첫 질문 때 만들고, 첫 답변이 있는 진입(경고나 약에서 챗봇을 연 경우)만 들어올 때 만듦 (수인 10/12)
 
 ### H-2. 이전 대화 `GET /chat/sessions/{id}/messages`
@@ -1209,6 +1208,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 - `emergencyDismissed` (선택, 기본 `false`): [지금은 증상이 없어요] 뒤 같은 질문을 다시 보낼 때 `true`. 1층 응급 규칙과 2층 `emergency`를 건너뛰고, 자해(`crisis`)는 그대로 봄 (설계 메모 3-3, 2층은 10/22, #100)
 - 앱이 E6을 보여 주는 때: 질문을 보낸 때부터 30초가 지나도 `done`이 아닐 때(설계 메모 0-1 항목 7), `messageId` 줄이 없어졌을 때(10/22)
 - 글자가 차례로 나오는 방식(SSE)은 2단계에 다시 봄
+- 하루 질문 상한(`CHAT_DAILY_QUESTION_LIMIT`, 기본 0은 끔): 한국 시간 자정부터 1층을 지난 질문 수가 상한에 닿으면 `429 DAILY_LIMIT_EXCEEDED` (`detail`: `limit`, `used`). 1층에 걸린 긴급과 자해, 같은 `clientRequestId`로 다시 보내기는 막지 않음. 앱은 서버 문구를 보이고 [다시 시도]를 숨김 (#116)
 
 **응답 `202`**
 ```json
@@ -1249,25 +1249,30 @@ H-2 답 줄에 더하는 칸 (10/12 수인 확정, 10/22 H-3 응답에서 옮김
 | `crisis` | 도움 연결 | CB-01-E5 (REQ-131) |
 | `error` | 연결 오류 | CB-01-E6 — **프론트 전용**, 서버는 보내지 않음 (REQ-132) |
 
-### H-4. 날짜별 대화 목록 `GET /chat/sessions?date=2026-09-16` ⚪
+### H-4. 날짜별 대화 목록 `GET /chat/sessions?date=2026-09-16` 🟡
 
 CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → 그날 대화 목록)
 ```json
 { "items": [ { "sessionId": 301, "title": "혈압약 먹는 시간 질문", "preview": "아침에 먹는 게 좋은지...", "createdAt": "2026-09-16T09:10:00+09:00", "updatedAt": "2026-09-16T09:12:00+09:00" } ] }
 ```
-날짜별 여러 대화 구조로 확정될 때만 구현 (REQ-077)
 - `createdAt` (10/12 수인): 날짜와 카드에 보이는 시각은 대화를 시작한 시각 기준
+- (제안, 11/2) `?month=` 응답은 `{ "dates": ["2026-09-16"] }`. `date`와 `month`는 둘 중 하나만, 형식이 틀리면 `400 VALIDATION_ERROR`
+- (제안, 11/2) `title`은 고친 제목, 없으면 저장된 첫 질문 앞 30자, 그것도 없으면 "대화". `preview`는 첫 질문 앞 60자. 1층이 잡은 질문은 원문이 없어 쓰지 않음
+- 1단계는 하루 한 대화라 `?date=` 목록은 보통 1개
 
-### H-5. 대화 제목 수정 `PATCH /chat/sessions/{id}` ⚪
+### H-5. 대화 제목 수정 `PATCH /chat/sessions/{id}` 🟡
 
 ```json
 { "title": "혈압약 복용 시간" }
 ```
+- (제안, 11/2) 앞뒤 공백을 지운 뒤 1~30자, 벗어나면 `400 VALIDATION_ERROR`. 응답 `200` `{ "sessionId": 301, "title": "혈압약 복용 시간" }`. 남의 대화는 `404`
 
 ### H-6. 대화 삭제 `DELETE /chat/sessions/{id}`
 
 **응답 `204`** (내용 없음)
-- CB-03 대화 삭제에서 씀. MY-S1 전체 삭제는 (제안) 대화마다 이 API를 부르고, 대화가 많아지면 전체 삭제 API를 따로 만듦
+- CB-03 대화 삭제에서 씀
+- (제안, 11/2) MY-S1 전체 삭제는 `DELETE /chat/sessions`, 응답 `204`. 대화마다 부르려면 전체 대화 목록이 필요해서 따로 만듦
+- (제안, 11/2) 안전 모드가 켜진 대화는 글만 지우고 끝나는 시각을 자정까지 남김. 줄이 없는 대화는 H-4에 나오지 않음
 - 지운 대화는 되돌릴 수 없음. 서버에서도 30일 안에 완전히 지움 (MY-S1 안내 문구)
 - 남의 대화 · 없는 대화는 `404`
 
@@ -1280,7 +1285,7 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 ```
 **응답 `201`** `{ "firstMessage": { "id": 9103, "role": "assistant", "content": "...", "answerType": "normal", "sources": [], "createdAt": "..." } }`
 - 맥락 카드 메시지(`contextCard`)를 대화에 넣고, `context`가 있으면 첫 답변(`firstMessage`)도 함께 줌. 없으면 `firstMessage` 생략
-- #100에서는 `firstMessage`를 아직 보내지 않음 (#116)
+- (제안, 11/2) 첫 답변은 AI 없이 분석 결과의 글로 만듦. 경고는 약 이름, 점검 문장(`summary`), 상담 안내. 약은 약 이름, 쓰임(승인된 안내문), 먹는 법. 민감정보 동의가 없거나 그 분석에 없는 번호면 생략. 같은 `clientRequestId`로 다시 보내면 처음 만든 첫 답변을 돌려줌
 - 오늘 대화가 아직 없으면 H-1로 먼저 만든 뒤 호출
 - 같은 `clientRequestId`로 다시 보내면 맥락 카드 줄을 새로 만들지 않음 (10/22, #100)
 - 10/6 회의에서 확인 (챗봇 설계 v0.7)
@@ -1295,7 +1300,7 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 ```
 - `sessionId`: 오늘 시작한 마지막 대화. 없으면 `null` (빈 첫 대화 화면 CB-01-E1)
 - `hasHistory`: 지난 대화가 하나라도 있는지. 첫 대화 화면의 문구가 달라짐
-- `safetyModeUntil`: 자해 표현 뒤 안전 모드가 끝나는 시각. 없으면 `null`. 1단계는 같은 대화 안에서만, `crisis`가 나온 날 자정(한국 시간)까지 씀 (ERD `chat_sessions.safety_mode_until`, 자정은 10/22 #100)
+- `safetyModeUntil`: 자해 표현 뒤 안전 모드가 끝나는 시각. 없으면 `null`. `crisis`가 나온 날 자정(한국 시간)까지 씀. 지난 대화를 열어도(CB-03) 같이 적용 (제안, 11/2) (ERD `chat_sessions.safety_mode_until`, 자정은 10/22 #100)
 - 2단계에서 `?analysisId=&contextType=&contextId=`로 같은 날, 같은 대상의 대화를 찾도록 넓힘
 
 ### 2단계 API (H-9 ~ H-11, 1장 전체 목록에도 ⚪로 있음) ⚪

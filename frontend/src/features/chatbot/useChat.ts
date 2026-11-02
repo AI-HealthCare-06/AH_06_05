@@ -3,12 +3,13 @@
 // - 보낸 때부터 30초가 지나거나 답 줄이 없어지면 E6. [다시 시도]는 같은 clientRequestId (서버가 같은 답 줄을 주거나 새로 만듦)
 // - 질문 원문은 메모리에만 둠 (1층이 잡은 질문은 서버에 원문이 없음). 앱 로그에 남기지 않음
 // - 예외: 실패한 질문은 기기에 남겨 창을 다시 열어도 E6 카드와 함께 보임 (설계 메모 4-7, shared/storage/chat.ts)
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '@/shared/api/client';
 import { loadFailed, saveFailed, type SavedQuestion } from '@/shared/storage/chat';
 
-import { addContext, findToday, getMessages, sendQuestion, startSession } from './api';
+import { addContext, findToday, getMessages, removalCount, sendQuestion, startSession } from './api';
 import { newRequestId, nextKstMidnight } from './time';
 import type { ChatContext, ChatParams, Message } from './types';
 
@@ -34,6 +35,7 @@ export type PendingCard = { analysisId: number; context?: ChatContext };
 
 function toErrorKind(e: unknown): ErrorKind {
   if (e instanceof ApiError) {
+    if (e.code === 'DAILY_LIMIT_EXCEEDED') return { message: e.message }; // 내일까지 풀리지 않아 [다시 시도]를 숨김
     if (e.status === 429) return 'tooMany';
     if (e.status === 403) return { message: e.message };
   }
@@ -154,7 +156,7 @@ export function useChat(params: ChatParams) {
       const today = await findToday();
       setHasHistory(today.hasHistory);
       if (today.safetyModeUntil) setSafetyUntil(Date.parse(today.safetyModeUntil));
-      let sid = today.sessionId;
+      let sid = params.sessionId ?? today.sessionId; // CB-03에서 연 지난 대화
       setSession(sid); // 아래 단계가 실패해도 첫 질문 때 오늘 대화를 또 만들지 않게
       let list: Message[] = [];
       if (sid !== null) list = await getMessages(sid);
@@ -191,11 +193,21 @@ export function useChat(params: ChatParams) {
     } finally {
       setLoading(false);
     }
-  }, [params.analysisId, params.context]);
+  }, [params.analysisId, params.context, params.sessionId]);
 
   useEffect(() => {
     void open();
   }, [open]);
+
+  // 대화 기록이나 내 정보에서 대화를 지우고 돌아오면 오늘 대화를 다시 찾음 (설계 메모 4-13)
+  const seenRemovals = useRef(removalCount());
+  useFocusEffect(
+    useCallback(() => {
+      if (seenRemovals.current === removalCount()) return;
+      seenRemovals.current = removalCount();
+      void open();
+    }, [open]),
+  );
 
   // 기다리는 답이 있으면 2초마다
   const waiting = pending.some((q) => q.answerId !== undefined && !q.error) || messages.some((m) => m.status === 'generating');

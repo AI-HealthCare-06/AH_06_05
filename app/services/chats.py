@@ -8,7 +8,7 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from starlette import status
@@ -47,6 +47,13 @@ ANSWER_TIMEOUT_SEC = JOB_LIMIT_SEC
 STALE_SEC = 30  # 만드는 중으로 이보다 오래된 답 줄은 다시 시도 때 지우고 새로 만듦 (명세서 H-3)
 USABLE = (MatchStatus.AUTO, MatchStatus.USER_CONFIRMED)
 DRUG_SOURCE = "식약처 의약품 허가정보"  # 근거 번호 D:<약코드>:S12 (허가정보 문장)
+
+
+WARNING_FIRST_TAIL = "처방한 의사나 약사에게 꼭 알려 주세요."  # 설계 메모 4-4, 6-1 E2 첫 답변
+# CB-03 대화 카드 (제안). 제목을 고치지 않은 대화는 첫 질문 앞부분을 보임
+TITLE_MAX = 30
+PREVIEW_MAX = 60
+DEFAULT_TITLE = "대화"
 
 
 def _now() -> datetime:
@@ -91,7 +98,7 @@ async def start_session(
 async def today(user: User) -> dict[str, Any]:
     start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     s = await repo.last_session_since(user, start)
-    until = s.safety_mode_until if s and s.safety_mode_until and s.safety_mode_until > _now() else None
+    until = await repo.safety_until(user, _now())
     return {
         "sessionId": s.id if s else None,
         "hasHistory": await repo.has_session(user),
@@ -99,8 +106,70 @@ async def today(user: User) -> dict[str, Any]:
     }
 
 
+def _kst_midnight(d: date) -> datetime:
+    return datetime(d.year, d.month, d.day, tzinfo=config.TIMEZONE)
+
+
+async def days_with_sessions(user: User, month: str) -> dict[str, Any]:
+    """H-4 ?month=2026-09: 그달에 대화를 시작한 날짜 (CB-02)"""
+    try:
+        first = datetime.strptime(month, "%Y-%m").date()
+    except ValueError as e:
+        raise _bad_period("month") from e
+    next_first = (first + timedelta(days=32)).replace(day=1)
+    rows = await repo.sessions_between(user, _kst_midnight(first), _kst_midnight(next_first))
+    return {"dates": sorted({r.created_at.astimezone(config.TIMEZONE).date().isoformat() for r in rows})}
+
+
+async def sessions_on(user: User, day: str) -> dict[str, Any]:
+    """H-4 ?date=2026-09-16: 그날 시작한 대화 (CB-03). 제목을 고치지 않았으면 첫 질문 앞부분"""
+    try:
+        d = datetime.strptime(day, "%Y-%m-%d").date()
+    except ValueError as e:
+        raise _bad_period("date") from e
+    rows = await repo.sessions_between(user, _kst_midnight(d), _kst_midnight(d + timedelta(days=1)))
+    first = await repo.first_questions([r.id for r in rows])
+    return {
+        "items": [
+            {
+                "sessionId": r.id,
+                "title": r.title or first.get(r.id, "")[:TITLE_MAX] or DEFAULT_TITLE,
+                "preview": first.get(r.id, "")[:PREVIEW_MAX],
+                "createdAt": r.created_at.astimezone(config.TIMEZONE).isoformat(),
+                "updatedAt": r.updated_at.astimezone(config.TIMEZONE).isoformat(),
+            }
+            for r in rows
+        ]
+    }
+
+
+def _bad_period(field: str) -> AppError:
+    return AppError(status.HTTP_400_BAD_REQUEST, "VALIDATION_ERROR", "날짜 형식이 맞지 않아요.", field=field)
+
+
+async def rename_session(user: User, session_id: int, title: str) -> dict[str, Any]:
+    """H-5 대화 제목 수정"""
+    s = await _session(user, session_id)
+    await repo.set_title(s.id, title)
+    return {"sessionId": s.id, "title": title}
+
+
+async def _delete(s: ChatSession) -> None:
+    """지워도 안전 모드는 풀리지 않게, 켜져 있는 대화는 글만 지움 (설계 메모 4-6)"""
+    if s.safety_mode_until and s.safety_mode_until > _now():
+        await repo.clear_session(s)
+    else:
+        await repo.delete_session(s)
+
+
 async def delete_session(user: User, session_id: int) -> None:
-    await repo.delete_session(await _session(user, session_id))
+    await _delete(await _session(user, session_id))
+
+
+async def delete_all_sessions(user: User) -> None:
+    """MY-S1 전체 삭제"""
+    for s in await repo.sessions_of(user):
+        await _delete(s)
 
 
 # ── H-2 이전 대화 ──────────────────────────────────────────────────────────────────────────
@@ -128,16 +197,73 @@ async def messages(user: User, session_id: int) -> dict[str, Any]:
 # ── H-7 맥락 카드 ──────────────────────────────────────────────────────────────────────────
 async def add_context(
     user: User, session_id: int, analysis_id: int, context: dict[str, Any] | None, client_request_id: str
-) -> None:
-    """같은 clientRequestId면 카드 줄을 새로 만들지 않음. firstMessage는 아직 없음 (#116)"""
+) -> dict[str, Any]:
+    """같은 clientRequestId면 줄을 새로 만들지 않고 처음 만든 첫 답을 돌려줌. 첫 답은 경고나 약을 고른 카드에만 있음"""
     s = await _session(user, session_id)
     await _check_analysis(user, analysis_id)
-    if await repo.get_by_request(s, client_request_id):
-        return
+    card_row = await repo.get_by_request(s, client_request_id)
+    if card_row:
+        first = await repo.first_message_after(card_row)
+        return {"firstMessage": _item(first)} if first else {}
     card: dict[str, Any] = {"analysisId": analysis_id}
     if context:
         card["context"] = context
-    await repo.create_card(s, client_request_id, card)
+    made = await _first_message(user, analysis_id, context) if context else None
+    if made is None:
+        await repo.create_card(s, client_request_id, card)
+        return {}
+    first = await repo.create_card_with_answer(s, client_request_id, card, *made)
+    return {"firstMessage": _item(first)}
+
+
+async def _first_message(
+    user: User, analysis_id: int, context: dict[str, Any]
+) -> tuple[str, list[dict[str, str]]] | None:
+    """맥락 카드의 첫 답 (설계 메모 4-4). 분석 결과에 있는 글로만 만들고 AI를 부르지 않음 (경고 문구는 NFR-032).
+    민감정보 동의가 없거나 그 분석에 없는 번호면 없음"""
+    if not await has_health_consent(user):
+        return None
+    if context["type"] == "warning":
+        return await _warning_first(analysis_id, context["id"])
+    return await _drug_first(analysis_id, context["id"])
+
+
+async def _warning_first(analysis_id: int, warning_id: int) -> tuple[str, list[dict[str, str]]] | None:
+    w = await AnalysisWarning.get_or_none(id=warning_id, analysis_id=analysis_id).prefetch_related(
+        "item_a__drug", "item_b__drug"
+    )
+    if w is None or not w.summary:
+        return None
+    names = ", ".join(_item_name(it) for it in (w.item_a, w.item_b) if it)
+    text = f"{names}: {w.summary}" if names else w.summary
+    reason = (w.reason or "").strip(" -")  # DUR 사유. 쉬운 말로 바꾸지 않고 경고 자세히 화면(RG-03)처럼 원문 그대로
+    if reason:
+        text += f"\n원문: {reason}"
+    source = {"title": w.source, **({"basedOn": w.notice_date.isoformat()} if w.notice_date else {})}  # 고시일
+    return f"{text}\n\n{WARNING_FIRST_TAIL}", [source] if w.source else []
+
+
+def _drug_first_sources(guide: DrugGuide | None) -> list[dict[str, str]]:
+    """안내문에 허가정보 출처가 적혀 있으면 그것을 (시연 약, 복약 안내 카드와 같게). 약효분류 표에서 나온 쓰임이면 표 이름과 기준일 (#193 채연 리뷰)"""
+    source = (guide.content or {}).get("source") if guide else None
+    if source and source != medication.SOURCE:
+        return [{"title": source}]
+    return [{"title": medication.SOURCE, "basedOn": medication.SOURCE_DATE}]
+
+
+async def _drug_first(analysis_id: int, item_id: int) -> tuple[str, list[dict[str, str]]] | None:
+    rx_ids = await AnalysisPrescription.filter(analysis_id=analysis_id).values_list("prescription_id", flat=True)
+    it = await PrescriptionItem.get_or_none(id=item_id, prescription_id__in=list(rx_ids)).prefetch_related("drug")
+    if it is None or it.drug is None:
+        return None
+    guide = await DrugGuide.get_or_none(edi_code=it.drug.edi_code, review_status=ReviewStatus.APPROVED)
+    purpose = (guide.content or {}).get("purpose") if guide else None
+    how = medication.how_to_take(it, it.drug)
+    lines = [f"{purpose}." if purpose else None, f"먹는 법: {how}" if how else None]
+    body = "\n".join(x for x in lines if x)
+    if not body:
+        return None
+    return f"{_item_name(it)}\n{body}", _drug_first_sources(guide) if purpose else []
 
 
 # ── H-3 질문 보내기 ────────────────────────────────────────────────────────────────────────
@@ -146,8 +272,19 @@ def _safety(r: Route) -> dict[str, Any]:
     return {"types": r.safety_types, "overdose": r.overdose, "rule": ",".join(r.safety_rules)}
 
 
-def _in_safety_mode(s: ChatSession) -> bool:
-    return bool(s.safety_mode_until and s.safety_mode_until > _now())
+async def _check_daily_limit(user: User) -> None:
+    """하루 질문 수가 상한에 닿으면 429. 1층을 지난 질문만 세고, 1층에 걸린 긴급과 자해는 여기까지 오지 않음 (#116)"""
+    limit = config.CHAT_DAILY_QUESTION_LIMIT
+    if limit <= 0:
+        return
+    used = await repo.questions_since(user, _now().replace(hour=0, minute=0, second=0, microsecond=0))
+    if used >= limit:
+        raise AppError(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "DAILY_LIMIT_EXCEEDED",
+            "오늘 질문을 다 쓰셨어요. 내일 다시 물어봐 주세요. 급한 내용은 약사나 의료진에게 확인해 주세요.",
+            detail={"limit": limit, "used": used},
+        )
 
 
 async def ask(
@@ -167,8 +304,8 @@ async def ask(
         return (await repo.create_generating(question)).id, True
 
     blocked, _ = pipeline.first_layer(content, emergency_dismissed)
-    if not blocked and _in_safety_mode(s) and safety_rules.asks_amount(content):
-        # 안전 모드(그 대화 안, 자정까지)에서는 약의 양 질문을 처방대로 묻더라도 E5로 (설계 메모 4-6, 7-2, #116)
+    if not blocked and safety_rules.asks_amount(content) and await repo.safety_until(user, _now()):
+        # 안전 모드(자정까지, 지난 대화를 열어도 같음)에서는 약의 양 질문을 처방대로 묻더라도 E5로 (설계 메모 4-6, 7-2, #116)
         blocked = Route(kind="crisis", layer=1, safety_types=["crisis"], safety_rules=["safety_mode_amount"])
     if blocked:  # 1층이 잡고 문맥 파악이 풀지 않음: 원문을 저장하지 않고 긴급 답을 바로 (설계 메모 4-6)
         answer = await repo.create_question_and_answer(
@@ -182,6 +319,7 @@ async def ask(
         if "crisis" in blocked.safety_types:
             await repo.set_safety_mode(s.id, _next_midnight())
         return answer.id, False
+    await _check_daily_limit(user)
     # 입력 정책: 주민번호, 전화번호 같은 번호는 저장과 OpenAI로 가기 전에 가림. 1층은 위에서 원문을 봄 (10/31 수인 결정)
     answer = await repo.create_question_and_answer(
         s, mask_numbers(content), client_request_id, status=MessageStatus.GENERATING
