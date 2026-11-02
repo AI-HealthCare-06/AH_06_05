@@ -121,8 +121,10 @@ def _missed_question(question: str) -> bool:
 
 # 출력 가드레일 규칙. 숫자는 아라비아 숫자와 "두 알", "세 번" 같은 세는 말을 같이 봄
 _DIGITS = re.compile(r"\d+(?:\.\d+)?")
-_COUNT_WORDS = {"한": "1", "두": "2", "세": "3", "네": "4", "다섯": "5", "여섯": "6", "일곱": "7", "여덟": "8"}
-_WORD = "(한|두|세|네|다섯|여섯|일곱|여덟)"
+_COUNT_WORDS = {
+    "한": "1", "두": "2", "세": "3", "네": "4", "다섯": "5", "여섯": "6", "일곱": "7", "여덟": "8", "열": "10", "반": "0.5",
+}  # fmt: skip
+_WORD = "(한|두|세|네|다섯|여섯|일곱|여덟|열|반)"  # "반 알", "열 알"도 (#116 출력 가드레일 보완, 11/2)
 # 세는 말은 먹는 양("두 알")과 "하루 세 번"만 숫자로 봄 ("한 번 더 물어봐 주세요"를 거르지 않게, 10/25 점검)
 _COUNT = re.compile(rf"(?:하루|1일|매일)\s*{_WORD}\s*(?:번|회)|{_WORD}\s*(?:알|정|캡슐|포|배)")
 _LIST_NO = re.compile(r"(?:^|(?<=\s))\d{1,2}[.)](?=\s)")  # "1. ", "2) " 같은 목록 번호는 숫자로 보지 않음
@@ -156,10 +158,23 @@ _ASK_CHANGE = re.compile(
     r"(?:되는지|될지(?!도)|되나요|될까요|괜찮은지|괜찮을지|괜찮나요|좋은지)"
 )
 _REST_BARE = re.compile(r"쉬(?:어도|셔도|세요|시면)")
+# 먹지 말라는 말 중 지시가 아닌 것 (#116 출력 가드레일 보완, 11/2)
+_DOUBLE = re.compile(r"(두\s*배|한꺼번에|몰아서|한\s*번에\s*(?:두|여러))")
+_QUOTED = re.compile(r"라\s*(?:고|는)")
 
 # 먹는 때는 시키는 말에만 ("먹으면 졸릴 수 있어요" 같은 설명은 보지 않음, 10/25 점검)
 _TAKE = re.compile(r"(드세요|드시면\s*(?:돼|됩|좋)|드셔도|드시는\s*게\s*좋|복용하세요|복용하시면|먹으세요|드십시오)")
-_TIMING = re.compile(r"(아침|점심|저녁|자기\s*전|취침|식전|식후|식사\s*중|공복)")
+_TIMING = re.compile(
+    r"(아침|점심|저녁|밤|자기\s*전|잠들기\s*전|취침|식전|식후|식사\s*(?:중|전|후)|식사와\s*관계없이|공복)"
+)  # 밤, 잠들기 전, 식사와 관계없이 (#116 출력 가드레일 보완, 11/2)
+
+
+def _same_timing(word: str) -> str:
+    """처방과 근거의 "식후", "식전"과 같은 말로 봄 ("식사 후에 드세요"가 처방 "식후"를 거르지 않게)"""
+    w = re.sub(r"\s+", "", word)
+    return {"식사후": "식후", "식사전": "식전"}.get(w, w)
+
+
 # "약속", "약국", "약간"의 "약"은 약으로 보지 않음. 붙여 쓴 "약하나", "아예약을"은 약으로 보게 좁게 뺌.
 # "예약"도 약으로 봄 (틀려도 근거 없음이라 안전한 쪽, 10/26 수인 결정)
 _MED_WORDS = re.compile(r"((?<![계절요공규언])약(?![속국간])|복용|용량|캡슐)")
@@ -223,6 +238,8 @@ def _changes_drug(
     found = [(m, m.group(1)) for m in _CHANGE.finditer(sentence)] + [(m, m.group(0)) for m in _STOP.finditer(sentence)]
     for m, word in found:
         before = sentence[max(0, m.start() - _OBJECT_WINDOW) : m.start()]
+        if m.re is _STOP and (_DOUBLE.search(before) or _QUOTED.match(sentence, m.end())):
+            continue  # "두 배로 먹지 마세요"(과다 복용 막기), "먹지 말라고 했다면"(의사 말 전하기)은 지시가 아님
         near = _about_drug(before, drug_names) or (m.re is _CHANGE and _after_ask(sentence, m.start(), ask_at))
         if near and re.sub(r"\s+", "", word) not in flat and not _asks_back(sentence, m.end()):
             return True
@@ -282,7 +299,7 @@ def output_guard(content: str, evidence: list[Evidence], info: FixedInfo) -> str
         if _changes_drug(sentence, drug_names, flat, prev_med=about_med, after_ask=after_ask):
             return "change"
         after_ask = bool(_ASK_CHANGE.search(sentence))
-        if _TAKE.search(sentence) and any(re.sub(r"\s+", "", t) not in flat for t in _TIMING.findall(sentence)):
+        if _TAKE.search(sentence) and any(_same_timing(t) not in flat for t in _TIMING.findall(sentence)):
             return "timing"
     return None
 

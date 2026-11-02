@@ -1,5 +1,6 @@
 """질문부터 답까지 (#99 PR 2-1). 근거 검색과 OpenAI는 가짜로 바꿔 흐름만 확인 (CI에서 부르지 않음)."""
 
+import asyncio
 from dataclasses import replace
 from typing import Any
 
@@ -1183,3 +1184,31 @@ async def test_when_to_take_falls_back_to_evidence_without_prescribed_timing():
     chat2, search2 = FakeChat(classify=classified()), FakeSearch()
     await answer("약은 언제 먹는 게 좋나요?", S0, [], chat2, search=search2)
     assert search2.calls  # 약 하나를 특정하지 못함
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "노바스크는 반 알만 드세요.",
+        "다이아벡스는 밤에 드세요.",
+        "노바스크는 잠들기 전에 드세요.",
+        "다이아벡스는 식사와 관계없이 드셔도 돼요.",
+        "노바스크는 열 알까지 괜찮아요.",
+    ],
+)
+def test_output_guard_catches_half_ten_and_more_timing_words(content):
+    """#116 출력 가드레일 보완: 거르지 못하던 "반 알", "열 알", "밤에", "잠들기 전", "식사와 관계없이" (11/2)"""
+    assert asyncio.run(_guarded(content)).answer_type == "no_evidence", content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "약을 두 배로 먹지 마세요. 약사에게 확인해 주세요.",
+        "의사가 약을 먹지 말라고 했다면 그 말씀을 따르세요.",
+        "다이아벡스는 처방대로 식사 후에 드세요.",
+    ],
+)
+def test_output_guard_keeps_right_advice(content):
+    """#116 출력 가드레일 보완: 맞는 안내를 거르던 것. 두 배로 먹지 말라는 말, 의사 말을 전하는 말, 처방의 "식후"를 "식사 후"로 쓴 말"""
+    assert asyncio.run(_guarded(content)).answer_type == "normal", content
