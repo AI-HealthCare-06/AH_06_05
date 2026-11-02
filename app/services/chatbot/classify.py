@@ -71,6 +71,8 @@ def _how_to_take_fix(cls: dict[str, Any], question: str, info: FixedInfo) -> Non
     # 되묻기도 같음: 대상 약 없이 되묻기로 고르면 "어떤 약을 말씀하시는 건가요?"로 끝남 (11/2 실제 분류에서 범위 밖과 섞여 나옴)
     if cls["category"] not in ("out_of_scope", "clarify") or cls["target_drug"] or not _HOW_TAKE.search(question):
         return
+    if is_distress(question):
+        return  # 괴로움 낱말이 있으면 그대로 둬서 도움 연결 문구가 나가게 (may_eat과 같음, #187 채연 리뷰)
     if not (_MED_TALK.search(question) or find_drug(question, info.drugs)) or _POINTS_AT.search(question):
         return  # "이 약", "그 약"처럼 약 하나를 가리키면 되묻기 그대로 (맥락 카드의 약은 pipeline이 먼저 풂)
     if info.drugs:

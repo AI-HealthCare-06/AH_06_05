@@ -206,6 +206,14 @@ async def test_how_to_take_question_is_not_out_of_scope():
 
 
 @sync
+async def test_how_to_take_question_with_distress_stays_out_of_scope():
+    """힘들다는 말이 섞이면 약 갈래로 바꾸지 않아 도움 연결 문구가 나가게 (#187 채연 리뷰, may_eat 규칙과 같음)"""
+    q = "너무 힘들어서 약을 어떻게 먹어야 할지 모르겠어요"
+    r = await route(q, S0, [], FakeChat(classify=classified(category="out_of_scope")))
+    assert r.kind == "out_of_scope"
+
+
+@sync
 async def test_this_drug_means_the_card_drug():
     """ "이 약 물어보기"로 연 대화에서 "이 약"은 맥락 카드의 약. 분류는 카드를 몰라 되묻거나 앞 대화의 약을 고름
     (11/2 서버 E2E와 실제 분류 6번 중 6번 되물음). 지시어 풀이와 같은 길로 코드가 정함"""
