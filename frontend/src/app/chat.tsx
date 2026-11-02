@@ -27,10 +27,13 @@ import { useChat, type Pending } from '@/features/chatbot/useChat';
 import type { Message } from '@/features/chatbot/types';
 import { copy } from '@/shared/copy';
 import { C, L, S, T } from '@/shared/theme';
-import { Btn, Screen } from '@/shared/ui';
+import { agreeRiskCheck, getConsents } from '@/features/common/api';
+import { riskCheckLater, setRiskCheckLater } from '@/shared/storage/chat';
+import { Btn, Card, Screen } from '@/shared/ui';
 import { CalendarIcon } from '@/shared/ui/icons';
 
 const c = copy.chatbot;
+const rc = copy.me; // 위험 판단용 AI 전달 동의 문구 (내 정보의 동의 내역과 같은 글)
 
 // CB-01 챗봇 창 (1단계): E1 첫 대화, 대화, E2 맥락 카드, E4, E5, E6 (설계 메모 4-2 ~ 4-8 항목, #100)
 export default function Chat() {
@@ -44,6 +47,36 @@ export default function Chat() {
   const scroll = useRef<ScrollView>(null);
   const [sheet, setSheet] = useState(false); // CB-04 첨부 메뉴
   const [pickNote, setPickNote] = useState<string | null>(null);
+  // 위험 판단용 AI(TypeSafe) 전달 동의를 아직 안 한 사람에게 한 번 물음. Jev가 켜진 서버에서만 동의 목록에 이 줄이 나옴 (11/2)
+  const [askRisk, setAskRisk] = useState(false);
+  const [riskBusy, setRiskBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const risk = (await getConsents()).items.find((i) => i.type === 'riskCheck');
+        if (alive && risk && !risk.agreed && !(await riskCheckLater())) setAskRisk(true);
+      } catch {
+        // 못 불러오면 묻지 않음 (내 정보의 동의 내역에서 언제든)
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const answerRisk = async (agree: boolean) => {
+    if (riskBusy) return;
+    setRiskBusy(true);
+    try {
+      if (agree) await agreeRiskCheck();
+      else await setRiskCheckLater();
+      setAskRisk(false);
+    } catch {
+      // 실패하면 카드를 그대로 둬 다시 누르게
+    } finally {
+      setRiskBusy(false);
+    }
+  };
   // 창을 닫거나 달력으로 가면 읽기를 멈춤 (설계 메모 4-11)
   useEffect(() => () => stopSpeaking(), []);
 
@@ -220,6 +253,14 @@ export default function Chat() {
           ))}
         </ScrollView>
         <View style={{ paddingHorizontal: S.side, paddingTop: 8, paddingBottom: ins.bottom + 12, backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border }}>
+          {askRisk && !chat.safetyMode && (
+            <Card style={{ gap: 8, marginBottom: 8 }}>
+              <Text style={T.bodyM}>{rc.riskCheckTitle}</Text>
+              <Text style={T.caption}>{rc.riskCheckBody}</Text>
+              <Btn label={rc.riskCheckOk} disabled={riskBusy} onPress={() => void answerRisk(true)} />
+              <Btn label={rc.riskCheckLater} kind="ghost" disabled={riskBusy} onPress={() => void answerRisk(false)} />
+            </Card>
+          )}
           {chat.safetyMode && <SafetyLine />}
           {pickNote && <Text style={{ fontSize: 14, color: C.danger, marginBottom: 8 }}>※ {pickNote}</Text>}
           {chat.photo && (

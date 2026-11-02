@@ -278,6 +278,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | 2. 회원 / U-5 삭제 | 처방전부터 챗봇 대화, 건강 정보까지 | 맨 앞에 보관 중인 처방전 사진(올린 지 24시간 안) |
 | 2. 회원 / U-5 응답 | 없음 | `204`, 이미 철회했으면 다시 불러도 `204`, `sensitiveHealth`가 아니면 `400 VALIDATION_ERROR`(`field: type`) |
 | 1. 전체 목록, 2. 회원 / U-6, 8. 남은 결정 사항 | 없음 | 다시 동의 `PUT /users/me/consents/{type}` 제안, 상태는 담당자 확정 필요, 정할 것 2가지 (#137) |
+| (제안, 11/2) 2. 회원 / U-4, U-5, U-6 `riskCheck` | `type`은 `terms` `privacy` `sensitiveHealth` | `riskCheck` 추가: 질문 글을 위험 판단용 AI 서비스(TypeSafe, 미국)로 전달하는 선택 동의. U-4는 Jev가 켜진 서버에서만 이 줄을 내려주고(아직 동의 전이면 `agreed: false`, `agreedAt`과 `withdrawnAt`은 `null`), 꺼진 서버에서는 내려주지 않음. U-6 `PUT .../riskCheck`로 처음 동의(줄이 없던 기존 사용자도 만들어짐), U-5 `DELETE .../riskCheck`로 철회(기록은 지우지 않고 이미 철회했거나 동의한 적이 없어도 `204`). 가입(A-1)에는 넣지 않고 챗봇 첫 화면 카드와 동의 내역에서 받음. 동의한 사람의 질문만 Jev를 거침 |
 
 </details>
 

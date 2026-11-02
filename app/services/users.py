@@ -13,6 +13,7 @@ from app.models.ocr import OcrJob, Prescription
 from app.models.users import ConsentType, Sex, User, UserConsent, UserHealthProfile
 from app.repositories.user_repository import UserRepository
 from app.services import habits
+from app.services.chatbot import jev
 from app.services.ocr import photos
 
 REQUIRED_FIELDS = ("birth_year", "sex")
@@ -59,12 +60,22 @@ class UserManageService:
         return user, profile
 
     async def list_consents(self, user: User) -> list[UserConsent]:
-        """U-4"""
-        return await UserConsent.filter(user=user).order_by("id")
+        """U-4. Jev가 켜진 서버는 위험 판단 AI 전달 동의(riskCheck)를 아직 안 한 사람에게도 한 줄(agreed false)을 보여
+        앱이 동의를 받을 수 있게 함. 꺼진 서버에는 나오지 않음 (11/2 수인 결정, 제안)"""
+        rows = list(await UserConsent.filter(user=user).order_by("id"))
+        if jev.enabled() and not any(r.consent_type == ConsentType.RISK_CHECK for r in rows):
+            rows.append(UserConsent(user=user, consent_type=ConsentType.RISK_CHECK, agreed=False))
+        return rows
 
     async def withdraw_consent(self, user: User, type_name: str) -> None:
-        """U-5. sensitiveHealth만 철회할 수 있음. 철회하면 건강 정보가 들어 있을 수 있는 기록을 지움.
-        실천 목표는 끝내고 기록은 남김 (명세서 U-5 표). 추천(질환 라벨)은 분석과 같이 지워짐. 포인트는 서버에 아직 없음"""
+        """U-5. sensitiveHealth와 riskCheck만 철회할 수 있음. sensitiveHealth를 철회하면 건강 정보가 들어 있을 수 있는 기록을 지움.
+        실천 목표는 끝내고 기록은 남김 (명세서 U-5 표). 추천(질환 라벨)은 분석과 같이 지워짐. 포인트는 서버에 아직 없음.
+        riskCheck를 철회하면 이후 질문이 TypeSafe로 가지 않을 뿐 기록은 지우지 않음"""
+        if type_name == CONSENT_TYPE_NAMES[ConsentType.RISK_CHECK]:
+            await UserConsent.filter(user=user, consent_type=ConsentType.RISK_CHECK, agreed=True).update(
+                agreed=False, withdrawn_at=datetime.now(config.TIMEZONE)
+            )
+            return  # 동의한 적이 없거나 이미 철회했으면 같은 결과
         if type_name != CONSENT_TYPE_NAMES[ConsentType.SENSITIVE_HEALTH]:
             raise AppError(
                 status.HTTP_400_BAD_REQUEST,
@@ -80,13 +91,14 @@ class UserManageService:
         await UserConsent.filter(id=consent.id).update(agreed=False, withdrawn_at=datetime.now(config.TIMEZONE))
 
     async def agree_consent(self, user: User, type_name: str, agreed: bool) -> None:
-        """U-6. sensitiveHealth만. 철회한 뒤 다시 동의하면 같은 줄을 새 시각으로 고침 (철회 이력 표는 없음, #137).
-        철회 때 지운 기록은 돌아오지 않음"""
-        if type_name != CONSENT_TYPE_NAMES[ConsentType.SENSITIVE_HEALTH]:
+        """U-6. sensitiveHealth와 riskCheck. 철회한 뒤 다시 동의하면 같은 줄을 새 시각으로 고침 (철회 이력 표는 없음, #137).
+        철회 때 지운 기록은 돌아오지 않음. riskCheck는 처음 동의하는 사람의 줄도 여기서 만듦 (기존 사용자에게는 줄이 없음)"""
+        by_name = {CONSENT_TYPE_NAMES[t]: t for t in (ConsentType.SENSITIVE_HEALTH, ConsentType.RISK_CHECK)}
+        if type_name not in by_name:
             raise AppError(
                 status.HTTP_400_BAD_REQUEST,
                 "VALIDATION_ERROR",
-                "건강 정보 동의만 다시 할 수 있어요.",
+                "건강 정보나 위험 판단 동의만 다시 할 수 있어요.",
                 field="type",
             )
         if agreed is not True:
@@ -94,7 +106,7 @@ class UserManageService:
         now = datetime.now(config.TIMEZONE)
         consent, created = await UserConsent.get_or_create(
             user=user,
-            consent_type=ConsentType.SENSITIVE_HEALTH,
+            consent_type=by_name[type_name],
             defaults={"agreed": True, "agreed_at": now},
         )
         if not created and not consent.agreed:

@@ -26,10 +26,10 @@ from app.models.analysis import (
 )
 from app.models.chat import AnswerType, ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import MatchStatus, PrescriptionItem
-from app.models.users import User
+from app.models.users import ConsentType, User, UserConsent
 from app.repositories.chat import ChatRepository
 from app.services import chat_photo, safety
-from app.services.chatbot import pipeline, safety_rules
+from app.services.chatbot import jev, pipeline, safety_rules
 from app.services.chatbot.answer import DISTRESS
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug, find_drug
 from app.services.chatbot.evidence import JOB_LIMIT_SEC
@@ -320,10 +320,9 @@ async def ask(
     if not blocked and safety_rules.asks_amount(content) and await repo.safety_until(user, _now()):
         # 안전 모드(자정까지, 지난 대화를 열어도 같음)에서는 약의 양 질문을 처방대로 묻더라도 E5로 (설계 메모 4-6, 7-2, #116)
         blocked = Route(kind="crisis", layer=1, safety_types=["crisis"], safety_rules=["safety_mode_amount"])
-    if (
-        not blocked and release is None
-    ):  # 규칙에 안 걸리고 문맥 파악이 풀지도 않은 질문만 Jev에게 (기본 꺼짐, 10/26 수인 결정)
-        blocked = await pipeline.jev_layer(content, emergency_dismissed)
+    # 규칙에 안 걸리고 문맥 파악이 풀지도 않은 질문만 Jev에게 (10/26 수인 결정). TypeSafe(미국) 전달에 동의한 사람만 (11/2 수인 결정)
+    if not blocked and release is None and jev.enabled() and await _has_risk_check_consent(user):
+        blocked = await pipeline.jev_layer(mask_numbers(content), emergency_dismissed)  # 번호, 이메일은 가려서 보냄
     if blocked:  # 1층(규칙이나 Jev)이 잡고 문맥 파악이 풀지 않음: 원문을 저장하지 않고 긴급 답을 바로 (설계 메모 4-6)
         answer = await repo.create_question_and_answer(
             s,
@@ -380,6 +379,13 @@ def _sources(ids: list[str]) -> list[dict[str, str]]:
         kind = i.split(":")[0]
         titles += [DRUG_SOURCE] if kind == "D" else _fact_sources(i) if kind == "F" else []
     return [{"title": t} for t in dict.fromkeys(titles)]
+
+
+async def _has_risk_check_consent(user: User) -> bool:
+    """위험 판단 AI(TypeSafe, 미국) 전달에 동의했는지 (선택 동의, 11/2)"""
+    return await UserConsent.filter(
+        user=user, consent_type=ConsentType.RISK_CHECK, agreed=True, withdrawn_at=None
+    ).exists()
 
 
 async def add_photo(

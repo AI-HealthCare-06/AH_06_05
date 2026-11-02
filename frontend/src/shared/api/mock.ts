@@ -25,6 +25,8 @@ let health: Record<string, unknown> = {
 
 // U-4 동의 내역. U-5로 철회하면 건강 정보 동의가 철회됨으로 바뀜
 let healthWithdrawnAt: string | null = null;
+let riskAgreed = false;
+
 function consents(): Response {
   const at = '2026-10-19T10:00:00+09:00';
   return json(200, {
@@ -32,6 +34,8 @@ function consents(): Response {
       { type: 'terms', agreed: true, agreedAt: at, withdrawnAt: null },
       { type: 'privacy', agreed: true, agreedAt: at, withdrawnAt: null },
       { type: 'sensitiveHealth', agreed: !healthWithdrawnAt, agreedAt: at, withdrawnAt: healthWithdrawnAt },
+      // Jev가 켜진 서버처럼 위험 판단용 AI 전달 동의 줄 (처음에는 동의 전)
+      { type: 'riskCheck', agreed: riskAgreed, agreedAt: riskAgreed ? at : null, withdrawnAt: null },
     ],
   });
 }
@@ -165,6 +169,10 @@ export async function mockFetch(method: Method, path: string, init: RequestInit)
   if (method === 'GET' && path === '/users/me') return me();
   if (method === 'PATCH' && path === '/users/me') return updateMe(body);
   if (method === 'GET' && path === '/users/me/consents') return consents();
+  if (path === '/users/me/consents/riskCheck' && (method === 'PUT' || method === 'DELETE')) {
+    riskAgreed = method === 'PUT';
+    return new Response(null, { status: 204 });
+  }
   if (method === 'DELETE' && path === '/users/me/consents/sensitiveHealth') {
     healthWithdrawnAt ??= '2026-10-28T13:00:00+09:00';
     return new Response(null, { status: 204 });
