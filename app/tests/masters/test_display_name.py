@@ -65,5 +65,15 @@ def test_ingredient_label_prefers_korean_name_in_parentheses():
     assert (
         ingredient_label("리피토정10밀리그램(아토르바스타틴칼슘삼수화물)_(1정)", "아토르바스타틴") == "아토르바스타틴"
     )
+    # 중첩 괄호의 안쪽(미분화)은 성분이 아님 (#191 수인 리뷰)
+    assert ingredient_label("페라넬정2밀리그램(페람파넬(미분화))_(2mg/1정)", "perampanel") == "페람파넬"
+    assert (
+        ingredient_label("어떤정10밀리그램(로수바스타틴칼슘(미분화))_(1정)", "rosuvastatin calcium")
+        == "로수바스타틴칼슘"
+    )
+    # 품질·대상만 적은 괄호는 성분으로 보지 않고 영어 값으로 돌아감
+    for word in ("역가", "표준화", "소아용", "성인용", "라이트", "상황도"):
+        assert ingredient_label(f"어떤정({word})_(1정)", "rosuvastatin") == "로수바스타틴", word
+    assert ingredient_label("어떤정(미분화)_(1정)", "polmacoxib") == "polmacoxib"
     # 수출명 괄호는 성분으로 보지 않음
     assert ingredient_label("파무정(수출명:Pamu)_(1정)", "pamu") == "pamu"

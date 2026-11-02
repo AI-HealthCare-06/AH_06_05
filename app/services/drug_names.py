@@ -92,12 +92,43 @@ _INGREDIENT_KO = {
 }
 
 
+_NOT_INGREDIENT = (
+    "미분화",
+    "역가",
+    "표준화",
+    "소아용",
+    "성인용",
+    "라이트",
+    "상황도",
+)  # 성분이 아니라 품질·대상을 적은 괄호
+
+
+def _top_level_parens(text: str) -> list[str]:
+    """가장 바깥 괄호의 안쪽 글. 안쪽에 중첩된 괄호는 뗌: "페라넬정(페람파넬(미분화))" → ["페람파넬"]"""
+    out: list[str] = []
+    depth, buf = 0, ""
+    for ch in text:
+        if ch == "(":
+            depth += 1
+            if depth == 1:
+                buf = ""
+                continue
+        elif ch == ")" and depth:
+            depth -= 1
+            if depth == 0:
+                out.append(buf)
+            continue
+        if depth == 1:
+            buf += ch
+    return out
+
+
 def ingredient_label(item_name: str, english: str | None) -> str | None:
     """경고 자세히 보기에 보여 줄 성분명. 점검 DB 값이 이미 한글이면 그대로"""
     if english and re.search(r"[가-힣]", english):
         return english
-    for inner in re.findall(r"\(([^()]*)\)", base_name(item_name).split("수출명")[0]):
-        if re.fullmatch(r"[가-힣,·/-]+", inner):
+    for inner in _top_level_parens(base_name(item_name).split("수출명")[0]):
+        if re.fullmatch(r"[가-힣,·/-]+", inner) and inner not in _NOT_INGREDIENT:
             return inner
     if not english:
         return english
