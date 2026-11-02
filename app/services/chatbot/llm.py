@@ -6,12 +6,15 @@
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
 
 from app.core import config
+
+logger = logging.getLogger(__name__)
 
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 # 로컬 실험과 같음. 챗봇 작업 제한(arq 25초) 안에서 2층과 분류를 동시에 부르므로 한 번은 이 안에 끝나야 함
@@ -64,6 +67,9 @@ class OpenAIChat:
             usage.completion_tokens += int(used.get("completion_tokens", 0))
             usage.calls += 1
             result = json.loads(data["choices"][0]["message"]["content"])
+        except httpx.HTTPStatusError as e:
+            logger.warning("OpenAI 호출 실패 status=%s", e.response.status_code)  # 키 만료(401)를 로그로 찾게 (10/31)
+            raise LLMError(type(e).__name__) from e
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as e:
             raise LLMError(type(e).__name__) from e  # 예외 문장에 요청 내용이 섞이지 않게 종류 이름만
         if not isinstance(result, dict):

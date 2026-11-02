@@ -181,7 +181,7 @@ def _food_only(found: SearchResult) -> SearchResult:
     """피할 음식을 물으면 허가정보 근거는 음식 말이 든 문장만 남김. 약끼리 상호작용 문장("CYP3A4 억제제와 병용")을
     답 AI가 음식 답처럼 옮김 (11/2 서버 E2E, 로컬 재현 4번 중 4번). 팩트표 근거는 그대로. 다 빠지면 근거 없음"""
     keep = [e for e in found.evidence if e.source != "drug_permit" or _FOOD_WORDS.search(f"{e.heading} {e.text}")]
-    return replace(found, evidence=keep)
+    return replace(found, evidence=keep, reason=found.reason or (None if keep else "no_food_evidence"))
 
 
 async def answer(

@@ -331,7 +331,7 @@ async def _analysis_for(user: User, s: ChatSession) -> int | None:
 
 async def _card_focus(info: FixedInfo, before: list[ChatMessage]) -> tuple[str | None, int | None]:
     """마지막 맥락 카드가 가리키는 것: 약 카드면 그 약 이름("이 약 물어보기", RG-04), 경고 카드면 그 경고 번호(RG-03).
-    고정 정보를 가져온 분석의 카드일 때만 쓰고, 카드 뒤에 사용자가 다른 약을 물었으면 "이 약"이 그 약일 수 있어 쓰지 않음
+    고정 정보를 가져온 분석의 카드일 때만 쓰고, 카드 뒤에 카드에 없는 약을 물었으면 그 약 이야기일 수 있어 쓰지 않음
     (11/2 서버 E2E)"""
     card = next((m for m in reversed(before) if m.context_card), None)
     ctx = (card.context_card or {}).get("context") if card else None
@@ -348,14 +348,17 @@ async def _card_focus(info: FixedInfo, before: list[ChatMessage]) -> tuple[str |
         if it is None or it.drug is None:
             return None, None
         name = display_name(it.drug.item_name)
+        on_card: tuple[str, ...] = (name,)
+    elif ctx.get("type") == "warning":
+        on_card = next((w.names for w in info.pair_warnings if w.id == ctx.get("id")), ())
+    else:
+        return None, None
     for m in before:
         if m.id > card.id and m.role == MessageRole.USER and m.content:
             d = find_drug(m.content, info.drugs)
-            if d and d.name != name:
+            if d and d.name not in on_card:
                 return None, None
-    return (
-        (name, None) if ctx.get("type") == "drug" else (None, ctx.get("id") if ctx.get("type") == "warning" else None)
-    )
+    return (name, None) if name else (None, ctx.get("id"))
 
 
 async def fixed_info(user: User, s: ChatSession) -> FixedInfo:

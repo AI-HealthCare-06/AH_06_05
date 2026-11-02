@@ -4,11 +4,14 @@ import asyncio
 import functools
 from collections.abc import Callable
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
-from app.services.chatbot.context import FixedInfo, UserDrug
+from app.models.chat import MessageRole
+from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
 from app.services.chatbot.llm import LLMError, Usage
 from app.services.chatbot.pipeline import route
+from app.services.chats import _card_focus
 
 
 def sync(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -387,3 +390,23 @@ async def test_dismissed_keeps_crisis_checks():
     assert (r.kind, r.layer) == ("crisis", 2)
     r = await route("사라지고 싶어서 약을 한꺼번에 먹었어요", S0, [], FakeChat(), emergency_dismissed=True)
     assert (r.kind, r.safety_types) == ("crisis", ["crisis"])
+
+
+@sync
+async def test_warning_card_stays_when_asking_its_drug():
+    """경고 카드 뒤에 그 경고의 약 이름으로 물어도 카드를 유지하고, 다른 약을 물으면 풂 (#187 남은 한계)"""
+    warned = PairWarning(7, ("노바스크정5밀리그람", "다이아벡스정500밀리그램"), "경고")
+    info = replace(S0, analysis_id=3, pair_warnings=[warned])
+    card = SimpleNamespace(
+        id=1, role=MessageRole.USER, content="", context_card={"analysisId": 3, "context": {"type": "warning", "id": 7}}
+    )
+
+    def ask(i: int, text: str) -> SimpleNamespace:
+        return SimpleNamespace(id=i, role=MessageRole.USER, content=text, context_card=None)
+
+    assert await _card_focus(info, [card]) == (None, 7)
+    assert await _card_focus(info, [card, ask(2, "노바스크는 언제 먹어요?")]) == (None, 7)
+    other = replace(
+        info, drugs=[*S0.drugs, UserDrug("아토르스타정", "아토르바스타틴", "콜레스테롤", "1일 1회", code="1")]
+    )
+    assert await _card_focus(other, [card, ask(2, "아토르스타정은요?")]) == (None, None)
