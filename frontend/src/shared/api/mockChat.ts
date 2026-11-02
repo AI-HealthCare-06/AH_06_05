@@ -111,10 +111,10 @@ export function routeChat(method: string, p: string, body: Record<string, unknow
       const kind = (photoCount++ % 3) as 0 | 1 | 2;
       const a: Row =
         kind === 0
-          ? { id: ++seq, role: 'assistant', status: 'done', replyTo: q, answerType: 'clarify', content: '사진 속 약이 아래 중 하나인가요? 맞는 약을 눌러 주세요. 없으면 약 이름을 글자로 적어 주세요.', chips: ['노바스크정5밀리그람', '노바스크정10밀리그람'], imageResult: 'drug', sources: [], createdAt: iso() }
+          ? { id: ++seq, role: 'assistant', status: 'done', replyTo: q, answerType: 'clarify', content: '사진 속 약이 아래 중 하나인가요? 맞는 약을 눌러 주세요. 없으면 약 이름을 글자로 적어 주세요.', chips: ['노바스크정5밀리그람', '노바스크정10밀리그람'], imageResult: 'drug', noFeedback: true, sources: [], createdAt: iso() }
           : kind === 1
-            ? { id: ++seq, role: 'assistant', status: 'done', replyTo: q, answerType: 'normal', content: '처방전(약봉투) 사진 같아요. 여러 약을 함께 점검하려면 분석하기에서 올려 주세요.', imageResult: 'prescription', action: 'open_analysis', sources: [], createdAt: iso() }
-            : { id: ++seq, role: 'assistant', status: 'done', replyTo: q, answerType: 'no_evidence', content: '사진에서 약 이름을 읽지 못했어요. 약 이름을 글자로 적어 주시면 답해 드릴게요.', imageResult: 'unreadable', sources: [], createdAt: iso() };
+            ? { id: ++seq, role: 'assistant', status: 'done', replyTo: q, answerType: 'normal', content: '처방전(약봉투) 사진 같아요. 여러 약을 함께 점검하려면 분석하기에서 올려 주세요.', imageResult: 'prescription', noFeedback: true, action: 'open_analysis', sources: [], createdAt: iso() }
+            : { id: ++seq, role: 'assistant', status: 'done', replyTo: q, answerType: 'no_evidence', content: '사진에서 약 이름을 읽지 못했어요. 약 이름을 글자로 적어 주시면 답해 드릴게요.', imageResult: 'unreadable', noFeedback: true, sources: [], createdAt: iso() };
       s.rows.push(a);
     }
     return reply(201, { messageId: crids.get(crid) });
