@@ -49,6 +49,7 @@ refer_kind: refer일 때 pharmacist(복용 방법, 함께 먹는 약) / next_vis
 about_user_drugs: 사용자가 먹는 약끼리 같이 먹어도 되는지 묻는 질문이면 true
 target_drug: 질문이 가리키는 약 이름 (앞 대화의 "그 약"도 풀어서). 없으면 null
 clarify_question: clarify일 때 되물을 질문 한 문장, 아니면 null
+clarify_options: clarify일 때 사용자가 할 법한 짧은 답 2~3개 (각 15자 안, 예: "아침 식사요", "아침 약이요"), 아니면 null. [고정 정보]의 약 이름을 그대로 써도 됨
 target_drug을 앞 대화로 찾았으면 clarify가 아니야.
 앞 대화가 주어지면 "그 약", "아까 그거"를 앞 대화로 풀어서 판단해.
 "혈압약", "당뇨약"처럼 약의 쓰임으로 말하고 [고정 정보]의 지금 먹는 약 중 그 쓰임에 맞는 약이 하나뿐이면 그 약으로 보고 clarify하지 마.
@@ -65,6 +66,7 @@ CLASSIFY_SCHEMA = {
         "refer_kind": {"type": ["string", "null"], "enum": ["pharmacist", "next_visit", "soon", None]},
         "about_user_drugs": {"type": "boolean"},
         "clarify_question": {"type": ["string", "null"]},
+        "clarify_options": {"type": ["array", "null"], "items": {"type": "string"}},
     },
     "required": [
         "target_reason",
@@ -75,6 +77,7 @@ CLASSIFY_SCHEMA = {
         "refer_kind",
         "about_user_drugs",
         "clarify_question",
+        "clarify_options",
     ],
     "additionalProperties": False,
 }

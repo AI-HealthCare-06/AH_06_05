@@ -120,6 +120,8 @@ export default function Chat() {
       ? last.id
       : null;
   const asked = new Set(chat.messages.filter((m) => m.role === 'user').map((m) => m.content || chat.texts[m.id]));
+  // 되물음 예상 답 칩도 마지막 답에만 (설계 메모 4-5). 누르면 그 글을 그대로 보냄
+  const clarifyAfter = local.length === 0 && last?.status === 'done' && last.answerType === 'clarify' && last.chips?.length ? last.id : null;
 
   const empty = !chat.loading && chat.messages.length === 0 && local.length === 0 && !chat.pendingCard;
 
@@ -173,6 +175,12 @@ export default function Chat() {
             <Fragment key={m.id}>
               {row(m, i)}
               {m.id === followAfter && <FollowUps asked={asked} onPick={chat.ask} disabled={chat.busy} />}
+              {m.id === clarifyAfter && (
+                <View style={{ gap: 8 }}>
+                  <Text style={T.caption}>{c.clarifyChips}</Text>
+                  <SuggestChips items={m.chips ?? []} onPick={chat.ask} disabled={chat.busy} />
+                </View>
+              )}
             </Fragment>
           ))}
           {chat.pendingCard && (

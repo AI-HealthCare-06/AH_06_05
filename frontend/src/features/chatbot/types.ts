@@ -26,6 +26,7 @@ export type Message = {
   contextCard?: { analysisId: number; context?: ChatContext };
   safetyCard?: { analysisId: number; warningIds: number[] };
   safety?: SafetyInfo;
+  chips?: string[]; // 되물음(clarify) 아래 예상 답 칩 (H-2 chips)
   createdAt: string;
 };
 

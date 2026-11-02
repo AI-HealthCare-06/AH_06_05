@@ -352,9 +352,12 @@ async def test_safety_and_clarify_stop_before_search():
     search = FakeSearch()
     r = await answer("약을 한꺼번에 많이 먹었어요", S0, [], FakeChat(), search=search)
     assert (r.answer_type, r.content, search.calls) == ("emergency", None, [])
-    cls = classified(category="clarify", clarify_question="어떤 약을 말씀하시나요?")
+    cls = classified(
+        category="clarify", clarify_question="어떤 약을 말씀하시나요?", clarify_options=["노바스크요", "다른 약이요"]
+    )
     r = await answer("그거 먹어도 돼요?", S0, [], FakeChat(classify=cls), search=search)
     assert (r.answer_type, r.content, search.calls) == ("clarify", "어떤 약을 말씀하시나요?", [])
+    assert r.chips == ["노바스크요", "다른 약이요"]  # 되물음 아래 예상 답 칩 (H-2 chips)
 
 
 @sync

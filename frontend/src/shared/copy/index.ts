@@ -339,6 +339,7 @@ export const copy = {
     todayFail: '지난 대화를 불러오지 못했어요',
     // CB-02, CB-03 대화 기록 (설계 메모 4-12, 4-13)
     newChat: '새 대화',
+    clarifyChips: '이렇게 답하실 수 있어요', // E3 되물음 예상 답 칩 제목 (설계 메모 4-5, 신규 임시)
     historyTitle: '대화 기록',
     historyGuide: '기록이 있는 날짜를 누르면 그날의 대화를 볼 수 있어요.',
     historyEmpty: '이 달에는 대화 기록이 없어요',

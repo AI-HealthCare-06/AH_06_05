@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.services.chatbot import context_check, evidence, safety_rules
-from app.services.chatbot.answer import REFER, SPEECH, out_of_scope, write
+from app.services.chatbot.answer import REFER, SPEECH, clean_text, out_of_scope, write
 from app.services.chatbot.classify import (
     asks_food_to_avoid,
     asks_this_analysis,
@@ -56,6 +56,7 @@ class Route:
     context_release: str | None = None  # 1층에 걸렸지만 문맥 파악이 푼 이유 이름
     classification: dict[str, Any] | None = None
     clarify_question: str | None = None
+    clarify_chips: list[str] = field(default_factory=list)  # 되물을 때 예상 답 칩 (분류가 만듦, 11/2)
     usage: Usage = field(default_factory=Usage)
 
 
@@ -134,10 +135,34 @@ async def route(
     cls = check_classification(cls, question, info, past, summary, resolved)
     if cls["target_source"] == "guess" or (cls["category"] == "clarify" and not cls["target_drug"]):
         follow = CLARIFY_GUESS if cls["target_source"] == "guess" else (cls["clarify_question"] or CLARIFY_DEFAULT)
-        return Route(kind="clarify", context_release=release, classification=cls, clarify_question=follow, usage=usage)
+        # 칩은 분류가 만든 되묻는 문장을 그대로 쓸 때만. 고정 문구로 바꾸면 칩이 그 문장과 맞지 않을 수 있음
+        chips = _clarify_chips(cls.get("clarify_options")) if follow == cls["clarify_question"] else []
+        return Route(
+            kind="clarify",
+            context_release=release,
+            classification=cls,
+            clarify_question=follow,
+            clarify_chips=chips,
+            usage=usage,
+        )
     if cls["category"] == "clarify":
         cls["category"] = "medication"  # 대상 약을 찾았으면 되묻지 않음
     return Route(kind=cls["category"], context_release=release, classification=cls, usage=usage)
+
+
+CHIP_MAX, CHIP_LEN = 3, 15  # 되물음 예상 답 칩 수와 글자 수 (시작값, 11/2)
+
+
+def _clarify_chips(options: Any) -> list[str]:
+    """분류가 만든 예상 답을 칩으로. 글 규칙(clean_text)을 거치고, 빈 것과 긴 것과 겹치는 것은 뺌"""
+    if not isinstance(options, list):
+        return []
+    out: list[str] = []
+    for o in options:
+        text = clean_text(o).strip() if isinstance(o, str) else ""
+        if text and len(text) <= CHIP_LEN and text not in out:
+            out.append(text)
+    return out[:CHIP_MAX]
 
 
 @dataclass
@@ -154,6 +179,7 @@ class Reply:
     safety_card: dict[str, Any] | None = None  # ⑤ { analysisId, warningIds } (명세서 v1.5 초안 H-2, H-3)
     # 판정에서 막혔을 때(insufficient, risk_blocked) 어느 판정이 막았는지 로그용 요약 (#124 채연 리뷰)
     evidence_verdicts: str | None = None
+    chips: list[str] = field(default_factory=list)  # 되물음(clarify) 아래 예상 답 칩 (명세서 H-2 chips, 11/2)
 
 
 # ⑤ 점검 결과로 답할 때의 앞뒤 문장 (화면 문구, 신규 임시, 10/26 수인 결정. 와이어프레임에는 나중에 맞춤)
@@ -223,7 +249,7 @@ async def answer(
     if r.kind in ("clarify", "medication", "lifestyle", "refer", "out_of_scope") and safety_rules.odd_speech(question):
         return Reply("refer", SPEECH, r, usage=usage)
     if r.kind == "clarify":
-        return Reply("clarify", r.clarify_question, r, usage=usage)
+        return Reply("clarify", r.clarify_question, r, usage=usage, chips=r.clarify_chips)
     if r.kind not in ("medication", "lifestyle", "refer", "out_of_scope"):
         return Reply(r.kind, None, r, usage=usage)  # 긴급, 자해, 오류는 화면 고정 카드
 

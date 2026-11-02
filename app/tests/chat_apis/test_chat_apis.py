@@ -844,6 +844,19 @@ class TestFixedInfo(ChatCase):
         assert items[-1]["answerType"] == "normal" and items[-1]["safetyCard"] == card
         assert "safetyCard" not in items[0]  # 카드가 없는 줄은 칸을 생략
 
+    async def test_clarify_chips_are_saved_and_returned(self):
+        """되물음의 예상 답 칩은 H-2 답 줄의 chips로. 칩이 없는 줄은 칸을 생략 (명세서 H-2 제안, 11/2)"""
+        self.fake.reply = Reply(
+            "clarify", "어느 약을 말씀하시나요?", Route(kind="clarify"), chips=["아침 약이요", "저녁 약이요"]
+        )
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f34@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "그거 언제 먹어요?")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["answerType"] == "clarify" and items[-1]["chips"] == ["아침 약이요", "저녁 약이요"]
+        assert "chips" not in items[0]
+
     async def test_no_consent_means_general_info_only(self):
         async with self.client() as client:
             headers, user = await self.auth(client, "f3@example.com")

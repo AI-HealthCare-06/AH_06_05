@@ -183,7 +183,12 @@ def _item(m: ChatMessage) -> dict[str, Any]:
         row["replyTo"] = m.reply_to_id
     if m.answer_type:
         row["sources"] = m.sources or []
-    for key, value in (("contextCard", m.context_card), ("safetyCard", m.safety_card), ("safety", m.safety)):
+    for key, value in (
+        ("contextCard", m.context_card),
+        ("safetyCard", m.safety_card),
+        ("safety", m.safety),
+        ("chips", m.chips),
+    ):
         if value:
             row[key] = value
     row["createdAt"] = m.created_at.isoformat()
@@ -398,6 +403,7 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         sources=_sources(reply.sources),
         safety=_safety(r) if r.safety_types else None,
         safety_card=reply.safety_card,
+        chips=reply.chips or None,
         route_kind=r.kind,
         analysis_id=info.analysis_id,
         model=config.OPENAI_CHAT_MODEL if reply.usage.calls else None,

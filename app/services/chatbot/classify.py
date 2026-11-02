@@ -79,6 +79,7 @@ def _how_to_take_fix(cls: dict[str, Any], question: str, info: FixedInfo) -> Non
         cls["category"] = "medication"
     else:
         cls["category"], cls["target_drug"], cls["clarify_question"] = "clarify", None, None
+        cls["clarify_options"] = None  # 되묻는 문장을 고정 문구로 바꾸니 칩도 뺌
 
 
 def check_classification(
