@@ -7,9 +7,11 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '@/shared/api/client';
+import { copy } from '@/shared/copy';
 import { loadFailed, saveFailed, type SavedQuestion } from '@/shared/storage/chat';
 
-import { addContext, findToday, getMessages, removalCount, sendQuestion, startSession } from './api';
+import { addContext, findToday, getMessages, removalCount, sendPhotoFile, sendQuestion, startSession } from './api';
+import type { Picked } from './attach';
 import { newRequestId, nextKstMidnight } from './time';
 import type { ChatContext, ChatParams, Message } from './types';
 
@@ -29,6 +31,9 @@ export type Pending = {
   questionId?: number; // 서버 질문 줄 번호 (답 줄의 replyTo로 알게 됨)
   error?: ErrorKind;
 };
+
+// 보낼 사진 하나 (고른 뒤 [사진 보내기]를 누르기 전, 보내는 중, 실패)
+export type PhotoDraft = { file: Picked; crid: string; busy: boolean; error?: string };
 
 // 맥락 카드를 아직 서버에 붙이지 않았을 때 (분석 번호만 받고 들어와 첫 질문을 기다림)
 export type PendingCard = { analysisId: number; context?: ChatContext };
@@ -62,6 +67,7 @@ export function useChat(params: ChatParams) {
   const [relieved, setRelieved] = useState<number[]>([]);
   // 다시 보낸 질문 줄 번호: 이 창에서는 사용자 말풍선을 새로 만들지 않음 (설계 메모 4-6 항목, 다시 열면 보임 #117)
   const [hidden, setHidden] = useState<number[]>([]);
+  const [photo, setPhoto] = useState<PhotoDraft | null>(null);
   const sessionRef = useRef<number | null>(null);
   const pendingRef = useRef<Pending[]>([]);
   pendingRef.current = pending;
@@ -270,6 +276,41 @@ export function useChat(params: ChatParams) {
     [deliver],
   );
 
+  const photoError = (e: unknown): string => {
+    if (e instanceof ApiError && (e.code === 'CONSENT_REQUIRED' || e.code === 'DAILY_LIMIT_EXCEEDED' || e.status === 400)) return e.message;
+    return copy.chatbot.photoFail;
+  };
+
+  // CB-04: 고른 사진 한 장 보내기. 대화가 없으면 만들고(분석 카드가 기다리면 붙이고), 서버가 읽어 만든 줄은 H-2로 받음 (실패하면 같은 요청 번호로 다시)
+  const sendPhoto = useCallback(async () => {
+    if (!photo || photo.busy) return;
+    const { file, crid } = photo;
+    setPhoto({ file, crid, busy: true });
+    setFocusCard(null);
+    try {
+      let sid = sessionRef.current;
+      const card = cardRef.current;
+      if (sid === null) {
+        sid = (await startSession(crid, card?.analysisId, card?.context)).sessionId;
+        setSession(sid);
+      }
+      if (card) {
+        try {
+          await addContext(sid, card.analysisId, `${crid}-card`, card.context);
+        } catch (e) {
+          if (!isGone(e)) throw e;
+        }
+        cardRef.current = null;
+      }
+      setPendingCard(null);
+      await sendPhotoFile(sid, file, crid);
+      setPhoto(null);
+      await refresh();
+    } catch (e) {
+      setPhoto({ file, crid, busy: false, error: photoError(e) });
+    }
+  }, [photo, refresh]);
+
   // [새 대화]: 화면을 비우고 다음 질문 때 H-1로 새 대화를 만듦 (11/2 멘토 피드백). 보내는 중이거나 실패한 질문은 그대로 둠
   const startNew = useCallback(() => {
     setSession(null);
@@ -278,6 +319,7 @@ export function useChat(params: ChatParams) {
     setFocusCard(null);
     setHidden([]);
     setRelieved([]);
+    setPhoto(null);
     show([]);
     setPending((list) => list.filter((q) => q.error || q.answerId === undefined));
     setHasHistory(true);
@@ -308,7 +350,11 @@ export function useChat(params: ChatParams) {
     texts,
     relieved,
     hidden,
-    busy: waiting || pending.some((q) => q.answerId === undefined && !q.error),
+    busy: waiting || !!photo?.busy || pending.some((q) => q.answerId === undefined && !q.error),
+    photo,
+    attach: (file: Picked) => setPhoto({ file, crid: newRequestId(), busy: false }),
+    dropPhoto: () => setPhoto(null),
+    sendPhoto,
     open,
     ask,
     retry,

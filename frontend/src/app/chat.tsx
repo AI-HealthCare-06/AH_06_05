@@ -1,17 +1,19 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Fragment, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useChatLauncher } from '@/features/chatbot/launcher';
 import {
   AnswerBubble,
+  AttachSheet,
   Composer,
   ContextCard,
   Empty,
   ErrorCard,
   FollowUps,
   Generating,
+  PhotoDraftBar,
   QuoteLine,
   ResentCard,
   SafetyCards,
@@ -19,6 +21,7 @@ import {
   SuggestChips,
   UserBubble,
 } from '@/features/chatbot/parts';
+import { pickFile, pickPhoto, takePhoto, type PickResult } from '@/features/chatbot/attach';
 import { stopSpeaking } from '@/features/chatbot/speech';
 import { useChat, type Pending } from '@/features/chatbot/useChat';
 import type { Message } from '@/features/chatbot/types';
@@ -39,6 +42,8 @@ export default function Chat() {
   const params = useMemo(() => (past ? { from: 'CB-03' as const, sessionId: Number(past) } : chatParams), [past, chatParams]);
   const chat = useChat(params);
   const scroll = useRef<ScrollView>(null);
+  const [sheet, setSheet] = useState(false); // CB-04 첨부 메뉴
+  const [pickNote, setPickNote] = useState<string | null>(null);
   // 창을 닫거나 달력으로 가면 읽기를 멈춤 (설계 메모 4-11)
   useEffect(() => () => stopSpeaking(), []);
 
@@ -46,6 +51,17 @@ export default function Chat() {
   useEffect(() => {
     if (chat.focusCard === null) scroll.current?.scrollToEnd({ animated: true });
   }, [chat.messages, chat.pending, chat.focusCard]);
+  const pick = async (how: 'camera' | 'library' | 'file') => {
+    setSheet(false);
+    setPickNote(null);
+    const r: PickResult = await (how === 'camera' ? takePhoto() : how === 'library' ? pickPhoto() : pickFile());
+    if (!r) return;
+    if ('error' in r) {
+      setPickNote({ permission: c.cameraDenied, tooBig: c.photoTooBig, type: c.photoType, fail: c.photoPick }[r.error]);
+      return;
+    }
+    chat.attach(r.file);
+  };
   const toCard = (e: LayoutChangeEvent) => scroll.current?.scrollTo({ y: e.nativeEvent.layout.y, animated: true });
 
   // 서버 질문 줄 번호 → 그 질문에 걸린 실패 (답 줄이 지워졌거나 30초가 지남)
@@ -205,7 +221,14 @@ export default function Chat() {
         </ScrollView>
         <View style={{ paddingHorizontal: S.side, paddingTop: 8, paddingBottom: ins.bottom + 12, backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border }}>
           {chat.safetyMode && <SafetyLine />}
-          <Composer onSend={chat.ask} busy={chat.busy || chat.loading} />
+          {pickNote && <Text style={{ fontSize: 14, color: C.danger, marginBottom: 8 }}>※ {pickNote}</Text>}
+          {chat.photo && (
+            <View style={{ marginBottom: 8 }}>
+              <PhotoDraftBar file={chat.photo.file} busy={chat.photo.busy} error={chat.photo.error} onSend={() => void chat.sendPhoto()} onDrop={chat.dropPhoto} />
+            </View>
+          )}
+          <Composer onSend={chat.ask} busy={chat.busy || chat.loading} onAttach={() => setSheet(true)} />
+          <AttachSheet visible={sheet} onPick={(how) => void pick(how)} onClose={() => setSheet(false)} />
         </View>
       </KeyboardAvoidingView>
     </Screen>

@@ -153,7 +153,12 @@ function login(body: { password?: string }): Response {
 
 export async function mockFetch(method: Method, path: string, init: RequestInit): Promise<Response> {
   await new Promise((r) => setTimeout(r, 300)); // 서버를 부르는 것처럼 잠깐 기다림
-  const body = typeof init.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+  const body =
+    typeof init.body === 'string'
+      ? (JSON.parse(init.body) as Record<string, unknown>)
+      : typeof FormData !== 'undefined' && init.body instanceof FormData
+        ? { clientRequestId: String(init.body.get('clientRequestId') ?? '') }
+        : {};
   if (method === 'POST' && path === '/auth/login') return login({ password: typeof body.password === 'string' ? body.password : undefined });
   if (method === 'POST' && path === '/auth/token/refresh') return json(200, { accessToken: 'mock-access' });
   if (method === 'POST' && path === '/auth/signup') return signup(body);

@@ -64,6 +64,15 @@ export function DocIcon({ color = C.text2, size = 18 }: IconProps) {
 }
 
 // 챗봇 입력창 받아쓰기 안내 (와이어프레임 CB-01 ⑧)
+// 더하기 (첨부)
+export function PlusIcon({ color = C.text2, size = 24 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" {...line} strokeWidth={2.2} stroke={color}>
+      <Path d="M12 5v14M5 12h14" />
+    </Svg>
+  );
+}
+
 // 소리 (답변 듣기)
 export function SpeakerIcon({ color = C.text2, size = 18 }: IconProps) {
   return (

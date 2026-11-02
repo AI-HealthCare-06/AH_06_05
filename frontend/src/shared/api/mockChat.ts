@@ -27,6 +27,7 @@ const failOnce = new Set<number>(); // 한 번 실패시킬 질문 줄
 const readyAt = new Map<number, number>(); // 답 줄 → 완성 시각
 const cutOnce = new Set<string>(); // 한 번 500을 돌려준 clientRequestId
 let seq = 9100;
+let photoCount = 0;
 
 const iso = (ms = Date.now()) => new Date(ms + KST_MS).toISOString().replace('Z', '+09:00');
 const kstDay = (ms: number) => Math.floor((ms + KST_MS) / DAY_MS);
@@ -99,6 +100,24 @@ export function routeChat(method: string, p: string, body: Record<string, unknow
   if (method === 'GET' && p.endsWith('/messages')) {
     settle(s);
     return reply(200, { items: s.rows.map(view) });
+  }
+  if (method === 'POST' && p.endsWith('/attachments')) {
+    // 사진 첨부(H-9): 차례로 약 후보, 처방전, 못 읽음 (서버가 읽은 결과를 흉내)
+    const crid = `photo:${String(body.clientRequestId)}`;
+    if (!crids.has(crid)) {
+      const q = ++seq;
+      crids.set(crid, q);
+      s.rows.push({ id: q, role: 'user', content: '사진 1장을 보냈어요.', status: 'done', createdAt: iso() });
+      const kind = (photoCount++ % 3) as 0 | 1 | 2;
+      const a: Row =
+        kind === 0
+          ? { id: ++seq, role: 'assistant', status: 'done', replyTo: q, answerType: 'clarify', content: '사진 속 약이 아래 중 하나인가요? 맞는 약을 눌러 주세요. 없으면 약 이름을 글자로 적어 주세요.', chips: ['노바스크정5밀리그람', '노바스크정10밀리그람'], imageResult: 'drug', sources: [], createdAt: iso() }
+          : kind === 1
+            ? { id: ++seq, role: 'assistant', status: 'done', replyTo: q, answerType: 'normal', content: '처방전(약봉투) 사진 같아요. 여러 약을 함께 점검하려면 분석하기에서 올려 주세요.', imageResult: 'prescription', action: 'open_analysis', sources: [], createdAt: iso() }
+            : { id: ++seq, role: 'assistant', status: 'done', replyTo: q, answerType: 'no_evidence', content: '사진에서 약 이름을 읽지 못했어요. 약 이름을 글자로 적어 주시면 답해 드릴게요.', imageResult: 'unreadable', sources: [], createdAt: iso() };
+      s.rows.push(a);
+    }
+    return reply(201, { messageId: crids.get(crid) });
   }
   if (method === 'POST' && p.endsWith('/context')) {
     const crid = `card:${String(body.clientRequestId)}`;

@@ -28,6 +28,8 @@ export type Message = {
   safety?: SafetyInfo;
   chips?: string[]; // 되물음(clarify) 아래 예상 답 칩 (H-2 chips)
   noFeedback?: boolean; // 도움 연결 답처럼 피드백 버튼을 두지 않는 답
+  imageResult?: 'prescription' | 'drug' | 'unreadable'; // 사진 첨부의 답 (H-9)
+  action?: 'open_analysis'; // 처방전 사진: [처방전 · 약봉투 분석하러 가기]
   createdAt: string;
 };
 

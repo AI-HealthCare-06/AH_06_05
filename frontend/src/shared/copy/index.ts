@@ -339,6 +339,24 @@ export const copy = {
     todayFail: '지난 대화를 불러오지 못했어요',
     // CB-02, CB-03 대화 기록 (설계 메모 4-12, 4-13)
     newChat: '새 대화',
+    // CB-04 사진 첨부 (설계 메모 4-9, 신규 임시)
+    attach: '첨부',
+    attachNote: '※ 처방전 · 약봉투는 홈 화면에서 찍어 올려 주세요.',
+    takePhoto: '사진 촬영',
+    pickPhoto: '갤러리에서 선택',
+    pickFile: '파일에서 선택',
+    attachClose: '닫기',
+    attachRemove: '첨부 빼기',
+    sendPhoto: '사진 보내기',
+    photoSending: '사진을 읽고 있어요',
+    photoFile: '파일 1개',
+    photoReady: '사진 1장',
+    photoFail: '사진을 보내지 못했어요. 다시 시도해 주세요.',
+    photoTooBig: '10MB 이하 파일만 보낼 수 있어요.',
+    photoType: 'JPG, PNG, PDF만 보낼 수 있어요.',
+    photoPick: '사진을 불러오지 못했어요. 다시 골라 주세요.',
+    cameraDenied: '카메라를 쓰려면 권한이 필요해요. 설정에서 허용해 주세요.',
+    goAnalysis: '처방전 · 약봉투 분석하러 가기',
     listen: '듣기', // 답변 읽어주기 (설계 메모 4-11, REQ-102)
     stopListen: '멈춤',
     clarifyChips: '이렇게 답하실 수 있어요', // E3 되물음 예상 답 칩 제목 (설계 메모 4-5, 신규 임시)
