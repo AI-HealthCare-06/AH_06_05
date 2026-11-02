@@ -1172,8 +1172,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 ```json
 { "sessionId": 301, "firstMessage": { "id": 9103, "role": "assistant", "content": "...", "answerType": "normal", "sources": [], "createdAt": "2026-10-12T09:10:00+09:00" } }
 ```
-- `firstMessage`는 `context`가 있을 때만 있음 (H-7 응답과 같은 모양). `context`가 없으면 칸을 생략
-- #100에서는 `firstMessage`를 아직 보내지 않음 (#116)
+- (제안, 11/2) `firstMessage`는 맥락 카드를 만드는 H-7에서만 줌. 앱은 H-1 뒤에 H-7을 부르므로 H-1 응답에는 칸이 없음
 - 대화는 첫 질문 때 만들고, 첫 답변이 있는 진입(경고나 약에서 챗봇을 연 경우)만 들어올 때 만듦 (수인 10/12)
 
 ### H-2. 이전 대화 `GET /chat/sessions/{id}/messages`
@@ -1284,7 +1283,7 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 ```
 **응답 `201`** `{ "firstMessage": { "id": 9103, "role": "assistant", "content": "...", "answerType": "normal", "sources": [], "createdAt": "..." } }`
 - 맥락 카드 메시지(`contextCard`)를 대화에 넣고, `context`가 있으면 첫 답변(`firstMessage`)도 함께 줌. 없으면 `firstMessage` 생략
-- #100에서는 `firstMessage`를 아직 보내지 않음 (#116)
+- (제안, 11/2) 첫 답변은 AI 없이 분석 결과의 글로 만듦. 경고는 약 이름, 점검 문장(`summary`), 상담 안내. 약은 약 이름, 쓰임(승인된 안내문), 먹는 법. 민감정보 동의가 없거나 그 분석에 없는 번호면 생략. 같은 `clientRequestId`로 다시 보내면 처음 만든 첫 답변을 돌려줌
 - 오늘 대화가 아직 없으면 H-1로 먼저 만든 뒤 호출
 - 같은 `clientRequestId`로 다시 보내면 맥락 카드 줄을 새로 만들지 않음 (10/22, #100)
 - 10/6 회의에서 확인 (챗봇 설계 v0.7)

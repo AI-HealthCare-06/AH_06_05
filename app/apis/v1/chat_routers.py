@@ -19,7 +19,7 @@ CurrentUser = Annotated[User, Depends(get_request_user)]
 
 @chat_router.post("", status_code=status.HTTP_201_CREATED)
 async def start_session(body: SessionCreateRequest, user: CurrentUser) -> dict[str, Any]:
-    """H-1 대화 시작. 같은 clientRequestId면 새로 만들지 않음. firstMessage는 아직 없음 (#116)"""
+    """H-1 대화 시작. 같은 clientRequestId면 새로 만들지 않음. 첫 답은 카드를 붙이는 H-7에서 줌"""
     context = body.context.model_dump() if body.context else None
     return {"sessionId": await svc.start_session(user, body.client_request_id, body.analysis_id, context)}
 
@@ -70,7 +70,6 @@ async def delete_session(session_id: int, user: CurrentUser) -> Response:
 
 @chat_router.post("/{session_id}/context", status_code=status.HTTP_201_CREATED)
 async def add_context(session_id: int, body: ContextCreateRequest, user: CurrentUser) -> dict[str, Any]:
-    """H-7 오늘 대화에 분석 맥락 카드 붙이기"""
+    """H-7 오늘 대화에 분석 맥락 카드 붙이기. 경고나 약을 고른 카드면 첫 답(firstMessage)도 줌"""
     context = body.context.model_dump() if body.context else None
-    await svc.add_context(user, session_id, body.analysis_id, context, body.client_request_id)
-    return {}
+    return await svc.add_context(user, session_id, body.analysis_id, context, body.client_request_id)

@@ -49,6 +49,7 @@ USABLE = (MatchStatus.AUTO, MatchStatus.USER_CONFIRMED)
 DRUG_SOURCE = "식약처 의약품 허가정보"  # 근거 번호 D:<약코드>:S12 (허가정보 문장)
 
 
+WARNING_FIRST_TAIL = "처방한 의사나 약사에게 꼭 알려 주세요."  # 설계 메모 4-4, 6-1 E2 첫 답변
 # CB-03 대화 카드 (제안). 제목을 고치지 않은 대화는 첫 질문 앞부분을 보임
 TITLE_MAX = 30
 PREVIEW_MAX = 60
@@ -182,16 +183,61 @@ async def messages(user: User, session_id: int) -> dict[str, Any]:
 # ── H-7 맥락 카드 ──────────────────────────────────────────────────────────────────────────
 async def add_context(
     user: User, session_id: int, analysis_id: int, context: dict[str, Any] | None, client_request_id: str
-) -> None:
-    """같은 clientRequestId면 카드 줄을 새로 만들지 않음. firstMessage는 아직 없음 (#116)"""
+) -> dict[str, Any]:
+    """같은 clientRequestId면 줄을 새로 만들지 않고 처음 만든 첫 답을 돌려줌. 첫 답은 경고나 약을 고른 카드에만 있음"""
     s = await _session(user, session_id)
     await _check_analysis(user, analysis_id)
-    if await repo.get_by_request(s, client_request_id):
-        return
+    card_row = await repo.get_by_request(s, client_request_id)
+    if card_row:
+        first = await repo.first_message_after(card_row)
+        return {"firstMessage": _item(first)} if first else {}
     card: dict[str, Any] = {"analysisId": analysis_id}
     if context:
         card["context"] = context
-    await repo.create_card(s, client_request_id, card)
+    made = await _first_message(user, analysis_id, context) if context else None
+    if made is None:
+        await repo.create_card(s, client_request_id, card)
+        return {}
+    first = await repo.create_card_with_answer(s, client_request_id, card, *made)
+    return {"firstMessage": _item(first)}
+
+
+async def _first_message(
+    user: User, analysis_id: int, context: dict[str, Any]
+) -> tuple[str, list[dict[str, str]]] | None:
+    """맥락 카드의 첫 답 (설계 메모 4-4). 분석 결과에 있는 글로만 만들고 AI를 부르지 않음 (경고 문구는 NFR-032).
+    민감정보 동의가 없거나 그 분석에 없는 번호면 없음"""
+    if not await has_health_consent(user):
+        return None
+    if context["type"] == "warning":
+        return await _warning_first(analysis_id, context["id"])
+    return await _drug_first(analysis_id, context["id"])
+
+
+async def _warning_first(analysis_id: int, warning_id: int) -> tuple[str, list[dict[str, str]]] | None:
+    w = await AnalysisWarning.get_or_none(id=warning_id, analysis_id=analysis_id).prefetch_related(
+        "item_a__drug", "item_b__drug"
+    )
+    if w is None or not w.summary:
+        return None
+    names = ", ".join(_item_name(it) for it in (w.item_a, w.item_b) if it)
+    text = f"{names}: {w.summary}" if names else w.summary
+    return f"{text}\n\n{WARNING_FIRST_TAIL}", [{"title": w.source}] if w.source else []
+
+
+async def _drug_first(analysis_id: int, item_id: int) -> tuple[str, list[dict[str, str]]] | None:
+    rx_ids = await AnalysisPrescription.filter(analysis_id=analysis_id).values_list("prescription_id", flat=True)
+    it = await PrescriptionItem.get_or_none(id=item_id, prescription_id__in=list(rx_ids)).prefetch_related("drug")
+    if it is None or it.drug is None:
+        return None
+    guide = await DrugGuide.get_or_none(edi_code=it.drug.edi_code, review_status=ReviewStatus.APPROVED)
+    purpose = (guide.content or {}).get("purpose") if guide else None
+    how = medication.how_to_take(it, it.drug)
+    lines = [f"{purpose}." if purpose else None, f"먹는 법: {how}" if how else None]
+    body = "\n".join(x for x in lines if x)
+    if not body:
+        return None
+    return f"{_item_name(it)}\n{body}", [{"title": medication.SOURCE}] if purpose else []
 
 
 # ── H-3 질문 보내기 ────────────────────────────────────────────────────────────────────────

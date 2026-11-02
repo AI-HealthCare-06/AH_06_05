@@ -12,7 +12,7 @@ from unittest.mock import patch
 from starlette import status
 
 from app.core import config
-from app.models.analysis import Analysis, AnalysisStatus, DrugGuide, ReviewStatus
+from app.models.analysis import Analysis, AnalysisStatus, AnalysisWarning, DrugGuide, ReviewStatus
 from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import PrescriptionItem
 from app.models.users import ConsentType, UserConsent
@@ -676,6 +676,63 @@ class TestFixedInfo(ChatCase):
                 await self.ask(client, headers, sid, "혈압약은 아침에 먹나요?")
             items = await self.items(client, headers, sid)
         assert self.fake.calls[0]["info"].drugs[0].ingredient == "" and items[-1]["status"] == "done"
+
+    async def test_first_message_for_drug_card(self):
+        """H-7: 약 카드는 쓰임과 먹는 법으로 첫 답. AI 없이 만들고, 같은 요청을 다시 보내면 줄을 새로 만들지 않음 (#116)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f30@example.com")
+            await DrugGuide.create(
+                edi_code="641900040",
+                content={"purpose": "혈압 관리에 쓰는 약이에요"},
+                review_status=ReviewStatus.APPROVED,
+            )
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            item = (await PrescriptionItem.filter(prescription=rx).first()).id
+            sid = await self.session(client, headers, analysisId=aid)
+            body = {"analysisId": aid, "context": {"type": "drug", "id": item}, "clientRequestId": "ctx-1"}
+            res = await client.post(f"{API}/{sid}/context", json=body, headers=headers)
+            assert res.status_code == 201
+            first = res.json()["firstMessage"]
+            assert "혈압 관리에 쓰는 약이에요" in first["content"] and first["answerType"] == "normal"
+            assert first["sources"] == [{"title": "심평원 약제급여목록 약효분류"}]
+            again = await client.post(f"{API}/{sid}/context", json=body, headers=headers)
+            assert again.json()["firstMessage"]["id"] == first["id"]
+            items = await self.items(client, headers, sid)
+        assert [i["id"] for i in items if i.get("answerType")] == [first["id"]]
+        assert self.fake.calls == []  # 답 AI를 부르지 않음
+
+    async def test_first_message_for_warning_card_uses_template(self):
+        """H-7: 경고 카드는 점검 문장(템플릿) 그대로 + 상담 안내. 경고 문구를 AI가 만들지 않음 (NFR-032, 설계 메모 4-4)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f31@example.com")
+            rx = await self.prescription(user, ["641900040", "644300010"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            a, b = await PrescriptionItem.filter(prescription=rx).order_by("id")
+            w = await AnalysisWarning.create(
+                analysis_id=aid, warning_type="contra", severity="high", item_a=a, item_b=b,
+                summary="함께 먹으면 안 되는 약이에요", source="병용금기 고시",
+            )  # fmt: skip
+            sid = await self.session(client, headers, analysisId=aid)
+            body = {"analysisId": aid, "context": {"type": "warning", "id": w.id}, "clientRequestId": "ctx-1"}
+            first = (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).json()["firstMessage"]
+        assert "함께 먹으면 안 되는 약이에요" in first["content"]
+        assert first["content"].endswith("처방한 의사나 약사에게 꼭 알려 주세요.")
+        assert first["sources"] == [{"title": "병용금기 고시"}]
+
+    async def test_no_first_message_without_target(self):
+        """분석 요약 카드, 그 분석에 없는 번호에는 첫 답이 없음. 남의 경고가 새지 않음"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f32@example.com")
+            aid = (await self.start(client, headers, await self.prescription(user, ["641900040"]))).json()["analysisId"]
+            sid = await self.session(client, headers, analysisId=aid)
+            plain = {"analysisId": aid, "clientRequestId": "ctx-1"}
+            assert "firstMessage" not in (await client.post(f"{API}/{sid}/context", json=plain, headers=headers)).json()
+            for kind in ("drug", "warning"):
+                body = {"analysisId": aid, "context": {"type": kind, "id": 999999}, "clientRequestId": f"ctx-{kind}"}
+                assert (
+                    "firstMessage" not in (await client.post(f"{API}/{sid}/context", json=body, headers=headers)).json()
+                )
 
     async def test_pair_warnings_of_the_analysis_are_passed(self):
         """⑤에 쓰는 약 두 개짜리 경고. 이름은 분석 화면과 같은 처방 이름 그대로 (10/26 수인 결정)"""

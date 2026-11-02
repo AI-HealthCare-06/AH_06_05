@@ -76,6 +76,8 @@ export function routeChat(method: string, p: string, body: Record<string, unknow
       crids.set(crid, id);
       const card = { analysisId: body.analysisId, ...(body.context ? { context: body.context } : {}) };
       s.rows.push({ id, role: 'assistant', content: '', status: 'done', contextCard: card, createdAt: iso() });
+      // 경고나 약을 고른 카드는 서버처럼 첫 답 줄을 같이 만듦 (H-7)
+      if (body.context) s.rows.push({ id: ++seq, role: 'assistant', content: '분석 결과에서 확인한 내용이에요.', answerType: 'normal', sources: [], status: 'done', createdAt: iso() });
     }
     return reply(201, {});
   }

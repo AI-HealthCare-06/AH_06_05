@@ -19,4 +19,4 @@ export const sendQuestion = (sessionId: number, content: string, clientRequestId
   }).then((r) => r.messageId);
 
 export const addContext = (sessionId: number, analysisId: number, clientRequestId: string, context?: ChatContext) =>
-  api<Record<string, never>>('POST', `/chat/sessions/${sessionId}/context`, { analysisId, context, clientRequestId });
+  api<{ firstMessage?: Message }>('POST', `/chat/sessions/${sessionId}/context`, { analysisId, context, clientRequestId });

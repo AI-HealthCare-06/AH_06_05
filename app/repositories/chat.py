@@ -94,6 +94,31 @@ class ChatRepository:
             session=session, role=MessageRole.ASSISTANT, client_request_id=client_request_id, context_card=card
         )
 
+    async def create_card_with_answer(
+        self,
+        session: ChatSession,
+        client_request_id: str,
+        card: dict[str, Any],
+        content: str,
+        sources: list[dict[str, str]],
+    ) -> ChatMessage:
+        """맥락 카드 줄과 첫 답 줄을 한 번에 만듦. 첫 답 줄을 돌려줌 (H-7)"""
+        async with in_transaction():
+            await self.create_card(session, client_request_id, card)
+            return await ChatMessage.create(
+                session=session,
+                role=MessageRole.ASSISTANT,
+                content=content,
+                answer_type=AnswerType.NORMAL,
+                status=MessageStatus.DONE,
+                sources=sources,
+            )
+
+    async def first_message_after(self, card: ChatMessage) -> ChatMessage | None:
+        """카드 바로 뒤에 만든 첫 답 줄. 질문의 답 줄은 reply_to가 있고 다른 카드는 context_card가 있음"""
+        row = await ChatMessage.filter(session_id=card.session_id, id__gt=card.id).order_by("id").first()
+        return row if row and row.answer_type and not row.reply_to_id else None
+
     async def create_question_and_answer(
         self, session: ChatSession, content: str, client_request_id: str, **answer: Any
     ) -> ChatMessage:
