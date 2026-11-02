@@ -279,7 +279,7 @@ export const copy = {
     warningTitle: '경고 자세히 보기',
     together: (n: number) => `${n}가지 약을 같이 드시고 있어요.`,
     askWarning: '이 경고 챗봇에 물어보기',
-    missingField: '허가정보에 내용이 없어요',
+    missingField: '아직 확인된 내용이 없어요',
     notFoundChip: '찾지 못함',
     notFoundBody: '자료에서 찾지 못해 안내를 만들 수 없어요. 약사에게 확인해 주세요.',
     notOralChip: '점검 대상 아님',
@@ -533,7 +533,7 @@ export const copy = {
     birthYearValue: (y: number) => `${y}년`,
     sex: '성별',
     health: '건강 정보',
-    healthNote: '앞으로 안내와 챗봇 답변에 쓸 예정이에요.',
+    healthNote: '질환은 생활습관 안내와 챗봇 답변에, 음주는 실천 목표 추천에 써요. 나머지는 앞으로 맞춤 안내에 쓸 예정이에요.',
     smoking: '흡연',
     drinking: '음주 (최근 1년)',
     diseases: '앓고 있는 질환',
@@ -549,7 +549,7 @@ export const copy = {
     examName: '검사 이름',
     examNameHelper: (max: number) => `${max}자 이내 (예: 조영 CT, 내시경)`,
     examDate: '날짜',
-    examDateHelper: '예: 2026-10-27',
+    examDateHelper: '예: 2026-12-15',
     examDateValue: (d: string) => {
       const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d);
       return m ? `${Number(m[1])}월 ${Number(m[2])}일` : d;
@@ -577,10 +577,11 @@ export const copy = {
       sensitiveHealth: '건강 정보 사용 (민감정보)',
       riskCheck: '위험한 말 살피기용 AI 전달 (선택)',
     },
-    // 선택 동의: 질문 글을 위험 판단용 AI 서비스(TypeSafe, 미국)로 전달 (11/2). 보관 기간은 공개된 것이 없다고 그대로 밝힘
+    // 선택 동의: 질문 글을 위험 판단용 AI 서비스(TypeSafe, 미국)로 전달 (11/2). 보관 기간은 공개된 것이 없다고 그대로 밝힘.
+    // 처리 업체 14곳과 텔레메트리 조항(MCA 4.1(c), 4.3)을 더함 (#197 채연 리뷰, docs/design/ocr_privacy_notice.md)
     riskCheckTitle: '위험한 말을 더 빨리 살필까요?',
     riskCheckBody:
-      '챗봇에 쓴 질문 글이 응급이나 위험한 말인지 먼저 살피려고 미국의 AI 서비스(TypeSafe)로 전달돼요. 전달하는 것은 질문 글뿐이고, 전화번호와 이메일은 가려서 보내요. TypeSafe가 글을 얼마나 오래 보관하는지는 정해진 기간이 공개돼 있지 않아요. 동의하지 않아도 챗봇은 그대로 쓸 수 있고, 내 정보의 동의 내역에서 언제든 철회할 수 있어요.',
+      '챗봇에 쓴 질문 글이 응급이나 위험한 말인지 먼저 살피려고 미국의 AI 서비스(TypeSafe)로 전달돼요. 전달하는 것은 질문 글뿐이고, 전화번호와 이메일은 가려서 보내요. 글은 TypeSafe와 처리 업체(미국 등 여러 나라 14곳)의 서버에서 처리돼요. TypeSafe가 글을 얼마나 오래 보관하는지는 정해진 기간이 공개돼 있지 않고, 글에서 만든 기록과 통계는 기간 제한 없이 서비스 개선에 쓸 수 있어요. 동의하지 않아도 챗봇은 그대로 쓸 수 있고, 내 정보의 동의 내역에서 언제든 철회할 수 있어요.',
     riskCheckOk: '동의하기',
     riskCheckLater: '나중에',
     riskCheckWithdraw: '철회하기',

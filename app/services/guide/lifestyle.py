@@ -17,6 +17,7 @@ from app.models.ocr import PrescriptionItem
 from app.services.drug_names import display_name
 
 FACTS = Path(__file__).resolve().parent / "data" / "lifestyle_facts.json"
+PREFIXES = Path(__file__).resolve().parent / "data" / "lifestyle_ingr_prefixes.json"
 CONFLICT_LABEL = "의료진 상담 필요"
 # 질환 선택 화면(RG-05-E1)에서 고를 수 있는 질환 = 팩트 테이블 질환 10개 (대표 코드)
 PICKABLE = {"HTN": "I10", "DM2": "E11", "DLP": "E78", "CKD": "N18", "IHD": "I25", "STROKE": "I63", "AF": "I48", "COPD": "J44", "OP": "M81", "OA": "M17"}  # fmt: skip
@@ -73,6 +74,50 @@ def ingredient_words(drug_class: str) -> set[str]:
     return {w for w in re.findall(r"[가-힣]{3,}", text) if w not in GENERIC_WORDS and w != "등"}
 
 
+# 팩트표 약 종류 이름의 괄호에는 대표 성분만 적혀 있어("에날라프릴, 로사르탄 등") 같은 종류의 다른 성분은 약에 연결되지 않았다.
+# 칼륨이 오를 수 있는 약(ACE억제제, ARB, 이뇨제)은 "의료진 확인" 안내가 빠지면 안 되므로 약제급여목록에 있는 성분을 더함 (11/2).
+# 다른 약 종류는 성분을 늘리면 안내가 틀릴 수 있어(자몽 등) 더하지 않음
+_ACE_ARB = {
+    "에날라프릴", "캅토프릴", "리시노프릴", "라미프릴", "페린도프릴", "실라자프릴", "알라세프릴",
+    "로사르탄", "발사르탄", "텔미사르탄", "칸데사르탄", "이르베사르탄", "아질사르탄", "피마사르탄", "올메사르탄", "에프로사르탄",
+}  # fmt: skip
+EXTRA_INGREDIENTS: dict[str, set[str]] = {
+    "티아지드·루프 이뇨제": {
+        "인다파미드",
+        "토르세미드",
+        "토라세미드",
+        "클로르탈리돈",
+        "히드로클로르티아지드",
+        "아조세미드",
+        "지파미드",
+    },
+    "ACE억제제·ARB": _ACE_ARB,
+    # 이 줄은 괄호가 없어 이름 칸의 말이 모두 빼는 말이라 읽히는 성분이 없었음.
+    # 피네레논(케렌디아)은 이뇨제는 아니지만 첨부문서에 고칼륨혈증과 칼륨 보충제 병용 주의, 혈청 칼륨 모니터링이 있고 효능이 만성 신장병이라 이 줄에 둠
+    "칼륨 보전 이뇨제·ACE억제제·ARB": _ACE_ARB | {"스피로노락톤", "피네레논"},
+}
+
+
+def link_words(drug_class: str) -> set[str]:
+    """약 종류에 연결할 성분 낱말. 팩트표 괄호의 성분에 칼륨 관련 약 종류의 성분을 더함. 목표 추천(challenges)은 ingredient_words를 그대로 씀"""
+    extra = next((w for k, w in EXTRA_INGREDIENTS.items() if drug_class.startswith(k)), set())
+    return ingredient_words(drug_class) | extra
+
+
+@lru_cache(maxsize=1)
+def _ingr_prefixes() -> dict[str, frozenset[str]]:
+    data = json.loads(PREFIXES.read_text(encoding="utf-8"))["prefixes"]
+    return {k: frozenset(v) for k, v in data.items()}
+
+
+def matches_item(drug_class: str, item_name: str, ingr_code: str | None) -> bool:
+    """약 이름에 성분 낱말이 있거나, 성분코드 앞 4자리가 그 약 종류 성분의 것이면 연결(복합제는 이름에 성분이 안 적힘)"""
+    if any(w in item_name for w in link_words(drug_class)):
+        return True
+    pre = _ingr_prefixes().get(drug_class)
+    return bool(pre and ingr_code and ingr_code[:4] in pre)
+
+
 def build(codes: list[str], items: list[PrescriptionItem], all_codes: list[str] | None = None) -> dict[str, Any]:  # noqa: C901
     """codes: [(질환 코드)] — 출처 구분은 호출한 쪽(분석 질환 행). items: drug가 불러와진 약. all_codes: 겹침 판단용 원래 코드"""
     sources: dict[str, int] = {}
@@ -116,9 +161,8 @@ def build(codes: list[str], items: list[PrescriptionItem], all_codes: list[str] 
                 }
             )
         for ml in d.get("medication_link", []):
-            words = ingredient_words(ml["drug_class"])
             for it in items:
-                if any(w in it.drug.item_name for w in words):
+                if matches_item(ml["drug_class"], it.drug.item_name, getattr(it.drug, "ingr_code", None)):
                     clinician = bool(ml.get("requires_clinician"))
                     advice = [s.strip() for s in re.split(r"\.\s*", ml["advice"]) if s.strip()]
                     if any(
