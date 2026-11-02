@@ -1218,6 +1218,19 @@ def test_refusing_to_substitute_is_kept(content):
     assert drop_substitutes(content, S0) == content
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "대신 타이레놀을 드시면 문제없어요.",
+        "대신 타이레놀을 드셔도 부담 없어요.",
+        "대신 타이레놀을 드셔도 나쁘지 않아요.",
+    ],
+)
+def test_substitute_with_reassurance_is_still_dropped(content):
+    """권하는 말 뒤에 "없", "않"이 있어도 안심시키는 말이면 권하는 문장이라 뺌 (거절 예외를 좁힘, 11/2 점검)"""
+    assert drop_substitutes(content, S0) == ""
+
+
 def test_substitute_uses_my_drug_names_too():
     """사용자의 약 이름과 성분이 "대신" 뒤에 오면 약으로 봄"""
     assert drop_substitutes("그것 대신 노바스크를 드세요.", S0) == ""
