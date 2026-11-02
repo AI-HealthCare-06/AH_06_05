@@ -179,7 +179,7 @@ export const copy = {
   recognize: {
     title: '인식 결과 확인',
     intro: '인식한 내용을 확인하고, 잘못된 부분은 수정해 주세요.',
-    summary: (n: number, hospitals: string) => `처방전 ${n}장, ${hospitals}`,
+    summary: (n: number) => `처방전 ${n}장`, // 병원 이름은 약 카드마다 보여서 제목에는 장 수만 (11/2 멘토 피드백: "처방전 1장," 쉼표가 어색함)
     status: { ok: '확인됨', confirm: '확인 필요', none: '찾지 못함', excluded: '빼고 진행' },
     edit: '수정',
     undo: '약 다시 고르기',
