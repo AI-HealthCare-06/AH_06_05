@@ -17,7 +17,7 @@ from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import PrescriptionItem
 from app.models.users import ConsentType, UserConsent
 from app.services import chats, safety
-from app.services.chatbot.answer import OUT_OF_SCOPE
+from app.services.chatbot.answer import DISTRESS, OUT_OF_SCOPE
 from app.services.chatbot.context import FixedInfo
 from app.services.chatbot.llm import Usage
 from app.services.chatbot.pipeline import Reply, Route
@@ -856,6 +856,16 @@ class TestFixedInfo(ChatCase):
             items = await self.items(client, headers, sid)
         assert items[-1]["answerType"] == "clarify" and items[-1]["chips"] == ["아침 약이요", "저녁 약이요"]
         assert "chips" not in items[0]
+
+    async def test_distress_answer_has_no_feedback_flag(self):
+        """범위 밖 괴로움의 도움 연결 답은 noFeedback으로 표시해 앱이 피드백 버튼을 숨김 (#144 채연 리뷰, #117, 제안)"""
+        self.fake.reply = Reply("normal", DISTRESS, Route(kind="out_of_scope"))
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f35@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "약 먹는 게 너무 힘들어요")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["noFeedback"] is True and "noFeedback" not in items[0]
 
     async def test_no_consent_means_general_info_only(self):
         async with self.client() as client:

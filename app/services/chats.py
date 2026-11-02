@@ -30,6 +30,7 @@ from app.models.users import User
 from app.repositories.chat import ChatRepository
 from app.services import safety
 from app.services.chatbot import pipeline, safety_rules
+from app.services.chatbot.answer import DISTRESS
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug, find_drug
 from app.services.chatbot.evidence import JOB_LIMIT_SEC
 from app.services.chatbot.llm import make_client
@@ -191,6 +192,8 @@ def _item(m: ChatMessage) -> dict[str, Any]:
     ):
         if value:
             row[key] = value
+    if m.answer_type and m.content == DISTRESS:
+        row["noFeedback"] = True  # 범위 밖 괴로움의 도움 연결 답에는 피드백 버튼을 두지 않음 (#144 채연 리뷰, #117)
     row["createdAt"] = m.created_at.isoformat()
     return row
 

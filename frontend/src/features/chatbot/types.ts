@@ -27,6 +27,7 @@ export type Message = {
   safetyCard?: { analysisId: number; warningIds: number[] };
   safety?: SafetyInfo;
   chips?: string[]; // 되물음(clarify) 아래 예상 답 칩 (H-2 chips)
+  noFeedback?: boolean; // 도움 연결 답처럼 피드백 버튼을 두지 않는 답
   createdAt: string;
 };
 
