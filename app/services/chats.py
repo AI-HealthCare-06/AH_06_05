@@ -251,6 +251,14 @@ async def _warning_first(analysis_id: int, warning_id: int) -> tuple[str, list[d
     return f"{text}\n\n{WARNING_FIRST_TAIL}", [source] if w.source else []
 
 
+def _drug_first_sources(guide: DrugGuide | None) -> list[dict[str, str]]:
+    """안내문에 허가정보 출처가 적혀 있으면 그것을 (시연 약, 복약 안내 카드와 같게). 약효분류 표에서 나온 쓰임이면 표 이름과 기준일 (#193 채연 리뷰)"""
+    source = (guide.content or {}).get("source") if guide else None
+    if source and source != medication.SOURCE:
+        return [{"title": source}]
+    return [{"title": medication.SOURCE, "basedOn": medication.SOURCE_DATE}]
+
+
 async def _drug_first(analysis_id: int, item_id: int) -> tuple[str, list[dict[str, str]]] | None:
     rx_ids = await AnalysisPrescription.filter(analysis_id=analysis_id).values_list("prescription_id", flat=True)
     it = await PrescriptionItem.get_or_none(id=item_id, prescription_id__in=list(rx_ids)).prefetch_related("drug")
@@ -263,9 +271,7 @@ async def _drug_first(analysis_id: int, item_id: int) -> tuple[str, list[dict[st
     body = "\n".join(x for x in lines if x)
     if not body:
         return None
-    return f"{_item_name(it)}\n{body}", [
-        {"title": medication.SOURCE, "basedOn": medication.SOURCE_DATE}
-    ] if purpose else []
+    return f"{_item_name(it)}\n{body}", _drug_first_sources(guide) if purpose else []
 
 
 # ── H-3 질문 보내기 ────────────────────────────────────────────────────────────────────────
