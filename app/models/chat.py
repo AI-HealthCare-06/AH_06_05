@@ -119,3 +119,18 @@ class ChatMessage(models.Model):
     class Meta:
         table = "chat_messages"
         unique_together = (("session", "client_request_id"),)
+
+
+class ChatPhotoUse(models.Model):
+    """챗봇 사진 첨부(H-9)로 CLOVA를 부른 기록. 하루 사진 상한을 셀 때만 씀. 사진, 글자, 대화 번호는 남기지 않음.
+    대화를 지워도 남아서 지우고 다시 보내 상한을 피하지 못하게 함 (#199 채연 리뷰, 11/2)"""
+
+    id = fields.BigIntField(primary_key=True)
+    user: fields.ForeignKeyRelation["User"] = fields.ForeignKeyField(
+        "models.User", related_name="chat_photo_uses", on_delete=fields.CASCADE
+    )
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "chat_photo_uses"
+        table_description = "챗봇 사진 첨부로 OCR을 부른 기록 (하루 사진 상한 계산용)"
