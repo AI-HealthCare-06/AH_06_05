@@ -73,3 +73,63 @@ def strip_maker(name: str, pattern: re.Pattern[str] | None = None) -> str:
 def normalize_name(name: str) -> str:
     """NFKC로 호환 문자를 먼저 풀어 줌 (㎎ → mg · ㎖ → ml · 전각 괄호 → 반각). 그다음 규격 · 공백 · 표기 통일"""
     return unify(base_name(unicodedata.normalize("NFKC", name)))
+
+
+# 점검 DB의 성분명은 영어라 화면에 영어가 그대로 보였음 (11/2 E2E). 약 이름 괄호에 한글 성분이 있으면 그것을 쓰고,
+# 없으면 흔한 성분만 한글로 바꿈. 표에 없는 성분은 영어 그대로
+_INGREDIENT_KO = {
+    "acetaminophen": "아세트아미노펜",
+    "caffeine anhydrous": "무수카페인",
+    "isopropylantipyrine": "이소프로필안티피린",
+    "ibuprofen": "이부프로펜",
+    "naproxen": "나프록센",
+    "aspirin": "아스피린",
+    "atorvastatin": "아토르바스타틴",
+    "rosuvastatin": "로수바스타틴",
+    "metformin": "메트포르민",
+    "amlodipine": "암로디핀",
+    "telmisartan": "텔미사르탄",
+}
+
+
+_NOT_INGREDIENT = (
+    "미분화",
+    "역가",
+    "표준화",
+    "소아용",
+    "성인용",
+    "라이트",
+    "상황도",
+)  # 성분이 아니라 품질·대상을 적은 괄호
+
+
+def _top_level_parens(text: str) -> list[str]:
+    """가장 바깥 괄호의 안쪽 글. 안쪽에 중첩된 괄호는 뗌: "페라넬정(페람파넬(미분화))" → ["페람파넬"]"""
+    out: list[str] = []
+    depth, buf = 0, ""
+    for ch in text:
+        if ch == "(":
+            depth += 1
+            if depth == 1:
+                buf = ""
+                continue
+        elif ch == ")" and depth:
+            depth -= 1
+            if depth == 0:
+                out.append(buf)
+            continue
+        if depth == 1:
+            buf += ch
+    return out
+
+
+def ingredient_label(item_name: str, english: str | None) -> str | None:
+    """경고 자세히 보기에 보여 줄 성분명. 점검 DB 값이 이미 한글이면 그대로"""
+    if english and re.search(r"[가-힣]", english):
+        return english
+    for inner in _top_level_parens(base_name(item_name).split("수출명")[0]):
+        if re.fullmatch(r"[가-힣,·/-]+", inner) and inner not in _NOT_INGREDIENT:
+            return inner
+    if not english:
+        return english
+    return _INGREDIENT_KO.get(english.strip().lower(), english)

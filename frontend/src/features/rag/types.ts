@@ -80,7 +80,7 @@ export type WarningDetail = {
   title: string;
   drugs: { itemName: string; hospitalName: string | null; category: string | null; ingredient: string | null }[];
   explanation: string;
-  reasonOriginal: string;
+  reasonOriginal: string | null;
   source: { name: string; noticeDate: string | null };
   judgedBy: 'database';
   actionAdvice: string;

@@ -217,7 +217,7 @@ export default function MeEdit() {
                 label={c.examDate}
                 value={examDate}
                 onChangeText={setExamDate}
-                placeholder="2026-10-27"
+                placeholder="2026-12-15"
                 helper={c.examDateHelper}
               />
               <Btn label={c.examAdd} kind="secondary" onPress={addExam} />
