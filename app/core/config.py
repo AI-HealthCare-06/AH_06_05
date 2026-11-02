@@ -78,7 +78,7 @@ class Config(BaseSettings):
     OCR_LLM_FIX: bool = False
     OPENAI_API_KEY: str = ""
     OPENAI_CHAT_MODEL: str = "gpt-4o-mini"
-    # 챗봇 호출 한 번의 답 길이 상한. 11/2 실제 호출 27번에서 가장 긴 답이 157토큰. 넘치면 JSON이 잘려 답변 오류(E6)가 됨
+    # 챗봇 호출 한 번의 답 길이 상한. 11/2 실제 호출에서 가장 긴 답이 173토큰(두 번 재서 157, 173). 넘치면 JSON이 잘려 답변 오류(E6)가 됨
     OPENAI_CHAT_MAX_TOKENS: int = 500
     # 하루(한국 시간 자정부터) 질문 수 상한. 0이면 끔. 시작값 50은 실제 사용량으로 정한 값이 아니라 켤 때 다시 봄 (#116)
     CHAT_DAILY_QUESTION_LIMIT: int = 0
