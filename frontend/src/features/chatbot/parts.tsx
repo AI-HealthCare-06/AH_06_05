@@ -1,6 +1,6 @@
 // CB-01 화면 부품 (설계 메모 4-2 ~ 4-8 항목). 문구는 copy.chatbot (설계 메모 6장)
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, AppState, Linking, Modal, Platform, Pressable, Text, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
+import { AccessibilityInfo, AppState, Linking, Modal, Platform, Pressable, Text, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData, type TextStyle } from 'react-native';
 
 import { getAnalysis } from '@/features/rag/api';
 import type { AnalysisResult } from '@/features/rag/types';
@@ -26,6 +26,9 @@ const REVEAL_STEP_MS = 30;
 const DICTATION_TIPS = 3; // 받아쓰기 안내는 처음 3번까지 (설계 메모 4-10 항목)
 const INPUT_MAX = 140; // 입력창 높이 48 ~ 140, 넘으면 안에서 스크롤 (설계 메모 4-8 항목)
 const isWeb = Platform.OS === 'web';
+// 웹은 한글을 글자마다 접어 긴 약 이름이 "아토르바스타틴칼 / 슘삼수화물"처럼 갈라짐 (10/27 웹 371px, #134).
+// 말풍선만 낱말 단위로 접고, 한 낱말이 말풍선보다 길 때만 중간에서 접음 (#117 정할 일, 앱 전체 글자 설정은 그대로)
+const WORD_WRAP = isWeb ? ({ wordBreak: 'keep-all', overflowWrap: 'anywhere' } as unknown as TextStyle) : null;
 const ER_PORTAL = 'https://www.e-gen.or.kr/egen/search_emergency_room.do'; // 응급의료포털 응급실 찾기 (설계 메모 4-6 항목)
 
 // 답변 라벨 색 (설계 메모 3-1 항목)
@@ -43,7 +46,7 @@ const open = (url: string) => Linking.openURL(url).catch(() => undefined);
 export function UserBubble({ text, faded }: { text: string; faded?: boolean }) {
   return (
     <View style={{ alignSelf: 'flex-end', maxWidth: '85%', backgroundColor: faded ? C.muted : C.p600, borderRadius: R.card, padding: 12 }}>
-      <Text style={[T.body, { color: faded ? C.text3 : C.onPrimary }]}>{text}</Text>
+      <Text style={[T.body, WORD_WRAP, { color: faded ? C.text3 : C.onPrimary }]}>{text}</Text>
     </View>
   );
 }
@@ -162,7 +165,7 @@ export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boole
   return (
     <Card style={{ alignSelf: 'flex-start', maxWidth: '92%', gap: 8 }}>
       {type !== 'normal' && <Chip label={c.labels[type]} tone={LABEL_TONE[type]} />}
-      <Text style={T.body} accessibilityLabel={m.content}>
+      <Text style={[T.body, WORD_WRAP]} accessibilityLabel={m.content}>
         {shown.text}
       </Text>
       {shown.done && !!m.sources?.length && <Sources sources={m.sources} />}

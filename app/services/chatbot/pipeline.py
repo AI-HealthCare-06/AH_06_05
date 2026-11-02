@@ -111,6 +111,7 @@ async def route(
     client: ChatClient,
     summary: str | None = None,
     emergency_dismissed: bool = False,
+    recent: list[str] | None = None,
 ) -> Route:
     blocked, release = first_layer(question, emergency_dismissed)
     if blocked:
@@ -124,7 +125,7 @@ async def route(
 
     guard_usage, classify_usage = Usage(), Usage()
     risk, cls = await asyncio.gather(
-        guard(question, client, guard_usage),
+        guard(question, client, guard_usage, recent),  # 앞 사용자 말(범위 밖 포함)을 참고로 (#143)
         classify(message, client, classify_usage),
         return_exceptions=True,
     )
@@ -284,6 +285,29 @@ def _check_reply(question: str, cls: dict[str, Any], info: FixedInfo, r: Route, 
     return Reply("normal", _check_result(shown), r, usage=usage, safety_card=card)
 
 
+# 먹는 때를 묻는 말 ("아침에 먹어요 저녁에 먹어요?", "언제 먹어요?", "밥 먹고 먹어요?")
+_WHEN = re.compile(
+    r"(아침|점심|저녁|언제|몇\s*시|자기\s*전|밤|식전|식후|밥\s*(?:먹고|먹기\s*전))\S*\s*\S*(먹|드시|드셔|복용)"
+)
+_PRESCRIBED_TIME = re.compile(r"(아침|점심|저녁|자기\s*전|취침|식전|식후|식사\s*중|공복)")
+
+
+def _prescribed_timing(question: str, cls: dict[str, Any], info: FixedInfo) -> tuple[str, str] | None:
+    """먹는 때를 묻고 그 약의 처방 먹는 법에 먹는 때가 적혀 있으면 처방대로 답함 (AI 없음, 출처 처방전 P:<약 코드>).
+    허가정보에는 아침, 저녁 같은 때가 없어 근거 없음이 됨 (11/2 골든셋 N1). 약을 하나로 특정하지 못하면 None"""
+    target = cls.get("target_drug") or ""
+    if not _WHEN.search(question) or not target:
+        return None
+    d = find_drug(target, info.drugs) or find_drug(question, info.drugs)  # 약 하나로 특정될 때만 (#203 채연 리뷰)
+    if d is None or not _PRESCRIBED_TIME.search(d.how or ""):
+        return None
+    text = (
+        f"처방에 적힌 {d.name}의 먹는 법은 {d.how}이에요.\n"
+        "처방대로 드시고, 먹는 시간을 바꾸고 싶으시면 약사나 의사와 먼저 상의해 주세요."
+    )
+    return text, f"P:{d.code}"
+
+
 def _analysis_reply(question: str, info: FixedInfo, r: Route, usage: Usage) -> Reply:
     """분석 칩에 ⑤(_check_reply)가 답하지 않았을 때(음식, 술 같은 점검하지 않는 말이 섞였거나 약 두 개짜리 경고가 없음).
     약끼리 경고와 약 하나짜리 경고를 함께 보고, 있으면 ⑤와 같은 모양으로 답하며 카드를 붙임. 둘 다 없을 때만 "걸린 항목이 없었어요".
@@ -325,9 +349,10 @@ async def answer(
     search: evidence.Search = rag_search,
     emergency_dismissed: bool = False,
     match: DrugMatch = no_match,
+    recent: list[str] | None = None,
 ) -> Reply:
     started = time.perf_counter()
-    r = await route(question, info, history, client, summary, emergency_dismissed)
+    r = await route(question, info, history, client, summary, emergency_dismissed, recent)
     usage = Usage()
     usage.add(r.usage)
     # 1층과 2층이 막지 않은 말 이상은 분류와 상관없이 고정 안내. 범위 밖 사과, 약 되묻기, "며칠 안에 진료"로 끝나던 것 (#132 채연 리뷰)
@@ -349,6 +374,8 @@ async def answer(
     cls = r.classification or {}
     if (checked := _check_reply(question, cls, info, r, usage)) is not None:
         return checked
+    if r.kind == "medication" and (prescribed := _prescribed_timing(question, cls, info)):
+        return Reply("normal", prescribed[0], r, [prescribed[1]], usage=usage)
     if r.kind == "medication" and asks_this_analysis(question):
         return _analysis_reply(question, info, r, usage)
     if r.kind == "out_of_scope":

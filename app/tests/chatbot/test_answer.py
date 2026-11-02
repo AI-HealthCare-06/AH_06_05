@@ -17,6 +17,7 @@ from app.services.chatbot.answer import (
     SPEECH,
     THANKS,
     clean_text,
+    drop_substitutes,
     output_guard,
 )
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
@@ -144,7 +145,8 @@ async def test_target_drug_narrows_search_and_profile_diseases_are_passed():
     """대상 약이 있으면 그 약만, 질환은 처방전과 내 정보를 합친 id (#99 정할 것 4번, 10/20)"""
     search = FakeSearch()
     cls = classified(target_drug="노바스크정5밀리그람", target_source="question")
-    await answer("노바스크는 언제 먹어요?", S0, [], FakeChat(classify=cls), search=search)
+    # 먹는 때를 묻는 질문은 이제 처방에서 답해(11/2) 근거를 찾지 않으므로, 부작용 질문으로 범위를 봄
+    await answer("노바스크 부작용이 뭐예요?", S0, [], FakeChat(classify=cls), search=search)
     assert search.calls[0]["drugs"] == ["641900040"] and search.calls[0]["diseases"] == ["HTN", "DM2"]
 
 
@@ -1175,3 +1177,176 @@ async def test_drug_match_skips_my_drugs_generic_words_and_not_found():
     r = await answer("이상한정 먹어도 돼요?", S0, [], FakeChat(classify=cls), search=search, match=match)
     assert match.calls == ["이상한정"] and r.answer_type != "clarify" and r.drug_match is None
     assert search.calls[0]["drugs"] == ["641900040", "644300010"]
+
+
+@sync
+async def test_sentence_recommending_another_drug_instead_is_dropped():
+    """다른 약을 대신 권하는 문장만 뺌. 지시문 규칙이 있어도 실제 답 2번 중 1번 나옴 (11/2 골든셋 C3). 나머지 안내는 남김"""
+    r = await _guarded(
+        "이부프로펜은 신장 기능을 악화시킬 수 있어요. 이부프로펜 대신 아세트아미노펜을 고려하는 것이 좋습니다. 약사에게 확인해 주세요."
+    )
+    assert r.answer_type == "normal" and "아세트아미노펜" not in r.content and "악화시킬 수 있어요" in r.content
+    r = await _guarded("그 약 대신 타이레놀을 드세요.")
+    assert r.answer_type == "no_evidence"  # 남는 글이 없으면 근거 없음
+    r = await _guarded("보호자가 대신 약을 받아 오셔도 돼요. 약사에게 확인해 주세요.")
+    assert "대신 약을 받아" in r.content  # 다른 약을 권하는 말이 아님
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "단 음료 대신 물을 드세요.",
+        "흰쌀밥 대신 잡곡밥을 드시면 혈당 관리에 도움이 돼요.",
+        "소금 대신 허브를 사용해 보세요.",
+    ],
+)
+def test_lifestyle_substitutes_are_kept(content):
+    """약이 아닌 것을 대신 권하는 생활습관 안내는 남김 (#203 채연 리뷰)"""
+    assert drop_substitutes(content, S0) == content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "노바스크 대신 다른 약을 권해 드릴 수는 없어요.",
+        "이 약 대신 다른 약을 드시면 안 돼요.",
+        "다른 약을 대신 추천해 드리기는 어려워요.",
+    ],
+)
+def test_refusing_to_substitute_is_kept(content):
+    """다른 약을 권하지 않겠다는 거절은 맞는 안전 안내라 남김 (11/2 점검에서 찾음)"""
+    assert drop_substitutes(content, S0) == content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "대신 타이레놀을 드시면 문제없어요.",
+        "대신 타이레놀을 드셔도 부담 없어요.",
+        "대신 타이레놀을 드셔도 나쁘지 않아요.",
+    ],
+)
+def test_substitute_with_reassurance_is_still_dropped(content):
+    """권하는 말 뒤에 "없", "않"이 있어도 안심시키는 말이면 권하는 문장이라 뺌 (거절 예외를 좁힘, 11/2 점검)"""
+    assert drop_substitutes(content, S0) == ""
+
+
+def test_substitute_uses_my_drug_names_too():
+    """사용자의 약 이름과 성분이 "대신" 뒤에 오면 약으로 봄"""
+    assert drop_substitutes("그것 대신 노바스크를 드세요.", S0) == ""
+    assert drop_substitutes("그것 대신 메트포르민을 드세요.", S0) == ""
+
+
+@sync
+async def test_when_to_take_answers_from_the_prescription_without_ai():
+    """먹는 때를 물으면 처방에 적힌 먹는 법으로 답함 (AI 없음, 출처 처방전). 허가정보에는 아침, 저녁이 없어 근거 없음이 됨 (11/2 골든셋 N1)"""
+    chat, search = (
+        FakeChat(classify=classified(target_drug="노바스크정5밀리그람", target_source="question")),
+        FakeSearch(),
+    )
+    r = await answer("혈압약은 아침에 먹어요 저녁에 먹어요?", S0, [], chat, search=search)
+    assert r.answer_type == "normal" and "1일 1회 아침" in r.content and "노바스크정5밀리그람" in r.content
+    assert r.sources == ["P:641900040"] and "answer" not in chat.calls and search.calls == []
+
+
+@sync
+async def test_when_to_take_falls_back_to_evidence_without_prescribed_timing():
+    """처방 먹는 법에 먹는 때가 없거나 약을 특정하지 못하면 지금처럼 근거 검색"""
+    no_time = replace(S0, drugs=[replace(S0.drugs[0], how="1일 1회")])
+    chat = FakeChat(classify=classified(target_drug="노바스크정5밀리그람", target_source="question"))
+    search = FakeSearch()
+    await answer("노바스크는 언제 먹어요?", no_time, [], chat, search=search)
+    assert search.calls  # 근거를 찾으러 감
+    chat2, search2 = FakeChat(classify=classified()), FakeSearch()
+    await answer("약은 언제 먹는 게 좋나요?", S0, [], chat2, search=search2)
+    assert search2.calls  # 약 하나를 특정하지 못함
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "노바스크는 반 알만 드세요.",
+        "다이아벡스는 밤에 드세요.",
+        "노바스크는 잠들기 전에 드세요.",
+        "다이아벡스는 식사와 관계없이 드셔도 돼요.",
+        "노바스크는 열 알까지 괜찮아요.",
+    ],
+)
+@sync
+async def test_output_guard_catches_half_ten_and_more_timing_words(content):
+    """#116 출력 가드레일 보완: 거르지 못하던 "반 알", "열 알", "밤에", "잠들기 전", "식사와 관계없이" (11/2)"""
+    assert (await _guarded(content)).answer_type == "no_evidence", content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "약을 두 배로 먹지 마세요. 약사에게 확인해 주세요.",
+        "의사가 약을 먹지 말라고 했다면 그 말씀을 따르세요.",
+        "다이아벡스는 처방대로 식사 후에 드세요.",
+    ],
+)
+@sync
+async def test_output_guard_keeps_right_advice(content):
+    """#116 출력 가드레일 보완: 맞는 안내를 거르던 것. 두 배로 먹지 말라는 말, 의사 말을 전하는 말, 처방의 "식후"를 "식사 후"로 쓴 말"""
+    assert (await _guarded(content)).answer_type == "normal", content
+
+
+ACE_LINE = Evidence(
+    "D:641900040:S9",
+    "drug_permit",
+    "641900040",
+    None,
+    "S",
+    "상호작용",
+    "ACE 저해제와 병용 투여 시 혈압이 지나치게 떨어질 수 있다",
+)
+
+
+@sync
+async def test_permit_sentence_about_an_untaken_drug_class_is_not_sent():
+    """처방에 없는 계열(ACE 저해제)과의 병용 문장은 답 AI에 넘기지 않음. 그 계열 약을 먹으면 넘김 (#116, #135)"""
+    chat = FakeChat()
+    await answer(
+        "노바스크 같이 먹으면 안 되는 약 있어요?", S0, [], chat, search=FakeSearch(found(GRAPEFRUIT, ACE_LINE))
+    )
+    assert "ACE 저해제" not in chat.seen["answer"] and "자몽" in chat.seen["answer"]
+    ace_user = replace(
+        S0, drugs=[*S0.drugs, UserDrug("레니프릴정5밀리그램(에날라프릴말레산염)", "에날라프릴", "혈압", "1일 1회")]
+    )
+    chat2 = FakeChat()
+    await answer(
+        "노바스크 같이 먹으면 안 되는 약 있어요?", ace_user, [], chat2, search=FakeSearch(found(GRAPEFRUIT, ACE_LINE))
+    )
+    assert "ACE 저해제" in chat2.seen["answer"]
+
+
+NSAID_LINE = Evidence(
+    "D:641900040:S10",
+    "drug_permit",
+    "641900040",
+    None,
+    "S",
+    "상호작용",
+    "비스테로이드성 소염진통제와 병용 시 신장 기능이 나빠질 수 있다",
+)
+
+
+@sync
+async def test_other_class_filter_keeps_all_when_no_drugs_or_class_matched_by_name():
+    """먹는 약이 없으면 계열 문장을 지우지 않고, 케토롤락처럼 어미로 못 맞추는 소염진통제도 목록에 있어 그 계열 문장을 남김 (#203 채연 리뷰)"""
+    chat = FakeChat()
+    await answer(
+        "같이 먹으면 안 되는 약 있어요?",
+        replace(S0, drugs=[]),
+        [],
+        chat,
+        search=FakeSearch(found(ACE_LINE, NSAID_LINE)),
+    )
+    assert "ACE 저해제" in chat.seen["answer"] and "소염진통제" in chat.seen["answer"]
+    keto = replace(S0, drugs=[*S0.drugs, UserDrug("케토락정10밀리그램", "케토롤락트로메타민", "진통", "1일 3회 식후")])
+    chat2 = FakeChat()
+    await answer(
+        "노바스크 같이 먹으면 안 되는 약 있어요?", keto, [], chat2, search=FakeSearch(found(ACE_LINE, NSAID_LINE))
+    )
+    assert "ACE 저해제" not in chat2.seen["answer"] and "소염진통제" in chat2.seen["answer"]

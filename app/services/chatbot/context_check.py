@@ -12,6 +12,8 @@ import re
 from app.services.chatbot import safety_rules
 
 # 본인 바람("싶다")이나 죽음, 위험한 양을 뜻하는 말. 있으면 어떤 이유로도 풀지 않음
+# 긴가민가한 붓기 바로 뒤의 "싶"("부었나 싶어요")은 마음 표현이 아니라 _NEVER 검사에서 뺌. 다른 자리의 "싶"("죽고 싶")은 그대로 봄 (11/2)
+_HEDGE_SIP = re.compile(r"(부었나|부은가|부은건가|부었는지)싶")
 _NEVER = re.compile(
     r"(싶|십지|십어|시퍼|죽어|죽나|죽을|죽는|치사|영원히|안깨|위험|큰일|치명|한통|한병|통째|몇알|몇통|어떻게되|어떻게돼)"
 )
@@ -59,6 +61,13 @@ CONTEXT_RULES: list[tuple[str, set[str], str]] = [
         {"allergy"},
         r"^(?!.*(숨|목|혀|입술|목구멍)).*(얼굴|눈두덩|눈꺼풀)(이|가)?(약간|조금|좀|살짝)\S{0,4}(붓|부은|부어)\S{0,4}(기분|느낌|것같|거같)",
     ),
+    # 긴가민가한 붓기: "부었나 싶어요", "부은 것 같은데" (숨, 목, 혀, 입술 증상과 갑자기, 퉁퉁, 많이, 심하게가 없을 때만,
+    # #116 "약간 없는 붓기도 숨, 목, 혀 증상이 없으면 풂", 11/2). 알레르기 규칙에 다른 부위가 함께 걸리면 풀지 않음
+    (
+        "unsure_swelling",
+        {"allergy"},
+        r"^(?!.*(숨|목|혀|입술|목구멍|갑자기|퉁퉁|많이|심하게|부풀)).*(얼굴|눈두덩|눈꺼풀)(이|가)?\S{0,4}(부었나|부은가|부은건가|부었는지|부은듯|부은것같|부은거같)",
+    ),
     # 지난 일, 지금은 나은 증상
     (
         "past_resolved",
@@ -95,7 +104,7 @@ def looks_normal(text: str, rule: safety_rules.SafetyResult) -> str | None:
     if not rule.hit:
         return None
     s = safety_rules.normalize(text)
-    if _NEVER.search(_TASK_FINISH.sub("", s)):
+    if _NEVER.search(_HEDGE_SIP.sub(r"\1", _TASK_FINISH.sub("", s))):
         return None
     hit_rules = set(rule.rules)
     now = bool(_NOW.search(s))

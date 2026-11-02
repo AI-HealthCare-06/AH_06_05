@@ -121,8 +121,10 @@ def _missed_question(question: str) -> bool:
 
 # 출력 가드레일 규칙. 숫자는 아라비아 숫자와 "두 알", "세 번" 같은 세는 말을 같이 봄
 _DIGITS = re.compile(r"\d+(?:\.\d+)?")
-_COUNT_WORDS = {"한": "1", "두": "2", "세": "3", "네": "4", "다섯": "5", "여섯": "6", "일곱": "7", "여덟": "8"}
-_WORD = "(한|두|세|네|다섯|여섯|일곱|여덟)"
+_COUNT_WORDS = {
+    "한": "1", "두": "2", "세": "3", "네": "4", "다섯": "5", "여섯": "6", "일곱": "7", "여덟": "8", "열": "10", "반": "0.5",
+}  # fmt: skip
+_WORD = "(한|두|세|네|다섯|여섯|일곱|여덟|열|반)"  # "반 알", "열 알"도 (#116 출력 가드레일 보완, 11/2)
 # 세는 말은 먹는 양("두 알")과 "하루 세 번"만 숫자로 봄 ("한 번 더 물어봐 주세요"를 거르지 않게, 10/25 점검)
 _COUNT = re.compile(rf"(?:하루|1일|매일)\s*{_WORD}\s*(?:번|회)|{_WORD}\s*(?:알|정|캡슐|포|배)")
 _LIST_NO = re.compile(r"(?:^|(?<=\s))\d{1,2}[.)](?=\s)")  # "1. ", "2) " 같은 목록 번호는 숫자로 보지 않음
@@ -156,10 +158,23 @@ _ASK_CHANGE = re.compile(
     r"(?:되는지|될지(?!도)|되나요|될까요|괜찮은지|괜찮을지|괜찮나요|좋은지)"
 )
 _REST_BARE = re.compile(r"쉬(?:어도|셔도|세요|시면)")
+# 먹지 말라는 말 중 지시가 아닌 것 (#116 출력 가드레일 보완, 11/2)
+_DOUBLE = re.compile(r"(두\s*배|한꺼번에|몰아서|한\s*번에\s*(?:두|여러))")
+_QUOTED = re.compile(r"라\s*(?:고|는)")
 
 # 먹는 때는 시키는 말에만 ("먹으면 졸릴 수 있어요" 같은 설명은 보지 않음, 10/25 점검)
 _TAKE = re.compile(r"(드세요|드시면\s*(?:돼|됩|좋)|드셔도|드시는\s*게\s*좋|복용하세요|복용하시면|먹으세요|드십시오)")
-_TIMING = re.compile(r"(아침|점심|저녁|자기\s*전|취침|식전|식후|식사\s*중|공복)")
+_TIMING = re.compile(
+    r"(아침|점심|저녁|밤|자기\s*전|잠들기\s*전|취침|식전|식후|식사\s*(?:중|전|후)|식사와\s*관계없이|공복)"
+)  # 밤, 잠들기 전, 식사와 관계없이 (#116 출력 가드레일 보완, 11/2)
+
+
+def _same_timing(word: str) -> str:
+    """처방과 근거의 "식후", "식전"과 같은 말로 봄 ("식사 후에 드세요"가 처방 "식후"를 거르지 않게)"""
+    w = re.sub(r"\s+", "", word)
+    return {"식사후": "식후", "식사전": "식전"}.get(w, w)
+
+
 # "약속", "약국", "약간"의 "약"은 약으로 보지 않음. 붙여 쓴 "약하나", "아예약을"은 약으로 보게 좁게 뺌.
 # "예약"도 약으로 봄 (틀려도 근거 없음이라 안전한 쪽, 10/26 수인 결정)
 _MED_WORDS = re.compile(r"((?<![계절요공규언])약(?![속국간])|복용|용량|캡슐)")
@@ -223,6 +238,8 @@ def _changes_drug(
     found = [(m, m.group(1)) for m in _CHANGE.finditer(sentence)] + [(m, m.group(0)) for m in _STOP.finditer(sentence)]
     for m, word in found:
         before = sentence[max(0, m.start() - _OBJECT_WINDOW) : m.start()]
+        if m.re is _STOP and (_DOUBLE.search(before) or _QUOTED.match(sentence, m.end())):
+            continue  # "두 배로 먹지 마세요"(과다 복용 막기), "먹지 말라고 했다면"(의사 말 전하기)은 지시가 아님
         near = _about_drug(before, drug_names) or (m.re is _CHANGE and _after_ask(sentence, m.start(), ask_at))
         if near and re.sub(r"\s+", "", word) not in flat and not _asks_back(sentence, m.end()):
             return True
@@ -242,6 +259,38 @@ def _changes_drug(
         and re.sub(r"\s+", "", m.group(0)) not in flat
         for m in _REST_BARE.finditer(sentence)
     )
+
+
+# 다른 약을 대신 권하는 말 ("이부프로펜 대신 아세트아미노펜을 고려하세요"). 답 지시문에 금지가 있어도 나옴 (11/2 골든셋 C3, 2번 중 1번).
+# "보호자가 대신 약을 받아 오셔도"처럼 대신 뒤에 권하는 동사가 바로 오지 않으면 아님
+# "대신" 뒤가 약일 때만 ("단 음료 대신 물을", "흰쌀밥 대신 잡곡밥을" 같은 생활습관 안내는 남김, #203 채연 리뷰).
+# 약으로 보는 말: 제형 어미(정, 캡슐, 시럽), 성분 이름 어미(펜, 핀, 프릴, 사르탄, 스타틴 등), "약", 영문 4글자 이상, 사용자의 약 이름과 성분
+_DRUG_WORD = (
+    r"(?:[가-힣A-Za-z0-9]*(?:정|캡슐|시럽|연고|패치|주사)"
+    r"|[가-힣]*(?:펜|센|낙|핀|틴|민|졸|롤|놀|프릴|사르탄|마이신|세틴|린|론|딘|돌|팜|람|마이드|콕시브|록시캄|스타틴|피린)"
+    r"|(?:다른\s*)?약|[A-Za-z]{4,})"
+)
+# 권하는 말 바로 뒤가 "할 수 없|하기 어려|안 돼|마세요|권하지 않"이면 권하지 않겠다는 거절이라 남김 ("다른 약을 권해 드릴 수는 없어요").
+# "드셔도 부담 없어요", "나쁘지 않아요"는 권하는 말이라 "없|않"만으로는 보지 않음 (11/2 점검)
+_SUBSTITUTE_TAIL = (
+    r"(?:을|를|이나|으로|로)?\s*(?:고려|드시|드셔|드세|복용|먹|사용|쓰시|권|추천)"
+    r"(?!(?:하|해\s*드리)?지\s*않|[가-힣\s]{0,8}(?:수\s*(?:는|가|도)?\s*없|기\s*(?:는|가|도)?\s*어려|안\s*돼|마세요|말아))"
+)
+
+
+def drop_substitutes(content: str, info: FixedInfo | None = None) -> str:
+    """다른 약을 대신 권하는 문장만 빼고 나머지를 돌려줌 (남는 글이 없으면 빈 글)"""
+    # 약 이름 앞 3글자 뒤에 나머지 이름이 이어짐 ("노바스" + "크를")
+    names = [
+        re.escape(k) + r"[가-힣A-Za-z0-9]*"
+        for d in (info.drugs if info else [])
+        for k in (d.name[:3], d.ingredient)
+        if k
+    ]
+    word = f"(?:{'|'.join(names)}|{_DRUG_WORD})" if names else _DRUG_WORD
+    pattern = re.compile(rf"대신\s*(?:에\s*)?{word}{_SUBSTITUTE_TAIL}")
+    kept = [s for s in re.split(r"(?<=[.!?])\s+", content) if not pattern.search(s)]
+    return " ".join(kept).strip()
 
 
 def output_guard(content: str, evidence: list[Evidence], info: FixedInfo) -> str | None:
@@ -269,7 +318,7 @@ def output_guard(content: str, evidence: list[Evidence], info: FixedInfo) -> str
         if _changes_drug(sentence, drug_names, flat, prev_med=about_med, after_ask=after_ask):
             return "change"
         after_ask = bool(_ASK_CHANGE.search(sentence))
-        if _TAKE.search(sentence) and any(re.sub(r"\s+", "", t) not in flat for t in _TIMING.findall(sentence)):
+        if _TAKE.search(sentence) and any(_same_timing(t) not in flat for t in _TIMING.findall(sentence)):
             return "timing"
     return None
 
@@ -314,7 +363,51 @@ def out_of_scope(question: str, cls: dict[str, Any], info: FixedInfo) -> Draft:
 _THIS_DRUG = re.compile(r"(?<![가-힣])이\s?약(?:물)?(?=을|를|의|은|는|이|과|와|으로|로|에|도|만|[^가-힣]|$)")
 
 
+# 처방에 없는 약 계열과의 병용 문장 (#116, #135): 허가 원문의 "ACE 저해제와 병용 시"가 그 계열 약을 먹지 않는 사람의 답에 나옴
+# (10/26 채연 서버 시험, 10/27 측정 3번 중 3번, 지시문 한 줄로는 안 고쳐짐). 계열 이름이 나오고 병용을 말하는 허가 문장 중
+# 사용자 약(이름, 성분)에 그 계열이 없으면 답 AI에 넘기지 않음. 계열과 성분 어미 목록은 시작값 (11/2, 제안)
+_CLASS_IN_TEXT = {
+    "ace": r"ACE\s*(?:저해제|억제제)|안지오텐신\s*전환\s*효소",
+    "arb": r"안지오텐신\s*(?:II\s*)?수용체\s*(?:차단|길항)|ARB",
+    "diuretic": r"이뇨제",
+    "beta": r"베타\s*(?:차단제|수용체\s*차단)",
+    "nsaid": r"비스테로이드성|NSAID|소염\s*진통제",
+}
+_CLASS_IN_DRUG = {
+    "ace": r"프릴|pril",
+    "arb": r"사르탄|sartan",
+    "diuretic": (
+        r"티아지드|세미드|스피로노락톤|인다파미드|클로르탈리돈|아미로라이드|트리암테렌|에플레레논|메톨라존"
+        r"|thiazide|semide|spironolactone|indapamide|chlorthalidone|amiloride|triamterene|eplerenone|metolazone"
+    ),
+    "beta": r"[가-힣]롤(?![가-힣])|olol|카르베딜롤|carvedilol",
+    "nsaid": (
+        r"프로펜|나프록센|페낙|콕시브|록시캄|아스피린|케토롤락|에토돌락|메페남산|나부메톤|인도메타신|설린닥|니메술리드|탈니플루메이트"
+        r"|profen|naproxen|fenac|coxib|oxicam|aspirin|ketorolac|etodolac|mefenamic|nabumetone|indomethacin|sulindac|nimesulide"
+    ),
+}  # 케토롤락 등 빠진 약을 더함 (#203 채연 리뷰). 여전히 시작값이라 못 맞춘 약은 그 계열 문장이 빠질 수 있음
+_WITH = re.compile(r"병용|함께|같이|투여\s*중")
+
+
+def drop_other_class(evidence: list[Evidence], info: FixedInfo) -> list[Evidence]:
+    """사용자가 먹지 않는 계열과의 병용을 말하는 허가 문장을 뺌. 팩트표 근거는 그대로.
+    먹는 약이 없으면 무엇을 먹지 않는지 알 수 없어 그대로 둠 (#203 채연 리뷰)"""
+    if not info.drugs:
+        return evidence
+    mine = " ".join(f"{d.name} {d.ingredient}" for d in info.drugs)
+    taken = {c for c, p in _CLASS_IN_DRUG.items() if re.search(p, mine, re.I)}
+    out = []
+    for e in evidence:
+        text = f"{e.heading} {e.text}"
+        other = [c for c, p in _CLASS_IN_TEXT.items() if c not in taken and re.search(p, text)]
+        if e.source == "drug_permit" and other and _WITH.search(text):
+            continue
+        out.append(e)
+    return out
+
+
 def _evidence_json(evidence: list[Evidence], info: FixedInfo) -> str:
+    evidence = drop_other_class(evidence, info)
     names = {d.code: d.name for d in info.drugs if d.code}
     rows = [
         {
@@ -344,6 +437,12 @@ async def write(
     draft = await _write(question, cls, info, past, first_turn, found, client, usage)
     if draft.content in (NO_EVIDENCE, *REFER.values()):
         return draft
+    kept = drop_substitutes(draft.content, info)
+    if kept != draft.content:
+        logger.warning("다른 약을 대신 권하는 문장을 뺌")  # 답 글은 건강 정보가 섞여 남기지 않음
+        if not kept:
+            return replace(_no_evidence(cls), blocked="substitute")
+        draft = replace(draft, content=kept)
     blocked = output_guard(draft.content, found.evidence if found else [], info)
     if blocked:
         logger.warning("출력 가드레일에 걸려 근거 없음으로 바꿈 (%s)", blocked)  # 답 글은 건강 정보가 섞여 남기지 않음

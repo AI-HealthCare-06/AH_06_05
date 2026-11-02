@@ -345,11 +345,21 @@ async def ask(
 
 
 async def run_pipeline(
-    question: str, info: FixedInfo, history: list[dict[str, str]], emergency_dismissed: bool = False
+    question: str,
+    info: FixedInfo,
+    history: list[dict[str, str]],
+    emergency_dismissed: bool = False,
+    recent: list[str] | None = None,
 ) -> Reply:
-    """답 만들기 (OpenAI). 시험에서는 가짜로 바꿈"""
+    """답 만들기 (OpenAI). 시험에서는 가짜로 바꿈. recent는 2층에 참고로 주는 앞 사용자 말"""
     return await pipeline.answer(
-        question, info, history, make_client(), emergency_dismissed=emergency_dismissed, match=_drug_match
+        question,
+        info,
+        history,
+        make_client(),
+        emergency_dismissed=emergency_dismissed,
+        match=_drug_match,
+        recent=recent,
     )
 
 
@@ -378,7 +388,9 @@ def _sources(ids: list[str]) -> list[dict[str, str]]:
     titles: list[str] = []
     for i in ids:
         kind = i.split(":")[0]
-        titles += [DRUG_SOURCE] if kind == "D" else _fact_sources(i) if kind == "F" else []
+        titles += (
+            [DRUG_SOURCE] if kind == "D" else _fact_sources(i) if kind == "F" else ["처방전"] if kind == "P" else []
+        )
     return [{"title": t} for t in dict.fromkeys(titles)]
 
 
@@ -418,6 +430,14 @@ async def add_photo(
     return {"messageId": answer.id}
 
 
+def _recent_user_turns(rows: list[ChatMessage]) -> list[str]:
+    """2층에 참고로 줄 최근 사용자 말 (#143). 범위 밖으로 걸러진 말도 넣음(괴로움이 범위 밖으로 간 경우).
+    1층이 잡아 원문이 없는 말과 사진 첨부 줄은 빠짐"""
+    photos = {m.reply_to_id for m in rows if m.route_kind == "image"}  # 사진 첨부의 사용자 줄은 고정 글이라 뺌
+    turns = [m.content for m in rows if m.role == MessageRole.USER and m.content and m.id not in photos]
+    return turns[-2:]
+
+
 def _history(rows: list[ChatMessage]) -> list[dict[str, str]]:
     """빈 글 줄(1층이 잡은 질문, 긴급 답, 맥락 카드)은 대화 기억에 넣지 않음.
     범위 밖으로 걸러진 질문과 그 답도 뺌. 앞 대화가 다음 답의 노이즈가 됨 (5회차 멘토링 시연, #99)"""
@@ -444,8 +464,9 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         before = await repo.done_messages_before(s.id, question.id)
         info.focus_drug, info.focus_warning = await _card_focus(info, before)
         history = _history(before)
+        recent = _recent_user_turns(before)
         reply: Reply | None = await asyncio.wait_for(
-            run_pipeline(question.content, info, history, emergency_dismissed), ANSWER_TIMEOUT_SEC
+            run_pipeline(question.content, info, history, emergency_dismissed, recent=recent), ANSWER_TIMEOUT_SEC
         )
     except Exception as e:  # noqa: BLE001 - 어떤 실패든 답 줄을 지워 앱이 E6을 보이게 함
         logger.warning("챗봇 답 만들기 실패: %s", type(e).__name__)  # 예외 문장에 질문이 섞일 수 있어 종류 이름만

@@ -437,3 +437,12 @@ async def test_warning_card_stays_when_asking_its_drug():
         info, drugs=[*S0.drugs, UserDrug("아토르스타정", "아토르바스타틴", "콜레스테롤", "1일 1회", code="1")]
     )
     assert await _card_focus(other, [card, ask(2, "아토르스타정은요?")]) == (None, None)
+
+
+def test_guard_message_keeps_the_question_alone_without_recent_turns():
+    """앞 말이 없으면 10/16 측정 때와 같은 글(질문만). 있으면 최근 2개를 참고로 앞에 붙임 (#143)"""
+    from app.services.chatbot.guard import guard_message
+
+    assert guard_message("혈압약 언제 먹어요?") == "혈압약 언제 먹어요?"
+    msg = guard_message("남은 약은 어떻게 해요?", ["첫 말", "둘째 말", "셋째 말"])
+    assert "첫 말" not in msg and "- 둘째 말\n- 셋째 말" in msg and msg.endswith("[지금 질문]\n남은 약은 어떻게 해요?")
