@@ -29,7 +29,7 @@ import { copy } from '@/shared/copy';
 import { C, L, S, T } from '@/shared/theme';
 import { agreeRiskCheck, getConsents } from '@/features/common/api';
 import { riskCheckLater, setRiskCheckLater } from '@/shared/storage/chat';
-import { Btn, Card, Screen } from '@/shared/ui';
+import { Btn, Card, ConsentText, Screen } from '@/shared/ui';
 import { CalendarIcon } from '@/shared/ui/icons';
 
 const c = copy.chatbot;
@@ -256,7 +256,7 @@ export default function Chat() {
           {askRisk && !chat.safetyMode && (
             <Card style={{ gap: 8, marginBottom: 8 }}>
               <Text style={T.bodyM}>{rc.riskCheckTitle}</Text>
-              <Text style={T.caption}>{rc.riskCheckBody}</Text>
+              <ConsentText summary={rc.riskCheckSummary} full={rc.riskCheckBody} />
               <Btn label={rc.riskCheckOk} disabled={riskBusy} onPress={() => void answerRisk(true)} />
               <Btn label={rc.riskCheckLater} kind="ghost" disabled={riskBusy} onPress={() => void answerRisk(false)} />
             </Card>

@@ -1,6 +1,6 @@
 // 공통 부품 — 프로토타입 ui.tsx에서 가져옴 (안건 버튼 · 화면 ID 표시 · 프로토타입 메모는 뺌)
 import { useRouter } from 'expo-router';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   KeyboardTypeOptions,
   Modal,
@@ -302,6 +302,7 @@ export function Confirm({
   onOk,
   onCancel,
   danger = true,
+  content,
 }: {
   visible: boolean;
   title: string;
@@ -310,6 +311,7 @@ export function Confirm({
   onOk: () => void;
   onCancel: () => void;
   danger?: boolean;
+  content?: ReactNode; // 본문 대신 그릴 것 (동의 요약과 전체 내용 접기)
 }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
@@ -318,12 +320,34 @@ export function Confirm({
           <Text style={T.heading} accessibilityRole="header">
             {title}
           </Text>
-          <Text style={[T.body, { color: C.text2 }]}>{body}</Text>
+          {content ?? <Text style={[T.body, { color: C.text2 }]}>{body}</Text>}
           <Btn label={ok} kind={danger ? 'danger' : 'primary'} onPress={onOk} style={{ marginTop: 8 }} />
           <Btn label={copy.common.cancel} kind="secondary" onPress={onCancel} />
         </View>
       </View>
     </Modal>
+  );
+}
+
+// 동의 글: 핵심 요약 몇 줄을 먼저 보이고 법정 전체 문구는 [전체 내용 보기]로 접음 (11/2 멘토 피드백 "모달 글이 너무 많음").
+// 전체 문구는 지우지 않고 그대로 보여 줄 수 있어야 함
+export function ConsentText({ summary, full }: { summary: readonly string[]; full: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={{ gap: 6 }}>
+      {summary.map((line) => (
+        <Bullet key={line} text={line} textStyle={[T.body, { color: C.text2 }]} />
+      ))}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((v) => !v)}
+        style={{ minHeight: L.touch, justifyContent: 'center' }}
+      >
+        <Text style={{ fontSize: 15, fontWeight: '700', color: C.p700 }}>{open ? copy.common.fullClose : copy.common.fullOpen}</Text>
+      </Pressable>
+      {open && <Text style={T.caption}>{full}</Text>}
+    </View>
   );
 }
 

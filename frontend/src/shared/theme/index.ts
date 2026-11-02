@@ -35,7 +35,6 @@ export const L = {
   touch: 48,
   button: 56,
   header: 56, // 모든 화면 위쪽 제목 줄 높이 (홈 TopNav 제목 줄과 같음)
-  topTab: 48, // 홈 상단 내비 A안 탭 줄
   bottomNav: 64, // 나머지 화면 하단 내비 3개
   navLabel: 13,
   fab: 56, // 챗봇 플로팅 버튼 (원형)

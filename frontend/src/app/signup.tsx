@@ -7,7 +7,7 @@ import { DRINKING, SMOKING, type Drinking, type Smoking } from '@/features/commo
 import { ApiError } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
 import { C, T } from '@/shared/theme';
-import { Btn, Card, Check, Field, Radio, Screen, Section } from '@/shared/ui';
+import { Btn, Card, Check, ConsentText, Field, Radio, Screen, Section } from '@/shared/ui';
 
 const c = copy.signup;
 
@@ -146,7 +146,7 @@ export default function Signup() {
           <Check on={terms} label={c.terms} onPress={() => setTerms(!terms)} right={view} />
           <Check on={privacy} label={c.privacy} onPress={() => setPrivacy(!privacy)} right={view} />
           <Check on={sensitive} label={c.sensitiveHealth} onPress={() => setSensitive(!sensitive)} right={view} />
-          <Text style={T.caption}>{c.sensitiveBody}</Text>
+          <ConsentText summary={c.sensitiveSummary} full={c.sensitiveBody} />
           {preparing && <Text style={T.caption}>{copy.preparing}</Text>}
           {fieldError?.field.startsWith('consents.') && (
             <Text style={{ fontSize: 14, color: C.danger }}>※ {fieldError.message}</Text>

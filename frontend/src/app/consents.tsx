@@ -7,7 +7,7 @@ import { ApiError } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
 import { clearFailed } from '@/shared/storage/chat';
 import { C, T } from '@/shared/theme';
-import { Btn, Card, Confirm, Screen, Section } from '@/shared/ui';
+import { Btn, Card, Confirm, ConsentText, Screen, Section } from '@/shared/ui';
 
 const c = copy.me;
 
@@ -107,7 +107,7 @@ export default function Consents() {
           </Card>
           {items.some((it) => it.type === 'riskCheck') && (
             <>
-              <Text style={T.caption}>{c.riskCheckBody}</Text>
+              <ConsentText summary={c.riskCheckSummary} full={c.riskCheckBody} />
               {items.some((it) => it.type === 'riskCheck' && it.agreed) ? (
                 <Btn label={c.riskCheckWithdraw} kind="secondary" disabled={busy} onPress={() => void toggleRisk(false)} />
               ) : (
@@ -141,6 +141,7 @@ export default function Consents() {
         visible={askingAgain}
         title={c.consentAgainTitle}
         body={c.consentAgainBody}
+        content={<ConsentText summary={c.consentAgainSummary} full={c.consentAgainBody} />}
         ok={c.consentAgainOk}
         danger={false}
         onOk={agreeAgain}

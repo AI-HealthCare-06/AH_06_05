@@ -1,6 +1,5 @@
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TopNav } from '@/features/common/nav';
 import { HomeChallengeCard } from '@/features/challenge/homeCard';
@@ -13,14 +12,13 @@ import { CameraIcon } from '@/shared/ui/icons';
 
 // CM-03-E1 처음 홈 (뼈대) + CM-03 오늘의 실천 카드(P-3), 최근 기록 카드(기록이 있을 때만 보임)
 export default function Home() {
-  const ins = useSafeAreaInsets();
   const router = useRouter();
   const { reset } = useFlow();
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <TopNav current="index" />
+      <TopNav />
       <ScrollView
-        contentContainerStyle={{ padding: S.side, paddingBottom: ins.bottom + L.fab + L.fabGap * 2 }}
+        contentContainerStyle={{ padding: S.side, paddingBottom: L.fab + L.fabGap * 2 }} // 하단 내비가 안전 영역을 맡음
       >
         <View style={st.hero}>
           <Text style={st.heroTitle}>{copy.home.heroTitle}</Text>
