@@ -440,10 +440,11 @@ async def _pair_warnings(aid: int) -> tuple[list[PairWarning], list[PairWarning]
         for w in rows
         if w.warning_type in PAIR_WARNINGS and w.item_a and w.item_b
     ]
+    # 여러 약 복용(polypharmacy)은 약 여러 개에 대한 경고라 이름 없이 (#195 채연 리뷰)
     singles = [
-        PairWarning(w.id, (_item_name(w.item_a),), w.summary or "")
+        PairWarning(w.id, () if w.warning_type == "polypharmacy" else (_item_name(w.item_a),), w.summary or "")
         for w in rows
-        if w.warning_type not in PAIR_WARNINGS and w.item_a
+        if w.warning_type not in PAIR_WARNINGS and (w.item_a or w.warning_type == "polypharmacy")
     ]
     return pairs, singles
 

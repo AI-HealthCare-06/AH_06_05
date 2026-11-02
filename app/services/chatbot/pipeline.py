@@ -42,8 +42,11 @@ _THIS_DRUG = re.compile(r"이\s*약(?![속국간])|이거|이것")
 # 점검할 약이 없을 때만 이 안내. 경고가 있으면 ⑤ 점검 결과로, 없으면 아래 NO_WARNINGS로 답함 (11/2 멘토 피드백 "오히려 모른다",
 # 10/26의 "경고가 없다고 말하지 않음" 결정을 바꿈. 대신 무엇을 점검했고 무엇은 점검하지 않는지 같이 적음). 화면 문구라 신규 임시
 ANALYSIS_GUIDE = "이번 분석에서 가장 조심할 점은 분석 결과 화면에서 확인해 주세요. 궁금한 점은 약사에게 확인해 주세요."
-NO_WARNINGS_CHECKS = "함께 먹으면 안 되는 약, 같은 성분이나 효과가 겹치는 약, 어르신이 조심해야 하는 약, 나이에 맞지 않는 약, 하루 최대량"
-NO_WARNINGS_TAIL = "음식이나 술, 처방에 없는 약은 점검하지 않아요.\n\n약마다 주의할 점은 분석 결과의 복약 안내에서 볼 수 있어요. 약사에게 확인해 주세요."
+NO_WARNINGS_CHECKS = "함께 먹으면 안 되는 약, 같은 성분이나 효과가 겹치는 약, 어르신이 조심해야 하는 약, 나이에 맞지 않는 약, 하루 최대량, 여러 약 복용"
+NOT_CHECKED_NOTE = "음식이나 술, 처방에 없는 약은 점검하지 않아요."
+NO_WARNINGS_TAIL = (
+    f"{NOT_CHECKED_NOTE}\n\n약마다 주의할 점은 분석 결과의 복약 안내에서 볼 수 있어요. 약사에게 확인해 주세요."
+)
 
 
 @dataclass
@@ -204,12 +207,15 @@ def _no_warnings(info: FixedInfo) -> str:
     )
 
 
-def _analysis_reply(info: FixedInfo, r: Route, usage: Usage) -> Reply:
-    """분석 칩인데 약 두 개짜리 경고가 없을 때. 약 하나짜리 경고(노인주의 등)가 있으면 ⑤와 같은 모양으로 답하고 카드를 붙임.
-    경고가 없으면 점검한 약과 기준을 적음. 점검한 약이 없으면 화면 안내 (11/2 멘토 피드백)"""
-    if info.other_warnings:
-        card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in info.other_warnings]}
-        return Reply("normal", _check_result(info.other_warnings), r, usage=usage, safety_card=card)
+def _analysis_reply(question: str, info: FixedInfo, r: Route, usage: Usage) -> Reply:
+    """분석 칩에 ⑤(_check_reply)가 답하지 않았을 때(음식, 술 같은 점검하지 않는 말이 섞였거나 약 두 개짜리 경고가 없음).
+    약끼리 경고와 약 하나짜리 경고를 함께 보고, 있으면 ⑤와 같은 모양으로 답하며 카드를 붙임. 둘 다 없을 때만 "걸린 항목이 없었어요".
+    음식, 술을 물었으면 점검하지 않는다는 말을 덧붙임. 점검한 약이 없으면 화면 안내 (11/2 멘토 피드백, #195 채연 리뷰)"""
+    warnings = info.pair_warnings + info.other_warnings
+    if warnings:
+        tail = f"{NOT_CHECKED_NOTE}\n\n{SAFETY_TAIL}" if _NOT_CHECKED.search(question) else SAFETY_TAIL
+        card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in warnings]}
+        return Reply("normal", _check_result(warnings, tail), r, usage=usage, safety_card=card)
     return Reply("normal", _no_warnings(info) if info.drugs else ANALYSIS_GUIDE, r, usage=usage)
 
 
@@ -217,7 +223,8 @@ def _check_result(warnings: list[PairWarning], tail: str = SAFETY_TAIL) -> str:
     """경고마다 "약A, 약B: 점검 문장" 한 줄. 약 이름 뒤 조사는 괄호로 끝나는 이름이 많아 쉼표로 이음 (10/26 수인 결정).
     경고 사이와 끝 문장 앞은 빈 줄. 좁은 화면에서 한 경고가 여러 줄로 접히면 다음 경고나 끝 문장과 구분되지 않음.
     끝 문장의 "위 내용은"은 경고 전체에 대한 말임을 글로도 밝힘 (읽어주기). 머리 문장은 목록의 제목이라 붙임 (10/27 수인 결정)"""
-    lines = "\n\n".join(f"{', '.join(w.names)}: {w.summary}" for w in warnings)
+    # 여러 약 복용처럼 약 하나의 것이 아닌 경고는 이름 없이 문장만
+    lines = "\n\n".join(f"{', '.join(w.names)}: {w.summary}" if w.names else w.summary for w in warnings)
     return f"{SAFETY_HEAD}\n{lines}\n\n{tail}"
 
 
@@ -269,7 +276,7 @@ async def answer(
             return Reply("refer", _check_result(shown, REFER[kind]), r, usage=usage, safety_card=card)
         return Reply("normal", _check_result(shown), r, usage=usage, safety_card=card)
     if r.kind == "medication" and asks_this_analysis(question):
-        return _analysis_reply(info, r, usage)
+        return _analysis_reply(question, info, r, usage)
     if r.kind == "out_of_scope":
         # 범위 밖은 답 AI 없이 늘 같은 문구 (5회차 멘토링 시연, #99). 다음 질문의 대화 기억에서도 뺌 (chats._history)
         draft = out_of_scope(question, cls, info)
