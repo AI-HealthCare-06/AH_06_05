@@ -24,7 +24,7 @@ from app.models.analysis import (
     DrugGuide,
     ReviewStatus,
 )
-from app.models.chat import AnswerType, ChatMessage, ChatSession, MessageRole, MessageStatus
+from app.models.chat import AnswerType, ChatMessage, ChatPhotoUse, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import MatchStatus, PrescriptionItem
 from app.models.users import ConsentType, User, UserConsent
 from app.repositories.chat import ChatRepository
@@ -197,8 +197,9 @@ def _item(m: ChatMessage) -> dict[str, Any]:
             row[key] = value
     if m.image_result == chat_photo.PRESCRIPTION:
         row["action"] = "open_analysis"  # 앱이 [처방전 · 약봉투 분석하러 가기]를 보임
-    if m.answer_type and m.content == DISTRESS:
-        row["noFeedback"] = True  # 범위 밖 괴로움의 도움 연결 답에는 피드백 버튼을 두지 않음 (#144 채연 리뷰, #117)
+    if m.answer_type and (m.content == DISTRESS or m.image_result):
+        # 범위 밖 괴로움의 도움 연결 답(#144 채연 리뷰, #117)과 사진 첨부 안내(규칙으로 만든 답, #199 채연 리뷰)에는 피드백 버튼을 두지 않음
+        row["noFeedback"] = True
     row["createdAt"] = m.created_at.isoformat()
     return row
 
@@ -415,6 +416,7 @@ async def add_photo(
         )
     await _check_daily_limit(user)
     await check_photo_limit(user)  # O-1과 합산한 하루 사진 상한 (CLOVA 호출 전에)
+    await ChatPhotoUse.create(user=user)  # CLOVA를 부르기 전에 남김 (읽기에 실패해도 한 번 쓴 것)
     try:
         result = await chat_photo.identify(blob)
     except clova.ClovaError as e:

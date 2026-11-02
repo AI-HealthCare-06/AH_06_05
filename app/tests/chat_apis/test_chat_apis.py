@@ -997,7 +997,10 @@ class TestFixedInfo(ChatCase):
             items = await self.items(client, headers, sid)
         assert items[-1]["drugMatch"] == dm and "drugMatch" not in items[0]
 
-    # ── H-9 사진 첨부 (CB-04) ──
+
+class TestPhoto(ChatCase):
+    """H-9 사진 첨부 (CB-04)"""
+
     JPEG = b"\xff\xd8\xff" + b"0" * 64
 
     @staticmethod
@@ -1122,6 +1125,32 @@ class TestFixedInfo(ChatCase):
                     codes = [(await self.photo(client, headers, sid, f"p-l{i}")).status_code for i in range(3)]
                     over = await self.photo(client, headers, sid, "p-l3")
         assert codes == [201, 201, 429] and over.json()["error"]["code"] == "DAILY_LIMIT_EXCEEDED"
+
+    async def test_deleting_chats_does_not_reset_the_daily_photo_limit(self):
+        """대화를 지워도 하루 사진 상한이 0으로 돌아가지 않음. 지우고 다시 보내 CLOVA를 계속 부르지 못하게 (#199 채연 리뷰)"""
+        p1, p2, p3 = self.photo_patches()
+        with patch.object(config, "OCR_DAILY_FILE_LIMIT", 2):
+            async with self.client() as client:
+                headers, _ = await self.auth(client, "h8@example.com")
+                sid = await self.session(client, headers)
+                with p1, p2, p3:
+                    codes = [(await self.photo(client, headers, sid, f"p-d{i}")).status_code for i in range(2)]
+                    deleted = await client.delete(f"{API}/{sid}", headers=headers)
+                    sid2 = await self.session(client, headers)
+                    again = await self.photo(client, headers, sid2, "p-d2")
+        assert codes == [201, 201] and deleted.status_code == status.HTTP_204_NO_CONTENT
+        assert again.status_code == 429 and again.json()["error"]["detail"] == {"limit": 2, "used": 2}
+
+    async def test_photo_answers_have_no_feedback_buttons(self):
+        """사진 첨부 안내는 규칙으로 만든 답이라 피드백 버튼을 두지 않음 (#199 채연 리뷰)"""
+        p1, p2, p3 = self.photo_patches()
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "h9@example.com")
+            sid = await self.session(client, headers)
+            with p1, p2, p3:
+                await self.photo(client, headers, sid, "p-f")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["noFeedback"] is True and "noFeedback" not in items[0]
 
     async def test_photo_rejects_bad_file_without_consent_and_ocr_failure(self):
         p1, p2, p3 = self.photo_patches()
