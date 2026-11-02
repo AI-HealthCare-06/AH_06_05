@@ -1,6 +1,6 @@
 // CB-01 화면 부품 (설계 메모 4-2 ~ 4-8 항목). 문구는 copy.chatbot (설계 메모 6장)
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Linking, Modal, Platform, Pressable, Text, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
+import { AccessibilityInfo, AppState, Linking, Modal, Platform, Pressable, Text, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 
 import { getAnalysis } from '@/features/rag/api';
 import type { AnalysisResult } from '@/features/rag/types';
@@ -22,6 +22,7 @@ const REVEAL_STEP_MS = 30;
 const DICTATION_TIPS = 3; // 받아쓰기 안내는 처음 3번까지 (설계 메모 4-10 항목)
 const INPUT_MAX = 140; // 입력창 높이 48 ~ 140, 넘으면 안에서 스크롤 (설계 메모 4-8 항목)
 const isWeb = Platform.OS === 'web';
+const ER_PORTAL = 'https://www.e-gen.or.kr/egen/search_emergency_room.do'; // 응급의료포털 응급실 찾기 (설계 메모 4-6 항목)
 
 // 답변 라벨 색 (설계 메모 3-1 항목)
 const LABEL_TONE: Record<Exclude<AnswerType, 'normal'>, 'info' | 'neutral' | 'caution' | 'danger'> = {
@@ -98,6 +99,27 @@ function useReveal(full: string, on: boolean) {
   return { text: full.slice(0, n), done: n >= full.length };
 }
 
+// 출처: 누르면 펼쳐서 기준일과 공통 고지 (설계 메모 4-3 항목)
+function Sources({ sources }: { sources: NonNullable<Message['sources']> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open }}
+      onPress={() => setOpen((v) => !v)}
+      style={{ minHeight: L.touch, justifyContent: 'center', gap: 2 }}
+    >
+      {sources.map((s) => (
+        <Text key={s.title} style={T.caption}>
+          {c.source(s.title)} {open ? '⌃' : '›'}
+          {open && s.basedOn ? `\n${c.basedOn(s.basedOn)}` : ''}
+        </Text>
+      ))}
+      {open && <Text style={T.caption}>{c.notice}</Text>}
+    </Pressable>
+  );
+}
+
 export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boolean }) {
   const type = m.answerType ?? 'normal';
   const shown = useReveal(m.content, reveal);
@@ -107,11 +129,7 @@ export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boole
       <Text style={T.body} accessibilityLabel={m.content}>
         {shown.text}
       </Text>
-      {shown.done && m.sources?.map((s) => (
-        <Text key={s.title} style={T.caption}>
-          {c.source(s.title)}
-        </Text>
-      ))}
+      {shown.done && !!m.sources?.length && <Sources sources={m.sources} />}
       {shown.done && FEEDBACK_ON.includes(type) && <Feedback />}
     </Card>
   );
@@ -184,11 +202,29 @@ function Feedback() {
 }
 
 // 가까운 응급실: 카카오맵 앱으로 열고, 안 되면 모바일 웹 (설계 메모 4-6 항목, 위치 권한 없음)
-function findER() {
+function findER(onFail: () => void) {
   const q = encodeURIComponent('응급실');
   const web = `https://m.map.kakao.com/scheme/search?q=${q}`;
-  if (Platform.OS === 'web') return void open(web);
-  Linking.openURL(`kakaomap://search?q=${q}`).catch(() => open(web));
+  const openWeb = () => Linking.openURL(web).catch(onFail);
+  if (Platform.OS === 'web') return void openWeb();
+  Linking.openURL(`kakaomap://search?q=${q}`).catch(openWeb);
+}
+
+// [가까운 응급실 찾기]를 누른 뒤 돌아오면, 또는 지도를 열지 못하면 true (설계 메모 4-6 항목). 앱과 웹 모두 AppState로 알 수 있음
+function usePortalLink() {
+  const [show, setShow] = useState(false);
+  const tried = useRef(false);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active' && tried.current) setShow(true);
+    });
+    return () => sub.remove();
+  }, []);
+  const find = () => {
+    tried.current = true;
+    findER(() => setShow(true));
+  };
+  return { show, find };
 }
 
 // 테두리만 있는 보조 버튼 (E4 응급실 찾기, E5 119)
@@ -217,6 +253,7 @@ export function SafetyCards({
   const emergency = safety.types.includes('emergency');
   const crisis = safety.types.includes('crisis');
   const showChip = emergency && !crisis && !safety.overdose; // 과다 복용, 2층 응급, 동시 해당은 칩 없음
+  const portal = usePortalLink();
   return (
     <View style={{ gap: 10, alignSelf: 'stretch' }}>
       {emergency && (
@@ -224,7 +261,12 @@ export function SafetyCards({
           <Chip label={c.labels.emergency} tone="danger" />
           <Text style={T.bodyM}>{c.emergency[0]}</Text>
           <Btn label={c.call119} kind="danger" onPress={() => open('tel:119')} />
-          <OutlineBtn label={c.findER} color={C.danger} onPress={findER} />
+          <OutlineBtn label={c.findER} color={C.danger} onPress={portal.find} />
+          {portal.show && (
+            <Pressable accessibilityRole="link" onPress={() => open(ER_PORTAL)} style={{ minHeight: L.touch, justifyContent: 'center' }}>
+              <Text style={[T.label, { color: C.danger }]}>{c.erPortal}</Text>
+            </Pressable>
+          )}
           <Text style={T.caption}>{c.emergency[1]}</Text>
           {showChip && (
             <Pressable

@@ -370,6 +370,8 @@ export const copy = {
     generating: '답변을 만들고 있어요',
     generatingSlow: '답변을 만들고 있어요. 조금만 더 기다려 주세요',
     source: (name: string) => `출처 · ${name}`,
+    basedOn: (date: string) => `기준일 ${date}`,
+    erPortal: '응급실만 따로 보려면: 응급의료포털 ›',
     labels: {
       clarify: '정보 확인',
       partial: '일부만 확인됐어요',
@@ -534,6 +536,12 @@ export const copy = {
     examRemove: '삭제',
     none: '입력하지 않음',
     consentAccount: '동의와 계정',
+    // MY-S1-E1 전체 삭제 확인. 분석 결과는 대화와 따로 남음
+    chatsDelete: '대화 전체 삭제',
+    chatsDeleteTitle: '대화를 모두 지울까요?',
+    chatsDeleteBody: '지운 대화는 되돌릴 수 없어요. 분석 결과는 그대로 남아요.',
+    chatsDeleted: '대화를 모두 지웠어요.',
+    chatsDeleteFail: '삭제하지 못했어요. 다시 시도해 주세요.',
     consentHistory: '동의 내역 보기',
     withdraw: '회원 탈퇴',
     edit: '정보 수정하기',
