@@ -15,10 +15,11 @@ PR 2-2에서 더할 것: 약 이름 검색으로 되묻기, 제품 이름을 모
 import asyncio
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app.services.chatbot import context_check, evidence, safety_rules
+from app.services.chatbot import context_check, evidence, jev, safety_rules
 from app.services.chatbot.answer import REFER, SPEECH, clean_text, out_of_scope, write
 from app.services.chatbot.classify import (
     asks_food_to_avoid,
@@ -96,6 +97,13 @@ def _verdicts(v: Verdicts | None) -> str | None:
     return f"a={a} b={b}/{'direct' if v.b_direct else 'indirect'} c={c}"
 
 
+async def jev_layer(question: str, emergency_dismissed: bool = False) -> Route | None:
+    """질문을 저장하기 전 1층의 Jev 판단 (10/26 수인 결정). 규칙에 걸렸거나 문맥 파악이 정상으로 푼 문장은 호출한 쪽이 걸러서
+    이 함수를 부르지 않음. Jev가 잡은 응급은 과다 복용인지 몰라 2층처럼 [지금은 증상이 없어요]를 늘 숨김"""
+    kind = await jev.check(question, emergency_dismissed)
+    return _safety([kind], 1, ["jev"], kind == "emergency") if kind else None
+
+
 async def route(
     question: str,
     info: FixedInfo,
@@ -155,6 +163,56 @@ async def route(
 
 CHIP_MAX, CHIP_LEN = 3, 15  # 되물음 예상 답 칩 수와 글자 수 (시작값, 11/2)
 
+# drugMatch: 질문의 약 이름이 내 약에 없으면 O-4와 같은 이름 맞추기로 찾음 (명세서 O-4 챗봇 줄, #116, 11/2).
+# 후보가 여럿이면 후보 이름을 칩으로 되묻고, 정확히 하나면 그 약 범위로 근거를 찾음. 못 찾으면 되묻지 않고 지금처럼 진행
+# ("혈압약"처럼 쓰임으로 말한 약을 되물을 수 있어서, 시연 뒤 실제 분류로 재서 정함). 화면 문구라 신규 임시
+DRUG_PICK = "말씀하신 약이 아래 중 하나인가요? 맞는 약을 골라 주세요. 목록에 없으면 약봉투에 적힌 이름을 알려 주세요."
+DrugMatch = Callable[[str], Awaitable[dict[str, Any] | None]]  # O-4 search_drugs와 같은 응답 { status, items }
+_GENERIC_DRUG = re.compile(
+    r"(약|제|주사|연고|시럽)$"
+)  # 혈압약, 진통제처럼 쓰임이나 종류로 말한 것은 이름 맞추기 대상이 아님
+
+
+async def no_match(_: str) -> None:
+    return None
+
+
+def _drug_pick(dm: dict[str, Any] | None) -> list[str] | None:
+    """후보가 여럿이면 되물을 때 보여 줄 후보 이름 칩, 아니면 None"""
+    items = (dm or {}).get("items") or []
+    if dm and dm.get("status") == "candidates" and items:
+        return [i["itemName"] for i in items[:CHIP_MAX]]
+    return None
+
+
+def _drug_scope(dm: dict[str, Any] | None) -> tuple[dict[str, Any] | None, list[str] | None]:
+    """정확히 하나로 맞았으면 (답 줄에 실을 drugMatch, 근거 검색 약 코드), 아니면 (None, None)"""
+    items = (dm or {}).get("items") or []
+    if dm and dm.get("status") == "matched" and items and items[0].get("ediCode"):
+        return dm, [items[0]["ediCode"]]
+    return None, None
+
+
+async def _picked_drug(
+    question: str, history: list[dict[str, str]], match: DrugMatch
+) -> tuple[str, dict[str, Any]] | None:
+    """바로 앞 답이 후보 칩 되묻기(DRUG_PICK)이고 질문이 칩 글자(후보 이름)이면 (앞 질문, 그 약 하나의 drugMatch).
+    분류가 적는 약 이름은 칩 글자와 달라져 좁혀지지 않음 (#197 채연 리뷰, 실제 분류로 칩 18번 중 0번)"""
+    if len(history) < 2 or history[-1] != {"role": "assistant", "content": DRUG_PICK} or history[-2]["role"] != "user":
+        return None
+    name = question.strip()
+    items = ((await match(name)) or {}).get("items") or []
+    if not items or items[0].get("itemName") != name or not items[0].get("ediCode"):
+        return None
+    return history[-2]["content"], {"status": "matched", "items": items[:1]}
+
+
+def _needs_lookup(cls: dict[str, Any], question: str, info: FixedInfo, kind: str) -> bool:
+    target = cls.get("target_drug") or ""
+    if len(target) < 2 or cls.get("target_source") != "question" or kind not in ("medication", "refer"):
+        return False
+    return not _GENERIC_DRUG.search(target) and find_drug(question, info.drugs) is None
+
 
 def _clarify_chips(options: Any) -> list[str]:
     """분류가 만든 예상 답을 칩으로. 글 규칙(clean_text)을 거치고, 빈 것과 긴 것과 겹치는 것은 뺌"""
@@ -183,6 +241,7 @@ class Reply:
     # 판정에서 막혔을 때(insufficient, risk_blocked) 어느 판정이 막았는지 로그용 요약 (#124 채연 리뷰)
     evidence_verdicts: str | None = None
     chips: list[str] = field(default_factory=list)  # 되물음(clarify) 아래 예상 답 칩 (명세서 H-2 chips, 11/2)
+    drug_match: dict[str, Any] | None = None  # 질문의 약 이름 맞추기 결과 { status, items } (명세서 H-2 drugMatch, O-4)
 
 
 # ⑤ 점검 결과로 답할 때의 앞뒤 문장 (화면 문구, 신규 임시, 10/26 수인 결정. 와이어프레임에는 나중에 맞춤)
@@ -205,6 +264,24 @@ def _no_warnings(info: FixedInfo) -> str:
         f"이번 분석에서는 {listed} {len(names)}개를 점검했어요.\n\n"
         f"{NO_WARNINGS_CHECKS} 기준에 걸린 항목은 없었어요. {NO_WARNINGS_TAIL}"
     )
+
+
+def _check_reply(question: str, cls: dict[str, Any], info: FixedInfo, r: Route, usage: Usage) -> Reply | None:
+    """⑤ 먹는 약끼리 같이 먹어도 되는지 물으면 분석의 경고를 그대로 보여 주고 AI가 다시 판단하지 않음 (설계 메모 7-12, NFR-032).
+    약 두 개짜리 경고가 없으면 None (분석 칩은 _analysis_reply, 나머지는 근거 검색)"""
+    checked_only = not _NOT_CHECKED.search(question)
+    if not (cls.get("about_user_drugs") and r.kind in ("medication", "refer") and info.pair_warnings and checked_only):
+        return None
+    # 경고 카드로 연 대화는 그 경고만. 분석 전체를 물으면(분석 칩) 다 보여 줌 (11/2 서버 E2E)
+    shown = [w for w in info.pair_warnings if w.id == info.focus_warning and not asks_this_analysis(question)]
+    # 분석 전체를 물으면 약 하나짜리 경고(노인주의 등)도 같이 (11/2 멘토 피드백)
+    shown = shown or info.pair_warnings + (info.other_warnings if asks_this_analysis(question) else [])
+    card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in shown]}
+    # 끊거나 바꾸려는 질문(next_visit)과 증상(soon)은 끝 문장을 그 상담 문구로. 약을 끊는 건 의사 판단 (#134 리뷰 1번)
+    kind = cls.get("refer_kind") if r.kind == "refer" else None
+    if kind in ("next_visit", "soon"):
+        return Reply("refer", _check_result(shown, REFER[kind]), r, usage=usage, safety_card=card)
+    return Reply("normal", _check_result(shown), r, usage=usage, safety_card=card)
 
 
 def _analysis_reply(question: str, info: FixedInfo, r: Route, usage: Usage) -> Reply:
@@ -247,6 +324,7 @@ async def answer(
     summary: str | None = None,
     search: evidence.Search = rag_search,
     emergency_dismissed: bool = False,
+    match: DrugMatch = no_match,
 ) -> Reply:
     started = time.perf_counter()
     r = await route(question, info, history, client, summary, emergency_dismissed)
@@ -255,33 +333,53 @@ async def answer(
     # 1층과 2층이 막지 않은 말 이상은 분류와 상관없이 고정 안내. 범위 밖 사과, 약 되묻기, "며칠 안에 진료"로 끝나던 것 (#132 채연 리뷰)
     if r.kind in ("clarify", "medication", "lifestyle", "refer", "out_of_scope") and safety_rules.odd_speech(question):
         return Reply("refer", SPEECH, r, usage=usage)
+    if r.kind in ("clarify", "medication", "lifestyle", "refer", "out_of_scope") and (
+        picked := await _picked_drug(question, history, match)
+    ):
+        asked, dm = picked
+        cls = {**(r.classification or {}), "category": "medication", "target_drug": question.strip()}
+        cls["target_source"] = "question"
+        r = replace(r, kind="medication", classification=cls)
+        return await _answer_from_evidence(asked, cls, info, history, client, search, match, r, usage, started, dm)
     if r.kind == "clarify":
         return Reply("clarify", r.clarify_question, r, usage=usage, chips=r.clarify_chips)
     if r.kind not in ("medication", "lifestyle", "refer", "out_of_scope"):
         return Reply(r.kind, None, r, usage=usage)  # 긴급, 자해, 오류는 화면 고정 카드
 
     cls = r.classification or {}
-    # ⑤ 먹는 약끼리 같이 먹어도 되는지 물으면 분석의 경고를 그대로 보여 주고 AI가 다시 판단하지 않음 (설계 메모 7-12, NFR-032).
-    # 경고가 없으면 "걸린 항목이 없어요"가 안전하다는 말로 읽힐 수 있어 지금처럼 근거 검색 (10/26 수인 결정)
-    checked_only = not _NOT_CHECKED.search(question)
-    if cls.get("about_user_drugs") and r.kind in ("medication", "refer") and info.pair_warnings and checked_only:
-        # 경고 카드로 연 대화는 그 경고만. 분석 전체를 물으면(분석 칩) 다 보여 줌 (11/2 서버 E2E)
-        shown = [w for w in info.pair_warnings if w.id == info.focus_warning and not asks_this_analysis(question)]
-        # 분석 전체를 물으면 약 하나짜리 경고(노인주의 등)도 같이 (11/2 멘토 피드백)
-        shown = shown or info.pair_warnings + (info.other_warnings if asks_this_analysis(question) else [])
-        card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in shown]}
-        # 끊거나 바꾸려는 질문(next_visit)과 증상(soon)은 끝 문장을 그 상담 문구로. 약을 끊는 건 의사 판단 (#134 리뷰 1번)
-        kind = cls.get("refer_kind") if r.kind == "refer" else None
-        if kind in ("next_visit", "soon"):
-            return Reply("refer", _check_result(shown, REFER[kind]), r, usage=usage, safety_card=card)
-        return Reply("normal", _check_result(shown), r, usage=usage, safety_card=card)
+    if (checked := _check_reply(question, cls, info, r, usage)) is not None:
+        return checked
     if r.kind == "medication" and asks_this_analysis(question):
         return _analysis_reply(question, info, r, usage)
     if r.kind == "out_of_scope":
         # 범위 밖은 답 AI 없이 늘 같은 문구 (5회차 멘토링 시연, #99). 다음 질문의 대화 기억에서도 뺌 (chats._history)
         draft = out_of_scope(question, cls, info)
         return Reply(draft.answer_type, draft.content, r, usage=usage)
-    found = await evidence.gather(question, cls, info, search, time.perf_counter() - started)
+    return await _answer_from_evidence(question, cls, info, history, client, search, match, r, usage, started)
+
+
+async def _answer_from_evidence(  # noqa: PLR0913
+    question: str,
+    cls: dict[str, Any],
+    info: FixedInfo,
+    history: list[dict[str, str]],
+    client: ChatClient,
+    search: evidence.Search,
+    match: DrugMatch,
+    r: Route,
+    usage: Usage,
+    started: float,
+    picked: dict[str, Any] | None = None,
+) -> Reply:
+    """⑥ 근거 검색과 답 만들기. 앞에 drugMatch(내 약에 없는 약 이름 맞추기). picked는 후보 칩으로 고른 약"""
+    # drugMatch: 내 약에 없는 약 이름이면 이름 맞추기. 후보가 여럿이면 후보 칩으로 되묻고, 하나면 그 약 범위로 근거를 찾음
+    matched, codes = _drug_scope(picked)
+    if picked is None and _needs_lookup(cls, question, info, r.kind):
+        dm = await match(cls["target_drug"])
+        if (ask := _drug_pick(dm)) is not None:
+            return Reply("clarify", DRUG_PICK, r, usage=usage, chips=ask, drug_match=dm)
+        matched, codes = _drug_scope(dm)
+    found = await evidence.gather(question, cls, info, search, time.perf_counter() - started, codes)
     if asks_food_to_avoid(question):
         found = _food_only(found)
     past, first_turn = _turns(history)
@@ -292,4 +390,13 @@ async def answer(
     # 출력 가드레일에 걸렸으면 그 이유를 근거 없음 이유 자리에 (#124가 병합되면 대화 API가 메시지 번호와 같이 로그에 남김)
     reason = f"output_guard:{draft.blocked}" if draft.blocked else (found.reason if found else None)
     verdicts = _verdicts(found.verdicts) if found and found.reason in ("insufficient", "risk_blocked") else None
-    return Reply(draft.answer_type, draft.content, r, draft.sources, reason, usage, evidence_verdicts=verdicts)
+    return Reply(
+        draft.answer_type,
+        draft.content,
+        r,
+        draft.sources,
+        reason,
+        usage,
+        evidence_verdicts=verdicts,
+        drug_match=matched,
+    )

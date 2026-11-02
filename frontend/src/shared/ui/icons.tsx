@@ -64,6 +64,25 @@ export function DocIcon({ color = C.text2, size = 18 }: IconProps) {
 }
 
 // 챗봇 입력창 받아쓰기 안내 (와이어프레임 CB-01 ⑧)
+// 소리 (답변 듣기)
+export function SpeakerIcon({ color = C.text2, size = 18 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" {...line} stroke={color}>
+      <Path d="M4 9v6h4l5 4V5L8 9H4z" />
+      <Path d="M16 9a4 4 0 0 1 0 6" />
+    </Svg>
+  );
+}
+
+// 멈춤 (답변 듣기 중)
+export function StopIcon({ color = C.text2, size = 18 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" {...line} stroke={color}>
+      <Rect x="6" y="6" width="12" height="12" rx="2" />
+    </Svg>
+  );
+}
+
 export function MicIcon({ color = C.text2, size = 20 }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" {...line} stroke={color}>

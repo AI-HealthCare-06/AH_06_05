@@ -23,12 +23,15 @@ export const updateMe = (body: { birthYear?: number; sex?: Sex; health?: HealthU
   api<Me>('PATCH', '/users/me', body);
 
 // U-4 동의 내역. 철회했으면 withdrawnAt이 있음
-export type ConsentType = 'terms' | 'privacy' | 'sensitiveHealth';
+export type ConsentType = 'terms' | 'privacy' | 'sensitiveHealth' | 'riskCheck';
 export type ConsentItem = { type: ConsentType; agreed: boolean; agreedAt: string | null; withdrawnAt: string | null };
 export const getConsents = () => api<{ items: ConsentItem[] }>('GET', '/users/me/consents');
 
 // U-5 동의 철회 (건강 정보 동의만). 처방전, 분석, 챗봇 대화, 건강 정보가 지워짐
 export const withdrawConsent = () => api<void>('DELETE', '/users/me/consents/sensitiveHealth');
+// 위험 판단용 AI 전달(riskCheck) 동의 켜기와 철회 (U-6, U-5). 철회해도 기록은 지우지 않음 (11/2)
+export const agreeRiskCheck = () => api<void>('PUT', '/users/me/consents/riskCheck', { agreed: true });
+export const withdrawRiskCheck = () => api<void>('DELETE', '/users/me/consents/riskCheck');
 // U-6 철회한 건강 정보 동의를 다시 켬 (#137)
 export const agreeConsentAgain = () => api<void>('PUT', '/users/me/consents/sensitiveHealth', { agreed: true });
 

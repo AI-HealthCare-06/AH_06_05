@@ -90,6 +90,32 @@ class TestConsentsApi(WithdrawCase):
         assert [i["type"] for i in items] == ["terms", "privacy", "sensitiveHealth"]
         assert all(i["agreed"] and i["agreedAt"] and i["withdrawnAt"] is None for i in items)
 
+    async def test_risk_check_consent_is_listed_only_when_jev_is_on_and_toggles_without_erasing(self):
+        """위험 판단 AI 전달 동의(riskCheck, 선택): Jev가 꺼져 있으면 목록에 없고, 켜져 있으면 동의 전에는 agreed false로 보임.
+        켜고 끄는 것은 건강 정보 기록을 지우지 않음 (11/2 수인 결정, 제안)"""
+        url = "/api/v1/users/me/consents/riskCheck"
+        on = {"SAFETY_JEV": True, "TYPESAFE_API_KEY": "test-key"}
+        async with self.client() as client:
+            user, headers = await self.member(client, "rc1@example.com")
+            ids = await self.fill(user)
+            listed = (await client.get("/api/v1/users/me/consents", headers=headers)).json()["items"]
+            assert [i["type"] for i in listed] == ["terms", "privacy", "sensitiveHealth"]
+            with patch.multiple(config, **on):
+                listed = (await client.get("/api/v1/users/me/consents", headers=headers)).json()["items"]
+                risk = listed[-1]
+                assert risk["type"] == "riskCheck" and risk["agreed"] is False and risk["agreedAt"] is None
+                assert (await client.put(url, json={"agreed": True}, headers=headers)).status_code == 204
+                risk = (await client.get("/api/v1/users/me/consents", headers=headers)).json()["items"][-1]
+                assert risk["agreed"] is True and risk["agreedAt"] and risk["withdrawnAt"] is None
+                assert (await client.delete(url, headers=headers)).status_code == 204
+                risk = (await client.get("/api/v1/users/me/consents", headers=headers)).json()["items"][-1]
+                assert risk["agreed"] is False and risk["withdrawnAt"]
+            # 철회해도 처방전, 건강 정보는 그대로 (건강 정보 동의 철회와 다름)
+            assert await Prescription.filter(id=ids["rx"]).exists()
+            assert await UserConsent.filter(user=user, consent_type=ConsentType.SENSITIVE_HEALTH, agreed=True).exists()
+            # 이미 철회한 사람이 다시 철회해도 같은 결과
+            assert (await client.delete(url, headers=headers)).status_code == 204
+
     async def test_requires_login(self):
         async with self.client() as client:
             assert (await client.get("/api/v1/users/me/consents")).status_code == status.HTTP_401_UNAUTHORIZED

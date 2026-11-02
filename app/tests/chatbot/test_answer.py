@@ -21,7 +21,7 @@ from app.services.chatbot.answer import (
 )
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
 from app.services.chatbot.llm import LLMError, OpenAIChat, Usage
-from app.services.chatbot.pipeline import ANALYSIS_GUIDE, answer
+from app.services.chatbot.pipeline import ANALYSIS_GUIDE, DRUG_PICK, answer
 from app.services.rag.gate import Verdicts
 from app.services.rag.pipeline import Evidence, SearchResult
 from app.tests.chatbot.test_route import classified, sync
@@ -1084,3 +1084,94 @@ async def test_openai_call_sets_max_tokens(monkeypatch):
     with pytest.raises(LLMError):
         await OpenAIChat().complete_json("지시문", [{"role": "user", "content": "질문"}], {}, "answer", Usage())
     assert seen["max_tokens"] == 500
+
+
+# drugMatch: 내 약에 없는 약 이름 (명세서 O-4 챗봇 줄, #116, 11/2)
+class FakeMatch:
+    def __init__(self, result: dict[str, Any] | None) -> None:
+        self.result = result
+        self.calls: list[str] = []
+
+    async def __call__(self, name: str) -> dict[str, Any] | None:
+        self.calls.append(name)
+        return self.result
+
+
+TYLENOL = {
+    "itemSeq": "1",
+    "ediCode": "672300240",
+    "itemName": "타이레놀정500밀리그램",
+    "entpName": "",
+    "etcOtc": "일반",
+    "score": 0.9,
+}
+TYLENOL_ER = {**TYLENOL, "ediCode": "672300250", "itemName": "타이레놀8시간이알서방정", "score": 0.8}
+
+
+@sync
+async def test_drug_match_candidates_ask_with_name_chips():
+    """후보가 여럿이면 근거 검색 없이 후보 이름 칩으로 되묻고 drugMatch를 답 줄에 실음"""
+    cls = classified(target_drug="타이레놀", target_source="question")
+    match, search = FakeMatch({"status": "candidates", "items": [TYLENOL, TYLENOL_ER]}), FakeSearch()
+    r = await answer("타이레놀 하루에 몇 번 먹어요?", S0, [], FakeChat(classify=cls), search=search, match=match)
+    assert (r.answer_type, r.chips) == ("clarify", ["타이레놀정500밀리그램", "타이레놀8시간이알서방정"])
+    assert r.drug_match["status"] == "candidates" and match.calls == ["타이레놀"] and search.calls == []
+
+
+@sync
+async def test_drug_match_exact_searches_that_drug_only():
+    """정확히 하나면 내 약 대신 그 약 범위로 근거를 찾고 drugMatch를 남김"""
+    cls = classified(target_drug="타이레놀정500밀리그램", target_source="question")
+    match, search = FakeMatch({"status": "matched", "items": [TYLENOL]}), FakeSearch()
+    r = await answer(
+        "타이레놀정500밀리그램 하루에 몇 번 먹어요?", S0, [], FakeChat(classify=cls), search=search, match=match
+    )
+    assert search.calls[0]["drugs"] == ["672300240"] and r.drug_match["status"] == "matched"
+
+
+PICK_HISTORY = [
+    {"role": "user", "content": "타이레놀 하루에 몇 번 먹어요?"},
+    {"role": "assistant", "content": DRUG_PICK},
+]
+
+
+@sync
+async def test_pressing_a_drug_chip_answers_the_earlier_question_for_that_drug():
+    """후보 칩을 누르면 분류가 적은 약 이름 대신 칩 글자로 이름 맞추기를 하고, 앞 질문을 그 약 범위로 답함
+    (#197 채연 리뷰: 실제 분류로 칩 18번 중 좁혀진 것 0번)"""
+    cls = classified(category="clarify", target_drug="타이레놀", target_source="history")
+    match, search, chat = FakeMatch({"status": "matched", "items": [TYLENOL]}), FakeSearch(), FakeChat(classify=cls)
+    r = await answer("타이레놀정500밀리그램", S0, PICK_HISTORY, chat, search=search, match=match)
+    assert match.calls == ["타이레놀정500밀리그램"] and search.calls[0]["drugs"] == ["672300240"]
+    assert r.answer_type != "clarify" and r.drug_match["status"] == "matched"
+    assert "타이레놀 하루에 몇 번 먹어요?" in chat.seen["answer"]
+
+
+@sync
+async def test_drug_chip_also_narrows_when_the_name_lists_candidates_first():
+    """칩 글자가 후보 맨 앞 이름과 같으면 그 약으로 좁힘. 칩이 아닌 말이면 지금처럼 분류대로"""
+    cls = classified(target_drug="타이레놀", target_source="question")
+    match = FakeMatch({"status": "candidates", "items": [TYLENOL, TYLENOL_ER]})
+    search = FakeSearch()
+    r = await answer("타이레놀정500밀리그램", S0, PICK_HISTORY, FakeChat(classify=cls), search=search, match=match)
+    assert search.calls[0]["drugs"] == ["672300240"] and r.answer_type != "clarify"
+    match2 = FakeMatch({"status": "candidates", "items": [TYLENOL, TYLENOL_ER]})
+    r2 = await answer("잘 모르겠어요", S0, PICK_HISTORY, FakeChat(classify=cls), search=FakeSearch(), match=match2)
+    assert match2.calls == ["잘 모르겠어요", "타이레놀"] and r2.answer_type == "clarify"
+
+
+@sync
+async def test_drug_match_skips_my_drugs_generic_words_and_not_found():
+    """내 약, 쓰임으로 말한 약(혈압약)은 이름 맞추기를 하지 않음. 못 찾으면 되묻지 않고 지금처럼 진행"""
+    for q, cls in (
+        ("노바스크 언제 먹어요?", classified(target_drug="노바스크", target_source="question")),
+        ("혈압약 언제 먹어요?", classified(target_drug="혈압약", target_source="question")),
+    ):
+        match = FakeMatch({"status": "candidates", "items": [TYLENOL]})
+        r = await answer(q, S0, [], FakeChat(classify=cls), search=FakeSearch(), match=match)
+        assert match.calls == [] and r.answer_type != "clarify", q
+    cls = classified(target_drug="이상한정", target_source="question")
+    match, search = FakeMatch({"status": "not_found", "items": []}), FakeSearch()
+    r = await answer("이상한정 먹어도 돼요?", S0, [], FakeChat(classify=cls), search=search, match=match)
+    assert match.calls == ["이상한정"] and r.answer_type != "clarify" and r.drug_match is None
+    assert search.calls[0]["drugs"] == ["641900040", "644300010"]

@@ -2,7 +2,7 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Text, View } from 'react-native';
 
-import { agreeConsentAgain, getConsents, withdrawConsent, type ConsentItem } from '@/features/common/api';
+import { agreeConsentAgain, agreeRiskCheck, getConsents, withdrawConsent, withdrawRiskCheck, type ConsentItem } from '@/features/common/api';
 import { ApiError } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
 import { clearFailed } from '@/shared/storage/chat';
@@ -56,6 +56,21 @@ export default function Consents() {
     }
   };
 
+  // 위험 판단용 AI 전달 동의 켜기와 철회: 건강 정보 동의와 달리 기록을 지우지 않아 확인창 없이 바로 (켤 때만 글을 보임)
+  const toggleRisk = async (on: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await (on ? agreeRiskCheck() : withdrawRiskCheck());
+      setNotice({ text: on ? c.riskCheckDone : c.riskCheckWithdrawn, error: false });
+      await load();
+    } catch (e) {
+      setNotice({ text: e instanceof ApiError ? e.message : copy.common.serverError, error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const agreeAgain = async () => {
     if (busy) return;
     setBusy(true);
@@ -82,7 +97,7 @@ export default function Consents() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
                   <Text style={[T.bodyM, { flexShrink: 1 }]}>{c.consentName[it.type]}</Text>
                   <Text style={[T.bodyM, { color: it.agreed ? C.p700 : C.danger }]}>
-                    {it.agreed ? c.consentAgreed : c.consentWithdrawn}
+                    {it.agreed ? c.consentAgreed : it.withdrawnAt || it.type !== 'riskCheck' ? c.consentWithdrawn : c.consentNotYet}
                   </Text>
                 </View>
                 {it.agreedAt && <Text style={T.caption}>{c.consentAgreedAt(day(it.agreedAt))}</Text>}
@@ -90,6 +105,16 @@ export default function Consents() {
               </View>
             ))}
           </Card>
+          {items.some((it) => it.type === 'riskCheck') && (
+            <>
+              <Text style={T.caption}>{c.riskCheckBody}</Text>
+              {items.some((it) => it.type === 'riskCheck' && it.agreed) ? (
+                <Btn label={c.riskCheckWithdraw} kind="secondary" disabled={busy} onPress={() => void toggleRisk(false)} />
+              ) : (
+                <Btn label={c.riskCheckOk} disabled={busy} onPress={() => void toggleRisk(true)} />
+              )}
+            </>
+          )}
           {items.some((it) => it.type === 'sensitiveHealth' && it.agreed) && (
             <>
               <Text style={T.caption}>{c.consentWithdrawNote}</Text>

@@ -22,6 +22,9 @@ class ConsentType(StrEnum):
     TERMS = "terms"  # 이용약관
     PRIVACY = "privacy"  # 개인정보 수집 · 이용
     SENSITIVE_HEALTH = "sensitive_health"  # 민감정보(건강) — 철회하면 업로드 · 분석 불가
+    RISK_CHECK = (
+        "risk_check"  # 선택: 질문 글을 위험 판단용 AI 서비스(TypeSafe, 미국)로 전달 (11/2). 철회해도 기록은 지우지 않음
+    )
 
 
 class User(models.Model):

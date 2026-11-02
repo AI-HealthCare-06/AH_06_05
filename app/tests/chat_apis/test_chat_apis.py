@@ -17,6 +17,7 @@ from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import PrescriptionItem
 from app.models.users import ConsentType, UserConsent
 from app.services import chats, safety
+from app.services.chatbot import jev
 from app.services.chatbot.answer import DISTRESS, OUT_OF_SCOPE
 from app.services.chatbot.context import FixedInfo
 from app.services.chatbot.llm import Usage
@@ -489,6 +490,61 @@ class TestQuestionNumbersMasked(ChatCase):
         assert items[0]["content"] == want
         assert self.fake.calls[0]["question"] == want
 
+    async def test_jev_is_skipped_without_the_risk_check_consent(self):
+        """위험 판단 AI 전달에 동의하지 않은 사람의 질문은 TypeSafe로 가지 않음: Jev를 부르지 않고 보통 흐름 (11/2 수인 결정, 제안)"""
+        asked: list[str] = []
+
+        async def judge(question: str) -> tuple[str, float]:
+            asked.append(question)
+            return "crisis", 0.05
+
+        on = {"SAFETY_JEV": True, "TYPESAFE_API_KEY": "test-key"}
+        with patch.multiple(config, **on), patch.object(jev, "_typesafe", judge):
+            async with self.client() as client:
+                headers, _ = await self.auth(client, "a19@example.com")
+                sid = await self.session(client, headers)
+                await self.ask(client, headers, sid, "요즘 사는 게 다 귀찮네요")
+        assert asked == [] and len(self.fake.calls) == 1  # TypeSafe로 보내지 않고 답 만들기로 감
+
+    async def test_jev_gets_masked_text_only(self):
+        """TypeSafe로 가는 글에도 전화번호, 이메일은 가려서 (OpenAI로 보낼 때와 같게, 동의 문구에 적은 약속)"""
+        asked: list[str] = []
+
+        async def judge(question: str) -> tuple[str, float]:
+            asked.append(question)
+            return "none", 0.99
+
+        on = {"SAFETY_JEV": True, "TYPESAFE_API_KEY": "test-key"}
+        with patch.multiple(config, **on), patch.object(jev, "_typesafe", judge):
+            async with self.client() as client:
+                headers, user = await self.auth(client, "a20@example.com")
+                await UserConsent.create(
+                    user=user, consent_type=ConsentType.RISK_CHECK, agreed=True, agreed_at=datetime.now(config.TIMEZONE)
+                )
+                sid = await self.session(client, headers)
+                await self.ask(client, headers, sid, "010-1234-5678 번호로 연락 온 약 광고인데 혈압약 먹어도 돼요?")
+        assert len(asked) == 1 and "010-1234-5678" not in asked[0] and "혈압약" in asked[0]
+
+    async def test_jev_block_saves_no_raw_text(self):
+        """1층 규칙에 안 걸려도 Jev가 확신하면 저장 전에 막음: 원문 없이 저장, AI를 부르지 않음 (10/26 수인 결정)"""
+
+        async def judge(question: str) -> tuple[str, float]:
+            return "crisis", 0.05
+
+        on = {"SAFETY_JEV": True, "TYPESAFE_API_KEY": "test-key"}
+        with patch.multiple(config, **on), patch.object(jev, "_typesafe", judge):
+            async with self.client() as client:
+                headers, user = await self.auth(client, "a9@example.com")
+                await UserConsent.create(
+                    user=user, consent_type=ConsentType.RISK_CHECK, agreed=True, agreed_at=datetime.now(config.TIMEZONE)
+                )  # 위험 판단 AI 전달 동의가 있는 사람만 Jev를 거침
+                sid = await self.session(client, headers)
+                await self.ask(client, headers, sid, "요즘 사는 게 다 귀찮네요")
+                q, a = await self.items(client, headers, sid)
+        assert self.fake.calls == []
+        assert q["content"] == "" and a["answerType"] == "crisis" and a["safety"]["rule"] == "jev"
+        assert not await ChatMessage.filter(content__contains="귀찮").exists()
+
 
 class TestFixedInfo(ChatCase):
     async def test_uses_latest_card_analysis_with_consent(self):
@@ -900,6 +956,23 @@ class TestFixedInfo(ChatCase):
             await self.ask(client, headers, sid, "약 먹는 게 너무 힘들어요")
             items = await self.items(client, headers, sid)
         assert items[-1]["noFeedback"] is True and "noFeedback" not in items[0]
+
+    async def test_drug_match_is_saved_and_returned(self):
+        """질문의 약 이름 맞추기 결과는 H-2 답 줄 drugMatch로 (명세서 O-4 챗봇 줄, 제안)"""
+        dm = {"status": "candidates", "items": [{"ediCode": "672300240", "itemName": "타이레놀정500밀리그램"}]}
+        self.fake.reply = Reply(
+            "clarify",
+            "말씀하신 약이 아래 중 하나인가요?",
+            Route(kind="clarify"),
+            chips=["타이레놀정500밀리그램"],
+            drug_match=dm,
+        )
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f36@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "타이레놀 먹어도 돼요?")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["drugMatch"] == dm and "drugMatch" not in items[0]
 
     async def test_no_consent_means_general_info_only(self):
         async with self.client() as client:

@@ -121,6 +121,7 @@ CONSENT_TYPE_NAMES = {
     ConsentType.TERMS: "terms",
     ConsentType.PRIVACY: "privacy",
     ConsentType.SENSITIVE_HEALTH: "sensitiveHealth",
+    ConsentType.RISK_CHECK: "riskCheck",
 }
 
 

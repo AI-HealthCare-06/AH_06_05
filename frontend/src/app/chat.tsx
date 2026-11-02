@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Fragment, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -19,14 +19,18 @@ import {
   SuggestChips,
   UserBubble,
 } from '@/features/chatbot/parts';
+import { stopSpeaking } from '@/features/chatbot/speech';
 import { useChat, type Pending } from '@/features/chatbot/useChat';
 import type { Message } from '@/features/chatbot/types';
 import { copy } from '@/shared/copy';
 import { C, L, S, T } from '@/shared/theme';
-import { Btn, Screen } from '@/shared/ui';
+import { agreeRiskCheck, getConsents } from '@/features/common/api';
+import { riskCheckLater, setRiskCheckLater } from '@/shared/storage/chat';
+import { Btn, Card, Screen } from '@/shared/ui';
 import { CalendarIcon } from '@/shared/ui/icons';
 
 const c = copy.chatbot;
+const rc = copy.me; // 위험 판단용 AI 전달 동의 문구 (내 정보의 동의 내역과 같은 글)
 
 // CB-01 챗봇 창 (1단계): E1 첫 대화, 대화, E2 맥락 카드, E4, E5, E6 (설계 메모 4-2 ~ 4-8 항목, #100)
 export default function Chat() {
@@ -38,6 +42,38 @@ export default function Chat() {
   const params = useMemo(() => (past ? { from: 'CB-03' as const, sessionId: Number(past) } : chatParams), [past, chatParams]);
   const chat = useChat(params);
   const scroll = useRef<ScrollView>(null);
+  // 위험 판단용 AI(TypeSafe) 전달 동의를 아직 안 한 사람에게 한 번 물음. Jev가 켜진 서버에서만 동의 목록에 이 줄이 나옴 (11/2)
+  const [askRisk, setAskRisk] = useState(false);
+  const [riskBusy, setRiskBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const risk = (await getConsents()).items.find((i) => i.type === 'riskCheck');
+        if (alive && risk && !risk.agreed && !(await riskCheckLater())) setAskRisk(true);
+      } catch {
+        // 못 불러오면 묻지 않음 (내 정보의 동의 내역에서 언제든)
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const answerRisk = async (agree: boolean) => {
+    if (riskBusy) return;
+    setRiskBusy(true);
+    try {
+      if (agree) await agreeRiskCheck();
+      else await setRiskCheckLater();
+      setAskRisk(false);
+    } catch {
+      // 실패하면 카드를 그대로 둬 다시 누르게
+    } finally {
+      setRiskBusy(false);
+    }
+  };
+  // 창을 닫거나 달력으로 가면 읽기를 멈춤 (설계 메모 4-11)
+  useEffect(() => () => stopSpeaking(), []);
 
   // 새 줄이 생기면 맨 아래로. 이미 있던 맥락 카드로 들어왔으면 그 카드에 머묾 (설계 메모 3-4 항목)
   useEffect(() => {
@@ -92,6 +128,7 @@ export default function Chat() {
           safety={m.safety}
           relieved={chat.relieved.includes(m.id)}
           onNoSymptom={canResend ? () => chat.dismiss(m) : undefined}
+          messageId={m.id}
         />
       );
     }
@@ -146,7 +183,10 @@ export default function Chat() {
               accessibilityRole="button"
               accessibilityLabel={c.historyTitle}
               hitSlop={8}
-              onPress={() => router.push({ pathname: '/chat-history', params: chat.sessionId ? { current: chat.sessionId } : {} })}
+              onPress={() => {
+                stopSpeaking();
+                router.push({ pathname: '/chat-history', params: chat.sessionId ? { current: chat.sessionId } : {} });
+              }}
               style={{ width: L.touch, height: L.touch, alignItems: 'flex-end', justifyContent: 'center' }}
             >
               <CalendarIcon color={C.text2} />
@@ -197,6 +237,14 @@ export default function Chat() {
           ))}
         </ScrollView>
         <View style={{ paddingHorizontal: S.side, paddingTop: 8, paddingBottom: ins.bottom + 12, backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border }}>
+          {askRisk && !chat.safetyMode && (
+            <Card style={{ gap: 8, marginBottom: 8 }}>
+              <Text style={T.bodyM}>{rc.riskCheckTitle}</Text>
+              <Text style={T.caption}>{rc.riskCheckBody}</Text>
+              <Btn label={rc.riskCheckOk} disabled={riskBusy} onPress={() => void answerRisk(true)} />
+              <Btn label={rc.riskCheckLater} kind="ghost" disabled={riskBusy} onPress={() => void answerRisk(false)} />
+            </Card>
+          )}
           {chat.safetyMode && <SafetyLine />}
           <Composer onSend={chat.ask} busy={chat.busy || chat.loading} />
         </View>

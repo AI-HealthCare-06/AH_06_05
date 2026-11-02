@@ -339,6 +339,8 @@ export const copy = {
     todayFail: '지난 대화를 불러오지 못했어요',
     // CB-02, CB-03 대화 기록 (설계 메모 4-12, 4-13)
     newChat: '새 대화',
+    listen: '듣기', // 답변 읽어주기 (설계 메모 4-11, REQ-102)
+    stopListen: '멈춤',
     clarifyChips: '이렇게 답하실 수 있어요', // E3 되물음 예상 답 칩 제목 (설계 메모 4-5, 신규 임시)
     historyTitle: '대화 기록',
     historyGuide: '기록이 있는 날짜를 누르면 그날의 대화를 볼 수 있어요.',
@@ -555,8 +557,20 @@ export const copy = {
       terms: '이용약관',
       privacy: '개인정보 수집과 이용',
       sensitiveHealth: '건강 정보 사용 (민감정보)',
+      riskCheck: '위험한 말 살피기용 AI 전달 (선택)',
     },
+    // 선택 동의: 질문 글을 위험 판단용 AI 서비스(TypeSafe, 미국)로 전달 (11/2). 보관 기간은 공개된 것이 없다고 그대로 밝힘.
+    // 처리 업체 14곳과 텔레메트리 조항(MCA 4.1(c), 4.3)을 더함 (#197 채연 리뷰, docs/design/ocr_privacy_notice.md)
+    riskCheckTitle: '위험한 말을 더 빨리 살필까요?',
+    riskCheckBody:
+      '챗봇에 쓴 질문 글이 응급이나 위험한 말인지 먼저 살피려고 미국의 AI 서비스(TypeSafe)로 전달돼요. 전달하는 것은 질문 글뿐이고, 전화번호와 이메일은 가려서 보내요. 글은 TypeSafe와 처리 업체(미국 등 여러 나라 14곳)의 서버에서 처리돼요. TypeSafe가 글을 얼마나 오래 보관하는지는 정해진 기간이 공개돼 있지 않고, 글에서 만든 기록과 통계는 기간 제한 없이 서비스 개선에 쓸 수 있어요. 동의하지 않아도 챗봇은 그대로 쓸 수 있고, 내 정보의 동의 내역에서 언제든 철회할 수 있어요.',
+    riskCheckOk: '동의하기',
+    riskCheckLater: '나중에',
+    riskCheckWithdraw: '철회하기',
+    riskCheckDone: '동의했어요. 앞으로 질문 글이 위험 판단용 AI 서비스로 전달돼요.',
+    riskCheckWithdrawn: '철회했어요. 질문 글이 더 이상 전달되지 않아요.',
     consentAgreed: '동의함',
+    consentNotYet: '동의하지 않음', // 선택 동의를 아직 한 적이 없음 (철회가 아님)
     consentWithdrawn: '철회함',
     consentAgreedAt: (d: string) => `동의한 날  ${d}`,
     consentWithdrawnAt: (d: string) => `철회한 날  ${d}`,
