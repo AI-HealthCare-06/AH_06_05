@@ -98,7 +98,7 @@ async def start_session(
 async def today(user: User) -> dict[str, Any]:
     start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     s = await repo.last_session_since(user, start)
-    until = s.safety_mode_until if s and s.safety_mode_until and s.safety_mode_until > _now() else None
+    until = await repo.safety_until(user, _now())
     return {
         "sessionId": s.id if s else None,
         "hasHistory": await repo.has_session(user),
@@ -154,8 +154,22 @@ async def rename_session(user: User, session_id: int, title: str) -> dict[str, A
     return {"sessionId": s.id, "title": title}
 
 
+async def _delete(s: ChatSession) -> None:
+    """지워도 안전 모드는 풀리지 않게, 켜져 있는 대화는 글만 지움 (설계 메모 4-6)"""
+    if s.safety_mode_until and s.safety_mode_until > _now():
+        await repo.clear_session(s)
+    else:
+        await repo.delete_session(s)
+
+
 async def delete_session(user: User, session_id: int) -> None:
-    await repo.delete_session(await _session(user, session_id))
+    await _delete(await _session(user, session_id))
+
+
+async def delete_all_sessions(user: User) -> None:
+    """MY-S1 전체 삭제"""
+    for s in await repo.sessions_of(user):
+        await _delete(s)
 
 
 # ── H-2 이전 대화 ──────────────────────────────────────────────────────────────────────────
@@ -249,10 +263,6 @@ def _safety(r: Route) -> dict[str, Any]:
     return {"types": r.safety_types, "overdose": r.overdose, "rule": ",".join(r.safety_rules)}
 
 
-def _in_safety_mode(s: ChatSession) -> bool:
-    return bool(s.safety_mode_until and s.safety_mode_until > _now())
-
-
 async def _check_daily_limit(user: User) -> None:
     """하루 질문 수가 상한에 닿으면 429. 1층을 지난 질문만 세고, 1층에 걸린 긴급과 자해는 여기까지 오지 않음 (#116)"""
     limit = config.CHAT_DAILY_QUESTION_LIMIT
@@ -285,8 +295,8 @@ async def ask(
         return (await repo.create_generating(question)).id, True
 
     blocked, _ = pipeline.first_layer(content, emergency_dismissed)
-    if not blocked and _in_safety_mode(s) and safety_rules.asks_amount(content):
-        # 안전 모드(그 대화 안, 자정까지)에서는 약의 양 질문을 처방대로 묻더라도 E5로 (설계 메모 4-6, 7-2, #116)
+    if not blocked and safety_rules.asks_amount(content) and await repo.safety_until(user, _now()):
+        # 안전 모드(자정까지, 지난 대화를 열어도 같음)에서는 약의 양 질문을 처방대로 묻더라도 E5로 (설계 메모 4-6, 7-2, #116)
         blocked = Route(kind="crisis", layer=1, safety_types=["crisis"], safety_rules=["safety_mode_amount"])
     if blocked:  # 1층이 잡고 문맥 파악이 풀지 않음: 원문을 저장하지 않고 긴급 답을 바로 (설계 메모 4-6)
         answer = await repo.create_question_and_answer(

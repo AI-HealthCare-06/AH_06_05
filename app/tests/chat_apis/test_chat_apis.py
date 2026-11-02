@@ -125,6 +125,9 @@ class TestSessions(ChatCase):
             long_q = "혈압약을 아침에 먹는 게 좋은지 저녁에 먹는 게 좋은지 궁금해서 여쭤봐요 정말로요"
             await self.ask(client, headers, sid, long_q, crid="q-1")
             old = await self.session(client, headers, crid="s-2")
+            await self.ask(client, headers, old, "가슴이 조이고 숨이 차요", crid="q-o")  # 원문이 없어 제목은 "대화"
+            nothing = await self.session(client, headers, crid="s-3")  # 줄이 없는 대화는 목록에 없음
+            await ChatSession.filter(id=nothing).update(created_at=datetime(2026, 9, 3, 9, tzinfo=config.TIMEZONE))
             at = datetime(2026, 9, 16, 23, 30, tzinfo=config.TIMEZONE)
             await ChatSession.filter(id=old).update(created_at=at)
             today = datetime.now(config.TIMEZONE).date()
@@ -149,6 +152,7 @@ class TestSessions(ChatCase):
             headers, _ = await self.auth(client, "f21@example.com")
             h2, _ = await self.auth(client, "f22@example.com")
             sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "혈압약은 언제 먹어요?")
             res = await client.patch(f"{API}/{sid}", json={"title": " 혈압약 복용 시간 "}, headers=headers)
             assert res.status_code == 200 and res.json() == {"sessionId": sid, "title": "혈압약 복용 시간"}
             today = datetime.now(config.TIMEZONE).date()
@@ -420,6 +424,46 @@ class TestAsk(ChatCase):
         assert [i["answerType"] for i in items if i["role"] == "assistant"] == ["crisis", "crisis"]
         assert items[-2]["content"] == "" and items[-1]["safety"]["types"] == ["crisis"]
         assert items[-1]["safety"]["rule"] == "safety_mode_amount"
+
+    async def test_safety_mode_follows_user_to_past_chat(self):
+        """지난 대화를 열어(CB-03) 물어도 오늘 안전 모드가 그대로. 양 질문은 원문 없이 E5로 (제안, 11/2)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "a14@example.com")
+            old = await self.session(client, headers, crid="s-old")
+            await ChatSession.filter(id=old).update(created_at=datetime.now(config.TIMEZONE) - timedelta(days=3))
+            sid = await self.session(client, headers, crid="s-new")
+            await self.ask(client, headers, sid, CRISIS_TEXT)
+            await self.ask(client, headers, old, "노바스크 한 번에 몇 알 먹어요?", crid="q-2")
+            items = await self.items(client, headers, old)
+        assert self.fake.calls == []
+        assert items[-1]["safety"]["rule"] == "safety_mode_amount"
+
+    async def test_deleting_chats_keeps_safety_mode(self):
+        """대화를 지워도(H-6, 전체 삭제) 자정까지 안전 모드가 남고, 글은 모두 지워지며 목록에 보이지 않음 (설계 메모 4-6)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "a15@example.com")
+            for how in ("one", "all"):
+                sid = await self.session(client, headers, crid=f"s-{how}")
+                await self.ask(client, headers, sid, CRISIS_TEXT, crid=f"q-{how}")
+                url = f"{API}/{sid}" if how == "one" else API
+                assert (await client.delete(url, headers=headers)).status_code == 204
+                today = (await client.get(f"{API}/today", headers=headers)).json()
+                assert datetime.fromisoformat(today["safetyModeUntil"]) == next_midnight()
+                assert await ChatMessage.filter(session_id=sid).count() == 0
+                day = datetime.now(config.TIMEZONE).date().isoformat()
+                listed = (await client.get(f"{API}?date={day}", headers=headers)).json()["items"]
+                assert listed == []
+
+    async def test_delete_all_sessions_only_mine(self):
+        """전체 삭제 (MY-S1): 내 대화만 지움"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "a16@example.com")
+            other, _ = await self.auth(client, "a17@example.com")
+            mine = await self.session(client, headers, crid="s-1")
+            theirs = await self.session(client, other, crid="s-2")
+            assert (await client.delete(API, headers=headers)).status_code == 204
+            assert (await client.get(f"{API}/{mine}/messages", headers=headers)).status_code == 404
+            assert (await client.get(f"{API}/{theirs}/messages", headers=other)).status_code == 200
 
     async def test_amount_question_without_safety_mode_goes_to_answer(self):
         """안전 모드가 아니면 같은 질문도 보통 흐름으로. 안전 모드여도 때를 묻는 질문은 보통 흐름"""

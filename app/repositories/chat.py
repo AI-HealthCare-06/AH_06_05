@@ -24,7 +24,14 @@ class ChatRepository:
         return await ChatSession.filter(user=user, created_at__gte=since).order_by("-id").first()
 
     async def sessions_between(self, user: User, start: datetime, end: datetime) -> list[ChatSession]:
-        return await ChatSession.filter(user=user, created_at__gte=start, created_at__lt=end).order_by("-created_at")
+        """줄이 없는 대화는 빼서 달력에 "기록 있음"으로 찍히지 않게 (설계 메모 3-5)"""
+        return (
+            await ChatSession.filter(
+                user=user, created_at__gte=start, created_at__lt=end, messages__id__not_isnull=True
+            )
+            .distinct()
+            .order_by("-created_at")
+        )
 
     async def first_questions(self, session_ids: list[int]) -> dict[int, str]:
         """대화마다 저장된 첫 질문. 1층이 잡은 질문은 원문이 없어 건너뜀"""
@@ -44,6 +51,21 @@ class ChatRepository:
 
     async def delete_session(self, session: ChatSession) -> None:
         await session.delete()  # 메시지는 DB가 같이 지움 (ON DELETE CASCADE)
+
+    async def clear_session(self, session: ChatSession) -> None:
+        """글은 모두 지우고 안전 모드 시각만 남김 (설계 메모 4-6). 줄이 없는 대화는 목록에 보이지 않음"""
+        await ChatMessage.filter(session=session).delete()
+        await ChatSession.filter(id=session.id).update(title=None)
+
+    async def sessions_of(self, user: User) -> list[ChatSession]:
+        return await ChatSession.filter(user=user)
+
+    async def safety_until(self, user: User, now: datetime) -> datetime | None:
+        """사용자의 대화 가운데 지금 켜진 안전 모드가 끝나는 시각"""
+        rows = await ChatSession.filter(user=user, safety_mode_until__gt=now).values_list(
+            "safety_mode_until", flat=True
+        )
+        return max(rows, default=None)
 
     async def delete_sessions_for_analysis(self, user: User, analysis_id: int) -> None:
         """R-8: 그 분석으로 시작한 대화, 그 분석의 맥락 카드가 붙은 대화, 그 분석으로 답한 대화를 지움 (명세서 R-8, #119 리뷰 10/23, #159).

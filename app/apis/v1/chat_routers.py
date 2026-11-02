@@ -32,6 +32,13 @@ async def list_sessions(user: CurrentUser, date: str | None = None, month: str |
     return await svc.sessions_on(user, date) if date else await svc.days_with_sessions(user, month or "")
 
 
+@chat_router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_all_sessions(user: CurrentUser) -> Response:
+    """H-6 전체 삭제 (MY-S1). 내 대화를 모두 지움"""
+    await svc.delete_all_sessions(user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @chat_router.get("/today")
 async def today(user: CurrentUser) -> dict[str, Any]:
     """H-8 오늘 대화 찾기 (만들지 않음)"""
