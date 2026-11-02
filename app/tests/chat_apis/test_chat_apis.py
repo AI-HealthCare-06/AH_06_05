@@ -42,9 +42,16 @@ class FakeAnswer:
         self.calls: list[dict[str, Any]] = []
 
     async def __call__(
-        self, question: str, info: FixedInfo, history: list[dict[str, str]], emergency_dismissed: bool = False
+        self,
+        question: str,
+        info: FixedInfo,
+        history: list[dict[str, str]],
+        emergency_dismissed: bool = False,
+        recent: list[str] | None = None,
     ) -> Reply:
-        self.calls.append({"question": question, "info": info, "history": history, "dismissed": emergency_dismissed})
+        self.calls.append(
+            {"question": question, "info": info, "history": history, "dismissed": emergency_dismissed, "recent": recent}
+        )
         if self.before:
             await self.before()
         if isinstance(self.reply, Exception):
@@ -492,6 +499,19 @@ class TestQuestionNumbersMasked(ChatCase):
         want = "제 번호 [전화번호]이고 주민번호 [주민번호]인데 혈압약은 언제 먹어요?"
         assert items[0]["content"] == want
         assert self.fake.calls[0]["question"] == want
+
+    async def test_guard_gets_recent_user_turns_including_out_of_scope(self):
+        """2층에 앞 사용자 말 2개를 참고로 줌. 범위 밖으로 걸러진 말도 넣고(괴로움이 범위 밖으로 간 경우), 1층이 잡아 원문이 없는 말은 빠짐 (#143)"""
+        self.fake.reply = Reply("normal", "범위 밖 응대", Route(kind="out_of_scope"))
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "g1@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "요즘 사는 게 너무 힘들어요", crid="q-1")
+            await self.ask(client, headers, sid, "가슴이 조이고 숨이 차요", crid="q-2")  # 1층: 원문 없음
+            await self.ask(client, headers, sid, "오늘 날씨 좋네요", crid="q-3")
+            await self.ask(client, headers, sid, "남은 약은 어떻게 하면 돼요?", crid="q-4")
+        assert self.fake.calls[-1]["recent"] == ["요즘 사는 게 너무 힘들어요", "오늘 날씨 좋네요"]
+        assert self.fake.calls[-1]["history"] == []  # 답 기억에는 범위 밖 말을 넣지 않음 (그대로)
 
     async def test_jev_is_skipped_without_the_risk_check_consent(self):
         """위험 판단 AI 전달에 동의하지 않은 사람의 질문은 TypeSafe로 가지 않음: Jev를 부르지 않고 보통 흐름 (11/2 수인 결정, 제안)"""

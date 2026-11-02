@@ -111,6 +111,7 @@ async def route(
     client: ChatClient,
     summary: str | None = None,
     emergency_dismissed: bool = False,
+    recent: list[str] | None = None,
 ) -> Route:
     blocked, release = first_layer(question, emergency_dismissed)
     if blocked:
@@ -124,7 +125,7 @@ async def route(
 
     guard_usage, classify_usage = Usage(), Usage()
     risk, cls = await asyncio.gather(
-        guard(question, client, guard_usage),
+        guard(question, client, guard_usage, recent),  # 앞 사용자 말(범위 밖 포함)을 참고로 (#143)
         classify(message, client, classify_usage),
         return_exceptions=True,
     )
@@ -311,9 +312,10 @@ async def answer(
     search: evidence.Search = rag_search,
     emergency_dismissed: bool = False,
     match: DrugMatch = no_match,
+    recent: list[str] | None = None,
 ) -> Reply:
     started = time.perf_counter()
-    r = await route(question, info, history, client, summary, emergency_dismissed)
+    r = await route(question, info, history, client, summary, emergency_dismissed, recent)
     usage = Usage()
     usage.add(r.usage)
     # 1층과 2층이 막지 않은 말 이상은 분류와 상관없이 고정 안내. 범위 밖 사과, 약 되묻기, "며칠 안에 진료"로 끝나던 것 (#132 채연 리뷰)
