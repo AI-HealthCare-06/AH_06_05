@@ -15,20 +15,29 @@ PR 2-2에서 더할 것: 약 이름 검색으로 되묻기, 제품 이름을 모
 import asyncio
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.services.chatbot import context_check, evidence, safety_rules
 from app.services.chatbot.answer import REFER, SPEECH, out_of_scope, write
-from app.services.chatbot.classify import asks_this_analysis, check_classification, classify, classify_message
-from app.services.chatbot.context import FixedInfo, recent, resolve_ordinal
+from app.services.chatbot.classify import (
+    asks_food_to_avoid,
+    asks_this_analysis,
+    check_classification,
+    classify,
+    classify_message,
+)
+from app.services.chatbot.context import FixedInfo, PairWarning, find_drug, recent, resolve_ordinal
 from app.services.chatbot.guard import guard
 from app.services.chatbot.llm import ChatClient, LLMError, Usage
 from app.services.rag.gate import Verdicts
+from app.services.rag.pipeline import SearchResult
 from app.services.rag.pipeline import search as rag_search
 
 CLARIFY_GUESS = "앞에서 말씀하신 약이 어떤 약인지 다시 알려 주시겠어요?"  # 기억 밖의 약을 단정하지 않음
 CLARIFY_DEFAULT = "어떤 약을 말씀하시는지 알려 주시겠어요?"
+# 맥락 카드의 약을 가리키는 말 ("이 약은 언제 먹어요?", "이거 저녁에 먹어도 돼요?")
+_THIS_DRUG = re.compile(r"이\s*약(?![속국간])|이거|이것")
 # 분석 칩에 근거로 답하면 AI가 허가정보를 분석 결론처럼 말함 (10/27 측정 3번 중 3번). 분석 결과는 분석 화면이 보여 줌.
 # "확인된 경고가 없어요"라고 하지 않음 (안전하다는 말로 읽힐 수 있어서, 10/26 수인 결정). 화면 문구라 신규 임시 (10/27 수인 결정)
 ANALYSIS_GUIDE = "이번 분석에서 가장 조심할 점은 분석 결과 화면에서 확인해 주세요. 궁금한 점은 약사에게 확인해 주세요."
@@ -94,6 +103,8 @@ async def route(
 
     past, first_turn = _turns(history)
     resolved = resolve_ordinal(question, history, info.drugs)
+    if not resolved and info.focus_drug and _THIS_DRUG.search(question) and not find_drug(question, info.drugs):
+        resolved = info.focus_drug  # "이 약"은 맥락 카드의 약. 다른 약 이름이 있으면 분류대로
     message = classify_message(question, info, past, first_turn, summary, resolved)
 
     guard_usage, classify_usage = Usage(), Usage()
@@ -154,12 +165,23 @@ _NOT_CHECKED = re.compile(
 )
 
 
-def _check_result(info: FixedInfo, tail: str = SAFETY_TAIL) -> str:
+def _check_result(warnings: list[PairWarning], tail: str = SAFETY_TAIL) -> str:
     """경고마다 "약A, 약B: 점검 문장" 한 줄. 약 이름 뒤 조사는 괄호로 끝나는 이름이 많아 쉼표로 이음 (10/26 수인 결정).
     경고 사이와 끝 문장 앞은 빈 줄. 좁은 화면에서 한 경고가 여러 줄로 접히면 다음 경고나 끝 문장과 구분되지 않음.
     끝 문장의 "위 내용은"은 경고 전체에 대한 말임을 글로도 밝힘 (읽어주기). 머리 문장은 목록의 제목이라 붙임 (10/27 수인 결정)"""
-    warnings = "\n\n".join(f"{', '.join(w.names)}: {w.summary}" for w in info.pair_warnings)
-    return f"{SAFETY_HEAD}\n{warnings}\n\n{tail}"
+    lines = "\n\n".join(f"{', '.join(w.names)}: {w.summary}" for w in warnings)
+    return f"{SAFETY_HEAD}\n{lines}\n\n{tail}"
+
+
+# 음식, 술, 식사를 말하는 허가정보 문장. "수술", "기술"의 술은 아님
+_FOOD_WORDS = re.compile(r"음식|식사|식품|식이|공복|(?<![수기시])술|음주|알코올|자몽|우유|커피|카페인|녹차|주스|섭취")
+
+
+def _food_only(found: SearchResult) -> SearchResult:
+    """피할 음식을 물으면 허가정보 근거는 음식 말이 든 문장만 남김. 약끼리 상호작용 문장("CYP3A4 억제제와 병용")을
+    답 AI가 음식 답처럼 옮김 (11/2 서버 E2E, 로컬 재현 4번 중 4번). 팩트표 근거는 그대로. 다 빠지면 근거 없음"""
+    keep = [e for e in found.evidence if e.source != "drug_permit" or _FOOD_WORDS.search(f"{e.heading} {e.text}")]
+    return replace(found, evidence=keep)
 
 
 async def answer(
@@ -188,12 +210,15 @@ async def answer(
     # 경고가 없으면 "걸린 항목이 없어요"가 안전하다는 말로 읽힐 수 있어 지금처럼 근거 검색 (10/26 수인 결정)
     checked_only = not _NOT_CHECKED.search(question)
     if cls.get("about_user_drugs") and r.kind in ("medication", "refer") and info.pair_warnings and checked_only:
-        card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in info.pair_warnings]}
+        # 경고 카드로 연 대화는 그 경고만. 분석 전체를 물으면(분석 칩) 다 보여 줌 (11/2 서버 E2E)
+        shown = [w for w in info.pair_warnings if w.id == info.focus_warning and not asks_this_analysis(question)]
+        shown = shown or info.pair_warnings
+        card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in shown]}
         # 끊거나 바꾸려는 질문(next_visit)과 증상(soon)은 끝 문장을 그 상담 문구로. 약을 끊는 건 의사 판단 (#134 리뷰 1번)
         kind = cls.get("refer_kind") if r.kind == "refer" else None
         if kind in ("next_visit", "soon"):
-            return Reply("refer", _check_result(info, REFER[kind]), r, usage=usage, safety_card=card)
-        return Reply("normal", _check_result(info), r, usage=usage, safety_card=card)
+            return Reply("refer", _check_result(shown, REFER[kind]), r, usage=usage, safety_card=card)
+        return Reply("normal", _check_result(shown), r, usage=usage, safety_card=card)
     if r.kind == "medication" and asks_this_analysis(question):
         return Reply("normal", ANALYSIS_GUIDE, r, usage=usage)
     if r.kind == "out_of_scope":
@@ -201,6 +226,8 @@ async def answer(
         draft = out_of_scope(question, cls, info)
         return Reply(draft.answer_type, draft.content, r, usage=usage)
     found = await evidence.gather(question, cls, info, search, time.perf_counter() - started)
+    if asks_food_to_avoid(question):
+        found = _food_only(found)
     past, first_turn = _turns(history)
     try:
         draft = await write(question, cls, info, past, first_turn, found, client, usage)

@@ -24,13 +24,13 @@ from app.models.analysis import (
     DrugGuide,
     ReviewStatus,
 )
-from app.models.chat import AnswerType, ChatMessage, ChatSession, MessageStatus
+from app.models.chat import AnswerType, ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import MatchStatus, PrescriptionItem
 from app.models.users import User
 from app.repositories.chat import ChatRepository
 from app.services import safety
 from app.services.chatbot import pipeline, safety_rules
-from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug
+from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug, find_drug
 from app.services.chatbot.evidence import JOB_LIMIT_SEC
 from app.services.chatbot.llm import make_client
 from app.services.chatbot.pipeline import Reply, Route
@@ -238,7 +238,9 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         return
     try:
         info = await fixed_info(s.user, s)
-        history = _history(await repo.done_messages_before(s.id, question.id))
+        before = await repo.done_messages_before(s.id, question.id)
+        info.focus_drug, info.focus_warning = await _card_focus(info, before)
+        history = _history(before)
         reply: Reply | None = await asyncio.wait_for(
             run_pipeline(question.content, info, history, emergency_dismissed), ANSWER_TIMEOUT_SEC
         )
@@ -325,6 +327,35 @@ async def _analysis_for(user: User, s: ChatSession) -> int | None:
         await ChatSession.filter(id=s.id).update(analysis_id=aid)
         s.analysis_id = aid
     return aid
+
+
+async def _card_focus(info: FixedInfo, before: list[ChatMessage]) -> tuple[str | None, int | None]:
+    """마지막 맥락 카드가 가리키는 것: 약 카드면 그 약 이름("이 약 물어보기", RG-04), 경고 카드면 그 경고 번호(RG-03).
+    고정 정보를 가져온 분석의 카드일 때만 쓰고, 카드 뒤에 사용자가 다른 약을 물었으면 "이 약"이 그 약일 수 있어 쓰지 않음
+    (11/2 서버 E2E)"""
+    card = next((m for m in reversed(before) if m.context_card), None)
+    ctx = (card.context_card or {}).get("context") if card else None
+    if not card or not ctx or card.context_card.get("analysisId") != info.analysis_id:
+        return None, None
+    name: str | None = None
+    if ctx.get("type") == "drug":
+        rx_ids = await AnalysisPrescription.filter(analysis_id=info.analysis_id).values_list(
+            "prescription_id", flat=True
+        )
+        it = await PrescriptionItem.get_or_none(id=ctx.get("id"), prescription_id__in=list(rx_ids)).prefetch_related(
+            "drug"
+        )
+        if it is None or it.drug is None:
+            return None, None
+        name = display_name(it.drug.item_name)
+    for m in before:
+        if m.id > card.id and m.role == MessageRole.USER and m.content:
+            d = find_drug(m.content, info.drugs)
+            if d and d.name != name:
+                return None, None
+    return (
+        (name, None) if ctx.get("type") == "drug" else (None, ctx.get("id") if ctx.get("type") == "warning" else None)
+    )
 
 
 async def fixed_info(user: User, s: ChatSession) -> FixedInfo:

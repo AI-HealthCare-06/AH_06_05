@@ -42,6 +42,10 @@ class FixedInfo:
     analysis_id: int | None = None  # 고정 정보를 가져온 분석
     # ⑤ 먹는 약끼리 묻는 질문에 그대로 보여 줄 경고 (AI에게는 보내지 않음, 설계 메모 7-12)
     pair_warnings: list[PairWarning] = field(default_factory=list)
+    # "이 약 물어보기"로 붙인 맥락 카드의 약 이름. 질문의 "이 약"을 이 약으로 풀 때 씀 (AI에게는 지시어 풀이로만 감, 11/2)
+    focus_drug: str | None = None
+    # "이 경고 챗봇에 물어보기"로 붙인 맥락 카드의 경고 번호. ⑤ 점검 결과에서 이 경고만 보여 줌 (11/2)
+    focus_warning: int | None = None
 
 
 def fixed_info_text(info: FixedInfo) -> str:
