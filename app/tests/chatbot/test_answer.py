@@ -1205,6 +1205,19 @@ def test_lifestyle_substitutes_are_kept(content):
     assert drop_substitutes(content, S0) == content
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "노바스크 대신 다른 약을 권해 드릴 수는 없어요.",
+        "이 약 대신 다른 약을 드시면 안 돼요.",
+        "다른 약을 대신 추천해 드리기는 어려워요.",
+    ],
+)
+def test_refusing_to_substitute_is_kept(content):
+    """다른 약을 권하지 않겠다는 거절은 맞는 안전 안내라 남김 (11/2 점검에서 찾음)"""
+    assert drop_substitutes(content, S0) == content
+
+
 def test_substitute_uses_my_drug_names_too():
     """사용자의 약 이름과 성분이 "대신" 뒤에 오면 약으로 봄"""
     assert drop_substitutes("그것 대신 노바스크를 드세요.", S0) == ""
