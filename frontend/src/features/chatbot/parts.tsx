@@ -9,8 +9,9 @@ import { drugLabel } from '@/shared/drugName';
 import { C, L, R, T } from '@/shared/theme';
 import { dictationSeen, setDictationSeen } from '@/shared/storage/chat';
 import { Btn, Card, Chip } from '@/shared/ui';
-import { MicIcon } from '@/shared/ui/icons';
+import { MicIcon, SpeakerIcon, StopIcon } from '@/shared/ui/icons';
 
+import { hasKoreanVoice, speak, stopSpeaking, useSpeaking } from './speech';
 import { analyzedAt } from './time';
 import type { ErrorKind } from './useChat';
 import type { AnswerType, ChatContext, Message, SafetyInfo } from './types';
@@ -120,9 +121,35 @@ function Sources({ sources }: { sources: NonNullable<Message['sources']> }) {
   );
 }
 
+// [듣기] / [멈춤]: 라벨과 본문을 읽음. 출처와 버튼 글자는 읽지 않음 (설계 메모 4-11). 한국어 음성이 없는 기기에서는 숨김
+export function SpeakButton({ id, text }: { id: string; text: string }) {
+  const playing = useSpeaking() === id;
+  const [available, setAvailable] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void hasKoreanVoice().then((ok) => alive && setAvailable(ok));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!available) return null;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={playing ? c.stopListen : c.listen}
+      onPress={() => (playing ? stopSpeaking() : speak(id, text))}
+      style={{ minHeight: L.touch, flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingRight: 8 }}
+    >
+      {playing ? <StopIcon color={C.p700} /> : <SpeakerIcon color={C.text2} />}
+      <Text style={[T.label, { fontSize: 14, color: playing ? C.p700 : C.text2 }]}>{playing ? c.stopListen : c.listen}</Text>
+    </Pressable>
+  );
+}
+
 export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boolean }) {
   const type = m.answerType ?? 'normal';
   const shown = useReveal(m.content, reveal);
+  const spoken = type === 'normal' ? m.content : `${c.labels[type]}. ${m.content}`;
   return (
     <Card style={{ alignSelf: 'flex-start', maxWidth: '92%', gap: 8 }}>
       {type !== 'normal' && <Chip label={c.labels[type]} tone={LABEL_TONE[type]} />}
@@ -130,7 +157,10 @@ export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boole
         {shown.text}
       </Text>
       {shown.done && !!m.sources?.length && <Sources sources={m.sources} />}
-      {shown.done && FEEDBACK_ON.includes(type) && !m.noFeedback && <Feedback />}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        {shown.done && <SpeakButton id={String(m.id)} text={spoken} />}
+        {shown.done && FEEDBACK_ON.includes(type) && !m.noFeedback && <Feedback />}
+      </View>
     </Card>
   );
 }
@@ -245,10 +275,12 @@ export function SafetyCards({
   safety,
   onNoSymptom,
   relieved,
+  messageId,
 }: {
   safety: SafetyInfo;
   onNoSymptom?: () => void; // 없으면 칩을 끔 (원문이 없어 다시 보낼 수 없음)
   relieved: boolean;
+  messageId?: number; // 읽어주기 구분용
 }) {
   const emergency = safety.types.includes('emergency');
   const crisis = safety.types.includes('crisis');
@@ -268,6 +300,7 @@ export function SafetyCards({
             </Pressable>
           )}
           <Text style={T.caption}>{c.emergency[1]}</Text>
+          {messageId !== undefined && <SpeakButton id={`${messageId}-e4`} text={`${c.labels.emergency}. ${c.emergency[0]} ${c.emergency[1]}`} />}
           {showChip && (
             <Pressable
               accessibilityRole="button"
@@ -287,6 +320,7 @@ export function SafetyCards({
           <Btn label={c.call109} onPress={() => open('tel:109')} />
           {!emergency && <OutlineBtn label={c.danger119} color={C.p700} onPress={() => open('tel:119')} />}
           {!emergency && <Text style={T.caption}>{c.crisis[1]}</Text>}
+          {messageId !== undefined && <SpeakButton id={`${messageId}-e5`} text={`${c.labels.crisis}. ${c.crisis[0]}`} />}
         </Card>
       )}
       {relieved && (

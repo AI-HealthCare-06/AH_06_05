@@ -19,6 +19,7 @@ import {
   SuggestChips,
   UserBubble,
 } from '@/features/chatbot/parts';
+import { stopSpeaking } from '@/features/chatbot/speech';
 import { useChat, type Pending } from '@/features/chatbot/useChat';
 import type { Message } from '@/features/chatbot/types';
 import { copy } from '@/shared/copy';
@@ -38,6 +39,8 @@ export default function Chat() {
   const params = useMemo(() => (past ? { from: 'CB-03' as const, sessionId: Number(past) } : chatParams), [past, chatParams]);
   const chat = useChat(params);
   const scroll = useRef<ScrollView>(null);
+  // 창을 닫거나 달력으로 가면 읽기를 멈춤 (설계 메모 4-11)
+  useEffect(() => () => stopSpeaking(), []);
 
   // 새 줄이 생기면 맨 아래로. 이미 있던 맥락 카드로 들어왔으면 그 카드에 머묾 (설계 메모 3-4 항목)
   useEffect(() => {
@@ -92,6 +95,7 @@ export default function Chat() {
           safety={m.safety}
           relieved={chat.relieved.includes(m.id)}
           onNoSymptom={canResend ? () => chat.dismiss(m) : undefined}
+          messageId={m.id}
         />
       );
     }
@@ -146,7 +150,10 @@ export default function Chat() {
               accessibilityRole="button"
               accessibilityLabel={c.historyTitle}
               hitSlop={8}
-              onPress={() => router.push({ pathname: '/chat-history', params: chat.sessionId ? { current: chat.sessionId } : {} })}
+              onPress={() => {
+                stopSpeaking();
+                router.push({ pathname: '/chat-history', params: chat.sessionId ? { current: chat.sessionId } : {} });
+              }}
               style={{ width: L.touch, height: L.touch, alignItems: 'flex-end', justifyContent: 'center' }}
             >
               <CalendarIcon color={C.text2} />
