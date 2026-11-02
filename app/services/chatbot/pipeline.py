@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.services.chatbot import context_check, evidence, safety_rules
-from app.services.chatbot.answer import REFER, SPEECH, out_of_scope, write
+from app.services.chatbot.answer import REFER, SPEECH, clean_text, out_of_scope, write
 from app.services.chatbot.classify import (
     asks_food_to_avoid,
     asks_this_analysis,
@@ -39,8 +39,14 @@ CLARIFY_DEFAULT = "어떤 약을 말씀하시는지 알려 주시겠어요?"
 # 맥락 카드의 약을 가리키는 말 ("이 약은 언제 먹어요?", "이거 저녁에 먹어도 돼요?")
 _THIS_DRUG = re.compile(r"이\s*약(?![속국간])|이거|이것")
 # 분석 칩에 근거로 답하면 AI가 허가정보를 분석 결론처럼 말함 (10/27 측정 3번 중 3번). 분석 결과는 분석 화면이 보여 줌.
-# "확인된 경고가 없어요"라고 하지 않음 (안전하다는 말로 읽힐 수 있어서, 10/26 수인 결정). 화면 문구라 신규 임시 (10/27 수인 결정)
+# 점검할 약이 없을 때만 이 안내. 경고가 있으면 ⑤ 점검 결과로, 없으면 아래 NO_WARNINGS로 답함 (11/2 멘토 피드백 "오히려 모른다",
+# 10/26의 "경고가 없다고 말하지 않음" 결정을 바꿈. 대신 무엇을 점검했고 무엇은 점검하지 않는지 같이 적음). 화면 문구라 신규 임시
 ANALYSIS_GUIDE = "이번 분석에서 가장 조심할 점은 분석 결과 화면에서 확인해 주세요. 궁금한 점은 약사에게 확인해 주세요."
+NO_WARNINGS_CHECKS = "함께 먹으면 안 되는 약, 같은 성분이나 효과가 겹치는 약, 어르신이 조심해야 하는 약, 나이에 맞지 않는 약, 하루 최대량, 여러 약 복용"
+NOT_CHECKED_NOTE = "음식이나 술, 처방에 없는 약은 점검하지 않아요."
+NO_WARNINGS_TAIL = (
+    f"{NOT_CHECKED_NOTE}\n\n약마다 주의할 점은 분석 결과의 복약 안내에서 볼 수 있어요. 약사에게 확인해 주세요."
+)
 
 
 @dataclass
@@ -53,6 +59,7 @@ class Route:
     context_release: str | None = None  # 1층에 걸렸지만 문맥 파악이 푼 이유 이름
     classification: dict[str, Any] | None = None
     clarify_question: str | None = None
+    clarify_chips: list[str] = field(default_factory=list)  # 되물을 때 예상 답 칩 (분류가 만듦, 11/2)
     usage: Usage = field(default_factory=Usage)
 
 
@@ -131,10 +138,34 @@ async def route(
     cls = check_classification(cls, question, info, past, summary, resolved)
     if cls["target_source"] == "guess" or (cls["category"] == "clarify" and not cls["target_drug"]):
         follow = CLARIFY_GUESS if cls["target_source"] == "guess" else (cls["clarify_question"] or CLARIFY_DEFAULT)
-        return Route(kind="clarify", context_release=release, classification=cls, clarify_question=follow, usage=usage)
+        # 칩은 분류가 만든 되묻는 문장을 그대로 쓸 때만. 고정 문구로 바꾸면 칩이 그 문장과 맞지 않을 수 있음
+        chips = _clarify_chips(cls.get("clarify_options")) if follow == cls["clarify_question"] else []
+        return Route(
+            kind="clarify",
+            context_release=release,
+            classification=cls,
+            clarify_question=follow,
+            clarify_chips=chips,
+            usage=usage,
+        )
     if cls["category"] == "clarify":
         cls["category"] = "medication"  # 대상 약을 찾았으면 되묻지 않음
     return Route(kind=cls["category"], context_release=release, classification=cls, usage=usage)
+
+
+CHIP_MAX, CHIP_LEN = 3, 15  # 되물음 예상 답 칩 수와 글자 수 (시작값, 11/2)
+
+
+def _clarify_chips(options: Any) -> list[str]:
+    """분류가 만든 예상 답을 칩으로. 글 규칙(clean_text)을 거치고, 빈 것과 긴 것과 겹치는 것은 뺌"""
+    if not isinstance(options, list):
+        return []
+    out: list[str] = []
+    for o in options:
+        text = clean_text(o).strip() if isinstance(o, str) else ""
+        if text and len(text) <= CHIP_LEN and text not in out:
+            out.append(text)
+    return out[:CHIP_MAX]
 
 
 @dataclass
@@ -151,6 +182,7 @@ class Reply:
     safety_card: dict[str, Any] | None = None  # ⑤ { analysisId, warningIds } (명세서 v1.5 초안 H-2, H-3)
     # 판정에서 막혔을 때(insufficient, risk_blocked) 어느 판정이 막았는지 로그용 요약 (#124 채연 리뷰)
     evidence_verdicts: str | None = None
+    chips: list[str] = field(default_factory=list)  # 되물음(clarify) 아래 예상 답 칩 (명세서 H-2 chips, 11/2)
 
 
 # ⑤ 점검 결과로 답할 때의 앞뒤 문장 (화면 문구, 신규 임시, 10/26 수인 결정. 와이어프레임에는 나중에 맞춤)
@@ -165,11 +197,34 @@ _NOT_CHECKED = re.compile(
 )
 
 
+def _no_warnings(info: FixedInfo) -> str:
+    """분석 칩에 경고가 하나도 없을 때. 점검한 약 이름(4개까지, 넘으면 "등")과 점검 기준, 점검하지 않는 것을 적음 (11/2)"""
+    names = [d.name for d in info.drugs]
+    listed = ", ".join(names[:4]) + (" 등" if len(names) > 4 else "")
+    return (
+        f"이번 분석에서는 {listed} {len(names)}개를 점검했어요.\n\n"
+        f"{NO_WARNINGS_CHECKS} 기준에 걸린 항목은 없었어요. {NO_WARNINGS_TAIL}"
+    )
+
+
+def _analysis_reply(question: str, info: FixedInfo, r: Route, usage: Usage) -> Reply:
+    """분석 칩에 ⑤(_check_reply)가 답하지 않았을 때(음식, 술 같은 점검하지 않는 말이 섞였거나 약 두 개짜리 경고가 없음).
+    약끼리 경고와 약 하나짜리 경고를 함께 보고, 있으면 ⑤와 같은 모양으로 답하며 카드를 붙임. 둘 다 없을 때만 "걸린 항목이 없었어요".
+    음식, 술을 물었으면 점검하지 않는다는 말을 덧붙임. 점검한 약이 없으면 화면 안내 (11/2 멘토 피드백, #195 채연 리뷰)"""
+    warnings = info.pair_warnings + info.other_warnings
+    if warnings:
+        tail = f"{NOT_CHECKED_NOTE}\n\n{SAFETY_TAIL}" if _NOT_CHECKED.search(question) else SAFETY_TAIL
+        card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in warnings]}
+        return Reply("normal", _check_result(warnings, tail), r, usage=usage, safety_card=card)
+    return Reply("normal", _no_warnings(info) if info.drugs else ANALYSIS_GUIDE, r, usage=usage)
+
+
 def _check_result(warnings: list[PairWarning], tail: str = SAFETY_TAIL) -> str:
     """경고마다 "약A, 약B: 점검 문장" 한 줄. 약 이름 뒤 조사는 괄호로 끝나는 이름이 많아 쉼표로 이음 (10/26 수인 결정).
     경고 사이와 끝 문장 앞은 빈 줄. 좁은 화면에서 한 경고가 여러 줄로 접히면 다음 경고나 끝 문장과 구분되지 않음.
     끝 문장의 "위 내용은"은 경고 전체에 대한 말임을 글로도 밝힘 (읽어주기). 머리 문장은 목록의 제목이라 붙임 (10/27 수인 결정)"""
-    lines = "\n\n".join(f"{', '.join(w.names)}: {w.summary}" for w in warnings)
+    # 여러 약 복용처럼 약 하나의 것이 아닌 경고는 이름 없이 문장만
+    lines = "\n\n".join(f"{', '.join(w.names)}: {w.summary}" if w.names else w.summary for w in warnings)
     return f"{SAFETY_HEAD}\n{lines}\n\n{tail}"
 
 
@@ -201,7 +256,7 @@ async def answer(
     if r.kind in ("clarify", "medication", "lifestyle", "refer", "out_of_scope") and safety_rules.odd_speech(question):
         return Reply("refer", SPEECH, r, usage=usage)
     if r.kind == "clarify":
-        return Reply("clarify", r.clarify_question, r, usage=usage)
+        return Reply("clarify", r.clarify_question, r, usage=usage, chips=r.clarify_chips)
     if r.kind not in ("medication", "lifestyle", "refer", "out_of_scope"):
         return Reply(r.kind, None, r, usage=usage)  # 긴급, 자해, 오류는 화면 고정 카드
 
@@ -212,7 +267,8 @@ async def answer(
     if cls.get("about_user_drugs") and r.kind in ("medication", "refer") and info.pair_warnings and checked_only:
         # 경고 카드로 연 대화는 그 경고만. 분석 전체를 물으면(분석 칩) 다 보여 줌 (11/2 서버 E2E)
         shown = [w for w in info.pair_warnings if w.id == info.focus_warning and not asks_this_analysis(question)]
-        shown = shown or info.pair_warnings
+        # 분석 전체를 물으면 약 하나짜리 경고(노인주의 등)도 같이 (11/2 멘토 피드백)
+        shown = shown or info.pair_warnings + (info.other_warnings if asks_this_analysis(question) else [])
         card = {"analysisId": info.analysis_id, "warningIds": [w.id for w in shown]}
         # 끊거나 바꾸려는 질문(next_visit)과 증상(soon)은 끝 문장을 그 상담 문구로. 약을 끊는 건 의사 판단 (#134 리뷰 1번)
         kind = cls.get("refer_kind") if r.kind == "refer" else None
@@ -220,7 +276,7 @@ async def answer(
             return Reply("refer", _check_result(shown, REFER[kind]), r, usage=usage, safety_card=card)
         return Reply("normal", _check_result(shown), r, usage=usage, safety_card=card)
     if r.kind == "medication" and asks_this_analysis(question):
-        return Reply("normal", ANALYSIS_GUIDE, r, usage=usage)
+        return _analysis_reply(question, info, r, usage)
     if r.kind == "out_of_scope":
         # 범위 밖은 답 AI 없이 늘 같은 문구 (5회차 멘토링 시연, #99). 다음 질문의 대화 기억에서도 뺌 (chats._history)
         draft = out_of_scope(question, cls, info)

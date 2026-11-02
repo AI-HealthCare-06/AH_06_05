@@ -34,6 +34,9 @@ const reply = (status: number, body: unknown) => ({ status, body });
 const notFound = () => reply(404, { error: { code: 'NOT_FOUND', message: '찾을 수 없어요.' } });
 
 function answerFor(q: string): Record<string, unknown> {
+  if (q.includes('그거')) {
+    return { answerType: 'clarify', content: '어느 약을 말씀하시는 건가요?', sources: [], chips: ['아침 약이요', '저녁 약이요'] };
+  }
   if (q.includes('혈압')) {
     return { answerType: 'normal', content: '혈압약은 매일 같은 시간에 드시는 게 좋아요.', sources: [{ title: '식약처 의약품 허가정보' }] };
   }

@@ -45,11 +45,6 @@ function toErrorKind(e: unknown): ErrorKind {
 // 분석이 지워짐 (명세서 0장 404). 맥락 카드는 불러오기 실패로 보이고 대화는 그대로 (설계 메모 3-6 항목)
 const isGone = (e: unknown) => e instanceof ApiError && e.status === 404;
 
-const sameCard = (m: Message, c: PendingCard) =>
-  m.contextCard?.analysisId === c.analysisId &&
-  m.contextCard.context?.type === c.context?.type &&
-  m.contextCard.context?.id === c.context?.id;
-
 export function useChat(params: ChatParams) {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -156,13 +151,13 @@ export function useChat(params: ChatParams) {
       const today = await findToday();
       setHasHistory(today.hasHistory);
       if (today.safetyModeUntil) setSafetyUntil(Date.parse(today.safetyModeUntil));
-      let sid = params.sessionId ?? today.sessionId; // CB-03에서 연 지난 대화
+      // 분석에서 들어오면 오늘 대화에 붙이지 않고 늘 새 대화로 (11/2 멘토 피드백, 설계 메모 3-4). 아니면 CB-03에서 연 지난 대화나 오늘 대화
+      let sid = card ? null : (params.sessionId ?? today.sessionId);
       setSession(sid); // 아래 단계가 실패해도 첫 질문 때 오늘 대화를 또 만들지 않게
       let list: Message[] = [];
       if (sid !== null) list = await getMessages(sid);
-      const existing = card ? list.find((m) => sameCard(m, card)) : undefined;
-      setFocusCard(existing?.id ?? null);
-      if (card && !existing) {
+      setFocusCard(null);
+      if (card) {
         if (sid === null && card.context) {
           sid = (await startSession(newRequestId(), card.analysisId, card.context)).sessionId;
           setSession(sid); // H-7이 실패해도 첫 질문 때 대화를 또 만들지 않게
@@ -275,6 +270,19 @@ export function useChat(params: ChatParams) {
     [deliver],
   );
 
+  // [새 대화]: 화면을 비우고 다음 질문 때 H-1로 새 대화를 만듦 (11/2 멘토 피드백). 보내는 중이거나 실패한 질문은 그대로 둠
+  const startNew = useCallback(() => {
+    setSession(null);
+    cardRef.current = null;
+    setPendingCard(null);
+    setFocusCard(null);
+    setHidden([]);
+    setRelieved([]);
+    show([]);
+    setPending((list) => list.filter((q) => q.error || q.answerId === undefined));
+    setHasHistory(true);
+  }, []);
+
   // E4 [지금은 증상이 없어요]: 안내 글을 붙이고 같은 질문을 새 요청으로 다시 보냄 (설계 메모 4-6 항목)
   const dismiss = useCallback(
     (answer: Message) => {
@@ -305,5 +313,6 @@ export function useChat(params: ChatParams) {
     ask,
     retry,
     dismiss,
+    startNew,
   };
 }

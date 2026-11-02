@@ -50,6 +50,7 @@ def classified(**over: Any) -> dict[str, Any]:
         "refer_kind": None,
         "about_user_drugs": False,
         "clarify_question": None,
+        "clarify_options": None,
     }
     return {**base, **over}
 
@@ -356,6 +357,32 @@ async def test_clarify_without_target():
     chat = FakeChat(classify=classified(category="clarify", clarify_question="어떤 약을 말씀하시나요?"))
     r = await route("그거 먹어도 돼요?", S0, [], chat)
     assert (r.kind, r.clarify_question) == ("clarify", "어떤 약을 말씀하시나요?")
+    assert r.clarify_chips == []  # 분류가 예상 답을 안 주면 칩 없음
+
+
+@sync
+async def test_clarify_chips_follow_the_classifier_question():
+    """되물을 때 분류가 만든 예상 답을 칩으로. 글 규칙을 거치고 빈 것, 15자 넘는 것, 겹치는 것은 빼고 3개까지 (11/2, #117 E3)"""
+    options = [
+        "**아침 약이요**",
+        "저녁 약이요",
+        "",
+        "저녁 약이요",
+        "아주 길게 적어서 열다섯 글자를 넘는 답이에요",
+        "둘 다요",
+        "넷째",
+    ]
+    chat = FakeChat(
+        classify=classified(category="clarify", clarify_question="어느 약을 말씀하시나요?", clarify_options=options)
+    )
+    r = await route("그거 먹어도 돼요?", S0, [], chat)
+    assert r.clarify_chips == ["아침 약이요", "저녁 약이요", "둘 다요"]
+    # 되묻는 문장을 고정 문구로 바꾸면(기억 밖의 약 추측) 칩도 쓰지 않음
+    chat = FakeChat(
+        classify=classified(target_drug="타이레놀", target_source="history", clarify_options=["네", "아니요"])
+    )
+    r = await route("아까 그 약 먹어도 돼요?", S0, [], chat)
+    assert r.kind == "clarify" and r.clarify_chips == []
 
 
 @sync

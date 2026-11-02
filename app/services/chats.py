@@ -30,6 +30,7 @@ from app.models.users import User
 from app.repositories.chat import ChatRepository
 from app.services import safety
 from app.services.chatbot import pipeline, safety_rules
+from app.services.chatbot.answer import DISTRESS
 from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug, find_drug
 from app.services.chatbot.evidence import JOB_LIMIT_SEC
 from app.services.chatbot.llm import make_client
@@ -183,9 +184,16 @@ def _item(m: ChatMessage) -> dict[str, Any]:
         row["replyTo"] = m.reply_to_id
     if m.answer_type:
         row["sources"] = m.sources or []
-    for key, value in (("contextCard", m.context_card), ("safetyCard", m.safety_card), ("safety", m.safety)):
+    for key, value in (
+        ("contextCard", m.context_card),
+        ("safetyCard", m.safety_card),
+        ("safety", m.safety),
+        ("chips", m.chips),
+    ):
         if value:
             row[key] = value
+    if m.answer_type and m.content == DISTRESS:
+        row["noFeedback"] = True  # 범위 밖 괴로움의 도움 연결 답에는 피드백 버튼을 두지 않음 (#144 채연 리뷰, #117)
     row["createdAt"] = m.created_at.isoformat()
     return row
 
@@ -404,6 +412,7 @@ async def generate(message_id: int, emergency_dismissed: bool = False) -> None:
         sources=_sources(reply.sources),
         safety=_safety(r) if r.safety_types else None,
         safety_card=reply.safety_card,
+        chips=reply.chips or None,
         route_kind=r.kind,
         analysis_id=info.analysis_id,
         model=config.OPENAI_CHAT_MODEL if reply.usage.calls else None,
@@ -423,17 +432,21 @@ def _item_name(it: PrescriptionItem) -> str:
     return display_name(it.drug.item_name) if it.drug else it.raw_name  # 분석 화면(R-4)과 같은 이름
 
 
-async def _pair_warnings(aid: int) -> list[PairWarning]:
-    rows = (
-        await AnalysisWarning.filter(analysis_id=aid, warning_type__in=PAIR_WARNINGS)
-        .order_by("id")
-        .prefetch_related("item_a__drug", "item_b__drug")
-    )
-    return [
+async def _pair_warnings(aid: int) -> tuple[list[PairWarning], list[PairWarning]]:
+    """(약 두 개짜리 경고, 약 하나짜리 경고). 처방을 지워 약이 빠진 경고는 뺌"""
+    rows = await AnalysisWarning.filter(analysis_id=aid).order_by("id").prefetch_related("item_a__drug", "item_b__drug")
+    pairs = [
         PairWarning(w.id, (_item_name(w.item_a), _item_name(w.item_b)), w.summary or "")
         for w in rows
-        if w.item_a and w.item_b  # 처방을 지워 약이 빠진 경고는 뺌
+        if w.warning_type in PAIR_WARNINGS and w.item_a and w.item_b
     ]
+    # 여러 약 복용(polypharmacy)은 약 여러 개에 대한 경고라 이름 없이 (#195 채연 리뷰)
+    singles = [
+        PairWarning(w.id, () if w.warning_type == "polypharmacy" else (_item_name(w.item_a),), w.summary or "")
+        for w in rows
+        if w.warning_type not in PAIR_WARNINGS and (w.item_a or w.warning_type == "polypharmacy")
+    ]
+    return pairs, singles
 
 
 # ── 고정 정보 (설계 메모 7-11) ─────────────────────────────────────────────────────────────
@@ -508,7 +521,7 @@ async def fixed_info(user: User, s: ChatSession) -> FixedInfo:
     if aid is None:
         return info
     info.analysis_id = aid
-    info.pair_warnings = await _pair_warnings(aid)
+    info.pair_warnings, info.other_warnings = await _pair_warnings(aid)
 
     rx_ids = await AnalysisPrescription.filter(analysis_id=aid).values_list("prescription_id", flat=True)
     items = (

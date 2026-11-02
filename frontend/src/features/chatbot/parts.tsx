@@ -130,7 +130,7 @@ export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boole
         {shown.text}
       </Text>
       {shown.done && !!m.sources?.length && <Sources sources={m.sources} />}
-      {shown.done && FEEDBACK_ON.includes(type) && <Feedback />}
+      {shown.done && FEEDBACK_ON.includes(type) && !m.noFeedback && <Feedback />}
     </Card>
   );
 }

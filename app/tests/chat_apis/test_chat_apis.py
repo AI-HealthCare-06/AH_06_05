@@ -17,7 +17,7 @@ from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
 from app.models.ocr import PrescriptionItem
 from app.models.users import ConsentType, UserConsent
 from app.services import chats, safety
-from app.services.chatbot.answer import OUT_OF_SCOPE
+from app.services.chatbot.answer import DISTRESS, OUT_OF_SCOPE
 from app.services.chatbot.context import FixedInfo
 from app.services.chatbot.llm import Usage
 from app.services.chatbot.pipeline import Reply, Route
@@ -831,6 +831,40 @@ class TestFixedInfo(ChatCase):
         assert set(w.names) == {base_name(PRODUCTS[2][1]), "아스피린프로텍트정100밀리그람"}  # 수출명은 뗌
         assert w.summary == "함께 드시면 안 되는 약이에요"
 
+    async def test_single_drug_warnings_are_passed_separately(self):
+        """노인주의처럼 약 하나짜리 경고는 other_warnings로. ⑤의 약 두 개짜리(pair_warnings)와 섞지 않음 (11/2 멘토 피드백)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f33@example.com")
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            (a,) = await PrescriptionItem.filter(prescription=rx)
+            await AnalysisWarning.create(
+                analysis_id=aid, warning_type="elderly", severity="caution", item_a=a,
+                summary="어르신이 조심해야 하는 약이에요", source="심평원 DUR 노인주의",
+            )  # fmt: skip
+            sid = await self.session(client, headers, analysisId=aid)
+            await self.ask(client, headers, sid, "이번 분석에서 가장 조심할 건 뭔가요?")
+        info = self.fake.calls[0]["info"]  # 답은 가짜라 고정 정보만 봄. 답 글은 test_answer에서
+        assert info.pair_warnings == [] and len(info.other_warnings) == 1
+        assert info.other_warnings[0].names == (base_name(PRODUCTS[0][1]),)
+        assert info.other_warnings[0].summary == "어르신이 조심해야 하는 약이에요"
+
+    async def test_polypharmacy_warning_has_no_drug_name(self):
+        """여러 약 복용 경고는 약 하나가 아니라 여러 약에 대한 것이라 이름 없이 (#195 채연 리뷰 3)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f38@example.com")
+            rx = await self.prescription(user, ["641900040", "644300010"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            (a, _b) = await PrescriptionItem.filter(prescription=rx).order_by("id")
+            await AnalysisWarning.create(
+                analysis_id=aid, warning_type="polypharmacy", severity="info", item_a=a,
+                summary="약을 5가지 함께 드시고 있어요", source="점검 기준",
+            )  # fmt: skip
+            sid = await self.session(client, headers, analysisId=aid)
+            await self.ask(client, headers, sid, "이번 분석에서 가장 조심할 건 뭔가요?")
+        info = self.fake.calls[0]["info"]
+        assert [w.names for w in info.other_warnings] == [()]
+
     async def test_safety_card_is_saved_and_returned(self):
         """점검 결과로 답하면 answerType은 normal, safetyCard는 H-2에 그대로 (명세서 v1.5 초안 H-2)"""
         card = {"analysisId": 7, "warningIds": [31, 32]}
@@ -843,6 +877,29 @@ class TestFixedInfo(ChatCase):
             items = await self.items(client, headers, sid)
         assert items[-1]["answerType"] == "normal" and items[-1]["safetyCard"] == card
         assert "safetyCard" not in items[0]  # 카드가 없는 줄은 칸을 생략
+
+    async def test_clarify_chips_are_saved_and_returned(self):
+        """되물음의 예상 답 칩은 H-2 답 줄의 chips로. 칩이 없는 줄은 칸을 생략 (명세서 H-2 제안, 11/2)"""
+        self.fake.reply = Reply(
+            "clarify", "어느 약을 말씀하시나요?", Route(kind="clarify"), chips=["아침 약이요", "저녁 약이요"]
+        )
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f34@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "그거 언제 먹어요?")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["answerType"] == "clarify" and items[-1]["chips"] == ["아침 약이요", "저녁 약이요"]
+        assert "chips" not in items[0]
+
+    async def test_distress_answer_has_no_feedback_flag(self):
+        """범위 밖 괴로움의 도움 연결 답은 noFeedback으로 표시해 앱이 피드백 버튼을 숨김 (#144 채연 리뷰, #117, 제안)"""
+        self.fake.reply = Reply("normal", DISTRESS, Route(kind="out_of_scope"))
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "f35@example.com")
+            sid = await self.session(client, headers)
+            await self.ask(client, headers, sid, "약 먹는 게 너무 힘들어요")
+            items = await self.items(client, headers, sid)
+        assert items[-1]["noFeedback"] is True and "noFeedback" not in items[0]
 
     async def test_no_consent_means_general_info_only(self):
         async with self.client() as client:
