@@ -338,6 +338,7 @@ export const copy = {
     startWith: '이런 질문으로 시작해 보세요',
     todayFail: '지난 대화를 불러오지 못했어요',
     // CB-02, CB-03 대화 기록 (설계 메모 4-12, 4-13)
+    newChat: '새 대화',
     historyTitle: '대화 기록',
     historyGuide: '기록이 있는 날짜를 누르면 그날의 대화를 볼 수 있어요.',
     historyEmpty: '이 달에는 대화 기록이 없어요',

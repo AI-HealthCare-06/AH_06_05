@@ -129,17 +129,27 @@ export default function Chat() {
       onBack={() => router.back()}
       scroll={false}
       right={
-        // 지난 대화에서는 숨김: 챗봇 → 달력 → 목록 → 챗봇으로 쌓이지 않게 (설계 메모 4-1)
+        // 지난 대화에서는 둘 다 숨김: 챗봇 → 달력 → 목록 → 챗봇으로 쌓이지 않게 (설계 메모 4-1)
         past ? undefined : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={c.historyTitle}
-            hitSlop={8}
-            onPress={() => router.push({ pathname: '/chat-history', params: chat.sessionId ? { current: chat.sessionId } : {} })}
-            style={{ width: L.touch, height: L.touch, alignItems: 'flex-end', justifyContent: 'center' }}
-          >
-            <CalendarIcon color={C.text2} />
-          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: chat.busy || chat.loading }}
+              onPress={chat.busy || chat.loading ? undefined : chat.startNew}
+              style={{ minHeight: L.touch, paddingHorizontal: 8, justifyContent: 'center', opacity: chat.busy || chat.loading ? 0.4 : 1 }}
+            >
+              <Text style={[T.label, { color: C.p700 }]}>{c.newChat}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={c.historyTitle}
+              hitSlop={8}
+              onPress={() => router.push({ pathname: '/chat-history', params: chat.sessionId ? { current: chat.sessionId } : {} })}
+              style={{ width: L.touch, height: L.touch, alignItems: 'flex-end', justifyContent: 'center' }}
+            >
+              <CalendarIcon color={C.text2} />
+            </Pressable>
+          </View>
         )
       }
     >
