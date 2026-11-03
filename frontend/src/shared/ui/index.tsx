@@ -158,6 +158,8 @@ export function Screen({
   const router = useRouter();
   const ins = useSafeAreaInsets();
   const canBack = back && (!!onBack || router.canGoBack());
+  // 하단 고정 영역은 화면 위에 떠 있으므로 실제 높이를 재서 스크롤 아래 여백으로 씀 (버튼 둘과 안내 두 줄처럼 높으면 마지막 카드가 가려졌음)
+  const [footerH, setFooterH] = useState(0);
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={[st.bar, { paddingTop: ins.top }]}>
@@ -184,7 +186,7 @@ export function Screen({
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{
             padding: S.side,
-            paddingBottom: fab ? L.fab + L.fabGap * 2 : (footer ? 120 : S.section) + ins.bottom,
+            paddingBottom: fab ? L.fab + L.fabGap * 2 : footer ? Math.max(footerH, 120 + ins.bottom) + S.section : S.section + ins.bottom,
           }}
         >
           {children}
@@ -192,7 +194,14 @@ export function Screen({
       ) : (
         <View style={{ flex: 1 }}>{children}</View>
       )}
-      {footer ? <View style={[st.footer, { paddingBottom: ins.bottom + 12 }]}>{footer}</View> : null}
+      {footer ? (
+        <View
+          style={[st.footer, { paddingBottom: ins.bottom + 12 }]}
+          onLayout={(e) => setFooterH(Math.ceil(e.nativeEvent.layout.height))}
+        >
+          {footer}
+        </View>
+      ) : null}
     </View>
   );
 }
