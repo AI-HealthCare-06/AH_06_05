@@ -227,23 +227,35 @@ function SearchModal({ visible, onClose, onPick }: { visible: boolean; onClose: 
   const ins = useSafeAreaInsets();
   const [q, setQ] = useState('');
   const [res, setRes] = useState<DrugSearch | null>(null);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [again, setAgain] = useState(0); // 다시 시도를 누를 때마다 올려서 같은 글자로 다시 찾음
 
   useEffect(() => {
     if (q.trim().length < 2) {
       setRes(null);
+      setStatus('idle');
       return;
     }
     let live = true;
+    setStatus('loading');
     const t = setTimeout(() => {
       searchDrugs(q.trim(), 8)
-        .then((v) => live && setRes(v))
-        .catch(() => live && setRes(null));
+        .then((v) => {
+          if (!live) return;
+          setRes(v);
+          setStatus('idle');
+        })
+        .catch(() => {
+          if (!live) return;
+          setRes(null);
+          setStatus('error'); // 실패해도 빈 화면으로 두지 않고 알려 준다 (11/3 시연)
+        });
     }, 300);
     return () => {
       live = false;
       clearTimeout(t);
     };
-  }, [q]);
+  }, [q, again]);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -262,6 +274,13 @@ function SearchModal({ visible, onClose, onPick }: { visible: boolean; onClose: 
           />
         </View>
         <Text style={[T.caption, { paddingHorizontal: 20, marginBottom: 6 }]}>{r.searchHint}</Text>
+        {status === 'loading' && !res && <Text style={[T.caption, { paddingHorizontal: 20 }]}>{r.searching}</Text>}
+        {status === 'error' && (
+          <View style={{ paddingHorizontal: 20, gap: 8 }}>
+            <Text style={[T.caption, { color: C.danger }]}>{r.searchError}</Text>
+            <Btn label={copy.common.retry} kind="secondary" onPress={() => setAgain((n) => n + 1)} />
+          </View>
+        )}
         <FlatList
           data={res?.items ?? []}
           keyExtractor={(d) => d.ediCode ?? d.itemSeq ?? d.itemName}
