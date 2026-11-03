@@ -915,6 +915,27 @@ class TestItemsAndSearch(OcrApiCase):
         assert one_char == {"status": "not_found", "items": []}
         assert unrelated == {"status": "not_found", "items": []}
 
+    async def test_search_forgives_one_wrong_letter_only_when_nothing_else_matches(self):
+        """직접 치는 검색에서 다른 방법이 아무것도 못 찾으면, 이름 앞부분과 자음·모음 하나만 다른 약을 후보로 보인다
+        (11/3 멘토 시연 뒤 리뷰: 노바스그 · 아스피란 · 메트폴민이 안 나왔음)"""
+
+        async def ask(client, headers, q):
+            return (await client.get("/api/v1/drugs/search", params={"q": q}, headers=headers)).json()
+
+        async with self.client() as client:
+            headers = await self.auth(client, "p7@example.com")
+            brand = await ask(client, headers, "노바스그")  # 상표 이름에서 자음 하나가 다름 (크 → 그)
+            aspirin = await ask(client, headers, "아스피란")  # 모음 하나가 다름 (린 → 란)
+            ingredient = await ask(
+                client, headers, "메트폴민"
+            )  # 괄호 안 성분 이름에서 글자 하나가 빠짐 (포르민 → 폴민)
+            too_short = await ask(client, headers, "노바그")  # 3글자는 한 글자만 달라도 다른 약일 수 있어 보완하지 않음
+            two_off = await ask(client, headers, "노부스그")  # 두 군데가 다르면 찾지 않음
+        for got, edi in ((brand, "641900040"), (aspirin, "648800030"), (ingredient, "644300010")):
+            assert got["status"] == "candidates" and [i["ediCode"] for i in got["items"]] == [edi]
+        assert too_short == {"status": "not_found", "items": []}
+        assert two_off == {"status": "not_found", "items": []}
+
     async def test_search_puts_names_starting_with_the_text_first(self):
         """같은 글자가 들어 있어도 그 글자로 시작하는 약이 먼저, 성분에만 들어 있는 약이 뒤"""
         await DrugProduct.create(edi_code="650000001", item_name="삼남아세트아미노펜정", entp_name="삼남제약(주)")
