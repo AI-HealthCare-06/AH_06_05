@@ -134,7 +134,9 @@ export default function Recognize() {
                 <View style={{ flex: 1 }}>
                   <Text style={T.bodyM}>{title}</Text>
                   <Text style={T.caption}>
-                    {it.matchStatus === 'unmatched' ? r.rawLabel(it.rawName) : [rx.hospitalName, timing(it)].filter(Boolean).join(', ')}
+                    {it.matchStatus === 'unmatched'
+                      ? [rx.hospitalName, r.rawLabel(it.rawName)].filter(Boolean).join(', ')
+                      : [rx.hospitalName, timing(it)].filter(Boolean).join(', ')}
                   </Text>
                 </View>
                 <Chip label={label} tone={tone} />
