@@ -187,7 +187,9 @@ export const copy = {
     similarExact: '글자가 일치하는 약을 골라 뒀어요. 비슷한 약도 있으니 맞는지 확인해 주세요.',
     suggestedLlm: 'AI가 추천한 약을 골라 뒀어요. 맞는지 확인해 주세요.',
     noticesTitle: '사진을 읽으며 확인이 필요한 점',
-    duplicates: (nums: string) => `※ ${nums} 사진은 이미 올린 사진이라 새로 읽지 않고 기존 결과를 보여 드려요.`,
+    duplicatesTitle: '이미 올린 사진이에요', // 11/3 멘토 피드백: 중복 사진을 올리면 알려 주기 (팝업 + 화면 안내 카드)
+    duplicates: (nums: string) => `${nums} 사진은 이미 올린 사진이라 새로 읽지 않고 기존 결과를 보여 드려요.`,
+    duplicatesOk: '확인',
     checkFields: (names: string) => `다시 확인해 주세요: ${names}`,
     guidanceTitle: '약봉투에 적힌 안내',
     guidanceNote: '사진에서 읽은 글자예요. 틀릴 수 있어요.',

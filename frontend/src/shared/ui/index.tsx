@@ -338,6 +338,23 @@ export function Confirm({
   );
 }
 
+// 알림 창: 확인 버튼 하나만 있는 안내 (Confirm은 취소 버튼이 항상 있음)
+export function Notice({ visible, title, body, ok, onOk }: { visible: boolean; title: string; body: string; ok: string; onOk: () => void }) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onOk}>
+      <View style={st.dim}>
+        <View style={[st.card, { gap: 10 }]} accessibilityViewIsModal>
+          <Text style={T.heading} accessibilityRole="header">
+            {title}
+          </Text>
+          <Text style={[T.body, { color: C.text2 }]}>{body}</Text>
+          <Btn label={ok} onPress={onOk} style={{ marginTop: 8 }} />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // 동의 글: 핵심 요약 몇 줄을 먼저 보이고 법정 전체 문구는 [전체 내용 보기]로 접음 (11/2 멘토 피드백 "모달 글이 너무 많음").
 // 전체 문구는 지우지 않고 그대로 보여 줄 수 있어야 함
 export function ConsentText({ summary, full }: { summary: readonly string[]; full: string }) {
