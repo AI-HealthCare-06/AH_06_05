@@ -92,7 +92,7 @@ export default function Recognize() {
       }
     >
       <Text style={[T.body, { color: C.text2 }]}>{r.intro}</Text>
-      <Text style={[T.bodyM, { marginTop: 8 }]}>{r.summary(list.length, list.map((x) => x.hospitalName ?? '').filter(Boolean).join(', '))}</Text>
+      <Text style={[T.bodyM, { marginTop: 8 }]}>{r.summary(list.length)}</Text>
 
       {duplicates.length > 0 && (
         <Text style={[T.caption, { marginTop: 8 }]}>{r.duplicates(duplicates.map((n) => `${n}번째`).join(', '))}</Text>
