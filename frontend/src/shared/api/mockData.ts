@@ -178,6 +178,7 @@ export function analysisStatus() {
 }
 
 let userCodes: string[] = [];
+let userPicked = false; // 질환을 직접 고르거나 바꾼 뒤에는 처방전 질환 대신 고른 질환을 씀
 const DISEASE_NAMES: Record<string, string> = Object.fromEntries(PICKABLE_DISEASES.map((d) => [d.code, d.name]));
 const has = (names: string[]) => names.every((n) => active().some((i) => i.itemName?.includes(n)));
 
@@ -220,8 +221,9 @@ export function analysisResult() {
   const items = active();
   const guideFailed = failsGuide();
   const codes = [...new Set(rxs.filter((r) => r.items.some((i) => items.some((a) => a.id === i.id))).flatMap((r) => r.diseaseCodes))];
-  const origin = codes.length > 0 ? 'prescription' : 'user'; // 처방전에 코드가 없으면 사용자가 RG-05-E1에서 고른 질환
-  const diseases = (codes.length > 0 ? codes : userCodes).filter((c) => DISEASE_NAMES[c]).map((c) => ({ code: c, name: DISEASE_NAMES[c], origin }));
+  const useUser = userPicked || codes.length === 0;
+  const origin = useUser ? 'user' : 'prescription'; // 처방전에 코드가 없으면 사용자가 RG-05-E1에서 고른 질환
+  const diseases = (useUser ? userCodes : codes).filter((c) => DISEASE_NAMES[c]).map((c) => ({ code: c, name: DISEASE_NAMES[c], origin }));
   const count = (s: string) => ws.filter((w) => w.severity === s).length;
   return ok({
     analysisId: 5001, status: 'done', createdAt: new Date().toISOString(),
@@ -253,15 +255,28 @@ export function analysisResult() {
         itemId: items.find((i) => i.itemName?.includes('암로디핀'))?.id ?? 0, itemName: '암로디핀정 5mg', requiresClinician: false,
         actions: [act('자몽과 자몽주스는 피하기', [31])],
       }],
-      sections: guideFailed || !diseases.some((x) => x.code === 'I10') ? [] : [
-        {
-          diseaseCode: 'I10', title: '나트륨 줄이기', goal: '1일 나트륨 2,000mg 이하 (소금 약 5g)',
-          actions: [act('국물은 남기고 건더기 위주로 먹기', [31]), act('젓갈 · 장아찌 · 김치 양 줄이기', [31])], conflict: null,
-        },
-        {
-          diseaseCode: 'I10', title: '유산소 운동', goal: '주 5회 이상, 회당 30분 이상',
-          actions: [act('빠르게 걷기 하루 30분, 주 5일 이상', [31])], conflict: null,
-        },
+      sections: guideFailed ? [] : [
+        ...(!diseases.some((x) => x.code === 'I10') ? [] : [
+          {
+            diseaseCode: 'I10', title: '나트륨 줄이기', goal: '1일 나트륨 2,000mg 이하 (소금 약 5g)',
+            actions: [act('국물은 남기고 건더기 위주로 먹기', [31]), act('젓갈 · 장아찌 · 김치 양 줄이기', [31])], conflict: null,
+          },
+          {
+            diseaseCode: 'I10', title: '유산소 운동', goal: '주 5회 이상, 회당 30분 이상',
+            actions: [act('빠르게 걷기 하루 30분, 주 5일 이상', [31])], conflict: null,
+          },
+        ]),
+        // 질환 추가 확인용: 제2형 당뇨병을 더하면 이 안내도 같이 나옴 (문구는 앱 팩트표 데이터의 당뇨병 항목)
+        ...(!diseases.some((x) => x.code === 'E11') ? [] : [
+          {
+            diseaseCode: 'E11', title: '탄수화물 관리', goal: '총 열량의 50~60%, 단순당 최소화',
+            actions: [act('흰쌀밥 대신 잡곡밥', [31]), act('과일주스 · 탄산음료 대신 생과일 소량', [31])], conflict: null,
+          },
+          {
+            diseaseCode: 'E11', title: '운동', goal: '주 150분 이상 중강도 유산소 + 주 2회 근력운동',
+            actions: [act('식후 30분~1시간 뒤 걷기가 혈당 조절에 도움', [31])], conflict: null,
+          },
+        ]),
       ],
       warningSigns: [],
       sources: [{ id: 31, org: '질병관리청 국가건강정보포털', title: '고혈압 생활습관 (예시 자리)' }],
@@ -272,6 +287,7 @@ export function analysisResult() {
 
 // R-6: 고른 질환으로 생활습관 부분만 새로 만들어 돌려줌
 export function putDiseases(body: Record<string, unknown>) {
+  userPicked = true;
   userCodes = Array.isArray(body.diseaseCodes) ? (body.diseaseCodes as string[]) : [];
   return ok((analysisResult().body as { lifestyle: unknown }).lifestyle);
 }
