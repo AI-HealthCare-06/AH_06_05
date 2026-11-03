@@ -386,7 +386,12 @@ _CLASS_IN_DRUG = {
         r"프로펜|나프록센|페낙|콕시브|록시캄|아스피린|케토롤락|에토돌락|메페남산|나부메톤|인도메타신|설린닥|니메술리드|탈니플루메이트"
         r"|profen|naproxen|fenac|coxib|oxicam|aspirin|ketorolac|etodolac|mefenamic|nabumetone|indomethacin|sulindac|nimesulide"
     ),
-}  # 케토롤락 등 빠진 약을 더함 (#203 채연 리뷰). 여전히 시작값이라 못 맞춘 약은 그 계열 문장이 빠질 수 있음
+}  # 케토롤락 등 빠진 약을 더함 (#203 채연 리뷰). 이름 목록이 못 맞춘 약은 아래 약효분류 코드로 받침
+# 약효분류 코드(급여목록 "분류" 열, 식약처 분류번호 앞 3자리)로 보는 계열 (11/3). 급여목록 2026.9 기준 케토롤락 12개 중 10개,
+# 아세클로페낙 141개 전부가 114, 푸로세미드와 스피로노락톤은 모두 213. 114에는 아세트아미노펜 같은 해열진통제도 들어 있어
+# 그 약만 먹는 사람에게도 소염진통제 문장이 남지만, 빼는 쪽이 아니라 남기는 쪽이라 안전함. 혈압약 셋(ACE, ARB, 베타)은 모두
+# 214라 코드로 가르지 못해 이름 목록만 씀. 아스피린은 저용량 제품이 219(기타 순환계)라 이름 목록이 계속 필요함
+_CLASS_BY_CODE = {"114": "nsaid", "213": "diuretic"}
 _WITH = re.compile(r"병용|함께|같이|투여\s*중")
 
 
@@ -397,6 +402,7 @@ def drop_other_class(evidence: list[Evidence], info: FixedInfo) -> list[Evidence
         return evidence
     mine = " ".join(f"{d.name} {d.ingredient}" for d in info.drugs)
     taken = {c for c, p in _CLASS_IN_DRUG.items() if re.search(p, mine, re.I)}
+    taken |= {_CLASS_BY_CODE[d.class_code[:3]] for d in info.drugs if d.class_code[:3] in _CLASS_BY_CODE}
     out = []
     for e in evidence:
         text = f"{e.heading} {e.text}"

@@ -629,6 +629,7 @@ async def fixed_info(user: User, s: ChatSession) -> FixedInfo:
                 purpose=purpose.get(code, ""),
                 how=medication.how_to_take(it, drug) or "",
                 code=code,
+                class_code=drug.class_code or "",
             )
         )
 

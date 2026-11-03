@@ -19,6 +19,7 @@ class UserDrug:
     purpose: str  # 쓰임 (예: 혈압)
     how: str  # 처방대로 먹는 법 (예: 1일 1회 아침)
     code: str = ""  # 약 코드 (근거 검색 범위, 급여목록 ediCode 또는 품목기준코드)
+    class_code: str = ""  # 약효분류 (급여목록 "분류" 열, 식약처 분류번호). 먹지 않는 계열 문장 거르기에 씀 (11/3)
 
 
 @dataclass
