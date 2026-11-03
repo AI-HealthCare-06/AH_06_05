@@ -268,7 +268,7 @@ export const copy = {
     sources: '출처',
     noDisease: '질환 정보를 찾지 못했어요',
     noDiseaseBody: '질병분류기호가 없거나 읽지 못해서 어떤 질환인지 알 수 없어요.',
-    pickDisease: '해당하는 질환이 있으면 골라 주세요 (선택)',
+    pickDisease: '해당하는 질환이 있으면 모두 골라 주세요 (선택)',
     pickNone: '해당 없음, 모르겠어요',
     pickApply: '선택한 질환으로 다시 보기',
     whyTitle: '왜 조심해야 하나요',

@@ -12,7 +12,7 @@ import { copy } from '@/shared/copy';
 import { drugLabel } from '@/shared/drugName';
 import { C, R, T } from '@/shared/theme';
 import { DocIcon } from '@/shared/ui/icons';
-import { Btn, Bullet, Card, Chip, Disclaimer, Radio, Screen, Section } from '@/shared/ui';
+import { Btn, Bullet, Card, Check, Chip, Disclaimer, Radio, Screen, Section } from '@/shared/ui';
 
 const r = copy.result;
 type TabKey = 'safety' | 'med' | 'life';
@@ -405,15 +405,16 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
 
 // RG-05-E1 질병분류기호가 없을 때 사용자가 직접 질환 고르기 (R-6)
 function DiseasePicker({ analysisId, onChange }: { analysisId: number; onChange: (l: Lifestyle) => void }) {
-  const [pick, setPick] = useState<string | null>(null);
+  const [picks, setPicks] = useState<string[]>([]); // 여러 질환을 고를 수 있음 (서버 R-6은 질환 코드 목록을 받음)
+  const [none, setNone] = useState(false); // "해당 없음"은 다른 선택과 같이 고를 수 없음
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const apply = async () => {
-    if (!pick) return;
+    if (picks.length === 0) return;
     try {
       setBusy(true);
       setErr(null);
-      onChange(await putDiseases(analysisId, pick === 'none' ? [] : [pick]));
+      onChange(await putDiseases(analysisId, picks));
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -424,11 +425,26 @@ function DiseasePicker({ analysisId, onChange }: { analysisId: number; onChange:
     <Card>
       <Text style={T.label}>{r.pickDisease}</Text>
       {PICKABLE_DISEASES.map((d) => (
-        <Radio key={d.code} on={pick === d.code} label={d.name} onPress={() => setPick(d.code)} />
+        <Check
+          key={d.code}
+          on={picks.includes(d.code)}
+          label={d.name}
+          onPress={() => {
+            setNone(false);
+            setPicks((cur) => (cur.includes(d.code) ? cur.filter((c) => c !== d.code) : [...cur, d.code]));
+          }}
+        />
       ))}
-      <Radio on={pick === 'none'} label={r.pickNone} onPress={() => setPick('none')} />
+      <Check
+        on={none}
+        label={r.pickNone}
+        onPress={() => {
+          setNone(!none);
+          setPicks([]);
+        }}
+      />
       {err && <Text style={[T.caption, { color: C.danger }]}>※ {err}</Text>}
-      <Btn label={r.pickApply} disabled={!pick || pick === 'none' || busy} onPress={apply} style={{ marginTop: 8 }} />
+      <Btn label={r.pickApply} disabled={picks.length === 0 || busy} onPress={apply} style={{ marginTop: 8 }} />
     </Card>
   );
 }
