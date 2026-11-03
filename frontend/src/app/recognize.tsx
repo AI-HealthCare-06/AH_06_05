@@ -9,7 +9,7 @@ import type { DrugSearch, MatchStatus, Prescription, PrescriptionItem } from '@/
 import { copy } from '@/shared/copy';
 import { drugLabel } from '@/shared/drugName';
 import { C, R, T } from '@/shared/theme';
-import { Btn, Bullet, Card, Chip, Screen } from '@/shared/ui';
+import { Btn, Bullet, Card, Chip, Notice, Screen } from '@/shared/ui';
 
 const r = copy.recognize;
 // 점수(0~1)를 정수 퍼센트로. 정확히 100%일 때만 100이 나오도록 내림. 1e-6은 0.29 같은 값이 28로 떨어지는 소수 오차를 막음
@@ -34,6 +34,7 @@ export default function Recognize() {
   const [pick, setPick] = useState<Record<number, string | null>>({});
   const [search, setSearch] = useState<{ rxId: number; itemId: number } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [dupOpen, setDupOpen] = useState(duplicates.length > 0); // 이미 올린 사진이 있으면 열자마자 팝업, 닫은 뒤에는 아래 안내 카드가 남음
 
   const load = useCallback(async () => {
     try {
@@ -79,6 +80,7 @@ export default function Recognize() {
   const usable = items.some(({ it }) => it.matchStatus !== 'excluded' && (it.ediCode || it.itemSeq));
   const codes = [...new Set(list.flatMap((x) => x.diseaseCodes))];
   const notices = list.flatMap((x) => x.notices ?? []);
+  const dupText = r.duplicates(duplicates.map((n) => `${n}번째`).join(', '));
 
   return (
     <Screen
@@ -95,7 +97,10 @@ export default function Recognize() {
       <Text style={[T.bodyM, { marginTop: 8 }]}>{r.summary(list.length)}</Text>
 
       {duplicates.length > 0 && (
-        <Text style={[T.caption, { marginTop: 8 }]}>{r.duplicates(duplicates.map((n) => `${n}번째`).join(', '))}</Text>
+        <Card tone="caution" style={{ marginTop: 12, gap: 4 }}>
+          <Text style={T.label}>{r.duplicatesTitle}</Text>
+          <Text style={T.caption}>{dupText}</Text>
+        </Card>
       )}
       {notices.length > 0 && (
         <Card tone="caution" style={{ marginTop: 12, gap: 4 }}>
@@ -210,6 +215,7 @@ export default function Recognize() {
       </View>
       {blocking.length > 0 && <Text style={[T.caption, { marginTop: 12 }]}>{r.lowConfidence}</Text>}
 
+      <Notice visible={dupOpen && duplicates.length > 0} title={r.duplicatesTitle} body={dupText} ok={r.duplicatesOk} onOk={() => setDupOpen(false)} />
       <SearchModal
         visible={search !== null}
         onClose={() => setSearch(null)}
