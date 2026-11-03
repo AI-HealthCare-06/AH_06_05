@@ -186,7 +186,7 @@ export function Screen({
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{
             padding: S.side,
-            paddingBottom: fab ? L.fab + L.fabGap * 2 : footer ? Math.max(footerH, 120) + S.section : S.section + ins.bottom,
+            paddingBottom: fab ? L.fab + L.fabGap * 2 : footer ? Math.max(footerH, 120 + ins.bottom) + S.section : S.section + ins.bottom,
           }}
         >
           {children}
