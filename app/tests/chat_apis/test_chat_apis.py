@@ -15,6 +15,7 @@ from starlette import status
 from app.core import config
 from app.models.analysis import Analysis, AnalysisStatus, AnalysisWarning, DrugGuide, ReviewStatus
 from app.models.chat import ChatMessage, ChatSession, MessageRole, MessageStatus
+from app.models.masters import DrugProduct
 from app.models.ocr import PrescriptionItem
 from app.models.users import ConsentType, UserConsent
 from app.services import chat_photo, chats, safety
@@ -582,6 +583,7 @@ class TestFixedInfo(ChatCase):
                 "analysisId"
             ]
             rx = await self.prescription(user, ["641900040"], ("I10",))
+            await DrugProduct.filter(edi_code="641900040").update(class_code="214")  # 약효분류도 고정 정보로 감 (11/3)
             second = (await self.start(client, headers, rx)).json()["analysisId"]
             sid = await self.session(client, headers, analysisId=first)
             body = {"analysisId": second, "clientRequestId": "ctx"}
@@ -590,6 +592,7 @@ class TestFixedInfo(ChatCase):
         info = self.fake.calls[0]["info"]
         assert [d.code for d in info.drugs] == ["641900040"]  # 가장 최근에 붙은 맥락 카드의 분석
         assert info.drugs[0].name.startswith("노바스크정") and info.drugs[0].purpose == "혈압 관리에 쓰는 약이에요"
+        assert info.drugs[0].class_code == "214"
         assert info.disease_ids == ["HTN"] and info.age is not None
 
     async def test_card_drug_is_the_focus_drug(self):

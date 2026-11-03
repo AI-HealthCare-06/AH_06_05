@@ -17,6 +17,7 @@ from app.services.chatbot.answer import (
     SPEECH,
     THANKS,
     clean_text,
+    drop_other_class,
     drop_substitutes,
     output_guard,
 )
@@ -1211,6 +1212,8 @@ def test_lifestyle_substitutes_are_kept(content):
         "노바스크 대신 다른 약을 권해 드릴 수는 없어요.",
         "이 약 대신 다른 약을 드시면 안 돼요.",
         "다른 약을 대신 추천해 드리기는 어려워요.",
+        "그 약 대신 타이레놀을 권하지 않았어요.",
+        "그 약 대신 타이레놀을 권하지 않는데, 약사에게 물어보세요.",
     ],
 )
 def test_refusing_to_substitute_is_kept(content):
@@ -1224,10 +1227,14 @@ def test_refusing_to_substitute_is_kept(content):
         "대신 타이레놀을 드시면 문제없어요.",
         "대신 타이레놀을 드셔도 부담 없어요.",
         "대신 타이레놀을 드셔도 나쁘지 않아요.",
+        "그 약 대신 타이레놀을 권하지 않지만 드셔도 돼요.",
+        "그 약 대신 타이레놀을 권하지 않으나 드셔도 괜찮아요.",
+        "그 약 대신 타이레놀을 권하지 않았지만 드셔도 돼요.",
     ],
 )
 def test_substitute_with_reassurance_is_still_dropped(content):
-    """권하는 말 뒤에 "없", "않"이 있어도 안심시키는 말이면 권하는 문장이라 뺌 (거절 예외를 좁힘, 11/2 점검)"""
+    """권하는 말 뒤에 "없", "않"이 있어도 안심시키는 말이면 권하는 문장이라 뺌 (거절 예외를 좁힘, 11/2 점검).
+    거절 뒤에 "지만", "으나"로 권유가 이어지는 문장도 뺌 (#203 채연 제안)"""
     assert drop_substitutes(content, S0) == ""
 
 
@@ -1350,3 +1357,53 @@ async def test_other_class_filter_keeps_all_when_no_drugs_or_class_matched_by_na
         "노바스크 같이 먹으면 안 되는 약 있어요?", keto, [], chat2, search=FakeSearch(found(ACE_LINE, NSAID_LINE))
     )
     assert "ACE 저해제" not in chat2.seen["answer"] and "소염진통제" in chat2.seen["answer"]
+
+
+DIURETIC_LINE = Evidence(
+    "D:641900040:S11",
+    "drug_permit",
+    "641900040",
+    None,
+    "S",
+    "상호작용",
+    "이뇨제와 병용 시 혈압이 지나치게 떨어질 수 있다",
+)
+
+
+@sync
+async def test_class_code_keeps_sentences_for_unlisted_drugs_of_that_class():
+    """이름 목록에 없는 소염진통제(클로닉신)도 약효분류 114면 소염진통제 문장을 남김. 코드가 없으면 전처럼 빠짐.
+    혈압약은 모두 214라 코드로 가르지 않아 ACE 문장은 이름 목록대로 빠짐 (11/3)"""
+    clonixin = UserDrug("클로닉정", "클로닉신리시네이트", "진통", "1일 3회 식후", class_code="114")
+    chat = FakeChat()
+    await answer(
+        "노바스크 같이 먹으면 안 되는 약 있어요?",
+        replace(S0, drugs=[*S0.drugs, clonixin]),
+        [],
+        chat,
+        search=FakeSearch(found(ACE_LINE, NSAID_LINE)),
+    )
+    assert "소염진통제" in chat.seen["answer"] and "ACE 저해제" not in chat.seen["answer"]
+    chat2 = FakeChat()
+    await answer(
+        "노바스크 같이 먹으면 안 되는 약 있어요?",
+        replace(S0, drugs=[*S0.drugs, replace(clonixin, class_code="")]),
+        [],
+        chat2,
+        search=FakeSearch(found(ACE_LINE, NSAID_LINE)),
+    )
+    assert "소염진통제" not in chat2.seen["answer"]
+
+
+def test_class_code_is_checked_by_first_three_digits_and_keeps_the_safe_side():
+    """213이면 이뇨제 문장을 남김. 114에는 아세트아미노펜 같은 해열진통제도 들어 있어 그 약만 먹어도 소염진통제 문장이 남음
+    (빼는 쪽이 아니라 남기는 쪽이라 안전). 급여목록의 분류 열은 세 자리라 앞 세 자리로 봄 (11/3)"""
+    lasix = replace(
+        S0, drugs=[*S0.drugs, UserDrug("라식스정40밀리그램", "푸로세미드", "이뇨", "1일 1회 아침", class_code="213")]
+    )
+    assert drop_other_class([DIURETIC_LINE, NSAID_LINE], lasix) == [DIURETIC_LINE]
+    apap = replace(
+        S0, drugs=[*S0.drugs, UserDrug("타이레놀정500밀리그램", "아세트아미노펜", "진통", "1일 3회", class_code="1140")]
+    )
+    assert drop_other_class([DIURETIC_LINE, NSAID_LINE], apap) == [NSAID_LINE]
+    assert drop_other_class([DIURETIC_LINE, NSAID_LINE], S0) == []
