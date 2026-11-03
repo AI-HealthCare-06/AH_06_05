@@ -7,7 +7,7 @@ import { getMe } from '@/features/common/api';
 import { useFlow } from '@/features/ocr/flow';
 import { PICKABLE_DISEASES } from '@/features/rag/diseases';
 import { getAnalysis, putDiseases, retryAnalysis, sendGuideFeedback } from '@/features/rag/api';
-import type { Action, AnalysisResult, Severity, Warning } from '@/features/rag/types';
+import type { Action, AnalysisResult, GuideFeedback, Severity, Warning } from '@/features/rag/types';
 import { ApiError } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
 import { drugLabel } from '@/shared/drugName';
@@ -248,40 +248,40 @@ function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResu
           <Text style={T.body}>{e.reason === 'not_oral' ? r.notOralBody : r.notFoundBody}</Text>
         </Card>
       ))}
-      {data.medication.guideId > 0 && <GuideFeedbackBox guideId={data.medication.guideId} />}
+      {data.medication.guideId > 0 && <GuideFeedbackBox guideId={data.medication.guideId} saved={data.medication.feedback ?? null} />}
     </View>
   );
 }
 
-// RG-04 안내문 피드백 (R-9). 다시 보내면 서버가 앞의 것을 덮어씀
-function GuideFeedbackBox({ guideId }: { guideId: number }) {
-  const [rating, setRating] = useState<1 | -1 | null>(null);
-  const [comment, setComment] = useState('');
+// RG-04 안내문 피드백 (R-9). 한 번 보내면 이 화면에서는 막음 (서버는 사람당 안내문 하나에 의견 하나만 남기고 다시 보내면 덮어씀)
+function GuideFeedbackBox({ guideId, saved }: { guideId: number; saved: GuideFeedback | null }) {
+  const [rating, setRating] = useState<1 | -1 | null>(saved?.rating ?? null);
+  const [comment, setComment] = useState(saved?.comment ?? '');
   const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [sent, setSent] = useState(saved !== null); // 서버가 "이미 보냈음"을 알려 주면 다시 열어도 막힌 채로 보여 줌
   const [err, setErr] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+  const sending = useRef(false); // 빠르게 두 번 눌러도 한 번만 보냄
   const send = async () => {
-    if (rating === null) return;
+    if (rating === null || sending.current || sent) return;
+    sending.current = true;
     try {
       setBusy(true);
       setErr(null);
       await sendGuideFeedback(guideId, rating, comment.trim() || undefined);
-      setSent(true); // "의견을 보냈어요."를 2초만 보여 줌. 다시 보내면 앞의 의견을 덮어씀(R-9)
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setSent(false), 2000);
+      setSent(true); // 보낸 뒤에는 고르기 · 입력 · 보내기를 모두 막고 "의견을 보냈어요."를 계속 보여 줌
     } catch (e) {
-      setErr(errText(e));
+      if (e instanceof ApiError && e.code === 'FEEDBACK_ALREADY_SENT') setSent(true); // 다른 화면에서 이미 보낸 경우: 서버가 거절하면 막힌 상태로 바꿈
+      else setErr(errText(e));
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   };
   return (
     <Card style={{ gap: 4 }}>
       <Text style={T.label}>{r.feedbackTitle}</Text>
-      <Radio on={rating === 1} label={r.feedbackYes} onPress={() => setRating(1)} />
-      <Radio on={rating === -1} label={r.feedbackNo} onPress={() => setRating(-1)} />
+      <Radio on={rating === 1} label={r.feedbackYes} onPress={() => setRating(1)} disabled={sent} />
+      <Radio on={rating === -1} label={r.feedbackNo} onPress={() => setRating(-1)} disabled={sent} />
       <TextInput
         accessibilityLabel={r.feedbackComment}
         placeholder={r.feedbackComment}
@@ -290,10 +290,11 @@ function GuideFeedbackBox({ guideId }: { guideId: number }) {
         onChangeText={setComment}
         maxLength={500}
         multiline
-        style={{ minHeight: 64, borderWidth: 1, borderColor: C.border, borderRadius: R.control, padding: 12, fontSize: 16, color: C.text }}
+        editable={!sent}
+        style={{ minHeight: 64, borderWidth: 1, borderColor: C.border, borderRadius: R.control, padding: 12, fontSize: 16, color: C.text, opacity: sent ? 0.5 : 1 }}
       />
       {err && <Text style={[T.caption, { color: C.danger }]}>※ {err}</Text>}
-      <Btn label={r.feedbackSend} disabled={rating === null || busy} onPress={send} style={{ marginTop: 8 }} />
+      <Btn label={sent ? r.feedbackSent : r.feedbackSend} disabled={sent || rating === null || busy} onPress={send} style={{ marginTop: 8 }} />
       {sent && (
         <Text style={[T.caption, { color: C.success, textAlign: 'center', marginTop: 8 }]} accessibilityLiveRegion="polite">
           {r.feedbackThanks}

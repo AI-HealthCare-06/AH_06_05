@@ -151,7 +151,7 @@ class TestFeedback(AnalysisCase):
         aid = (await self.start(client, headers, rx)).json()["analysisId"]
         return (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()["medication"]["guideId"]
 
-    async def test_feedback_created_then_overwritten(self):
+    async def test_feedback_is_accepted_only_once(self):
         async with self.client() as client:
             headers, user = await self.auth(client, "g1@example.com")
             gid = await self._guide_id(client, headers, user)
@@ -166,10 +166,79 @@ class TestFeedback(AnalysisCase):
             res2 = await client.post(
                 f"/api/v1/guides/{gid}/feedback", json={"rating": 1, "comment": " "}, headers=headers
             )
-            assert res2.status_code == 201 and res2.json()["feedbackId"] == res.json()["feedbackId"]
+            assert res2.status_code == status.HTTP_409_CONFLICT
+            assert res2.json()["error"]["code"] == "FEEDBACK_ALREADY_SENT"  # 한 번 보냈으면 다시 받지 않음
             assert await GuideFeedback.filter(guide_id=gid).count() == 1
             row = await GuideFeedback.get(guide_id=gid)
-            assert row.rating == 1 and row.comment is None
+            assert row.rating == -1 and row.comment == "글씨가 더 컸으면 좋겠어요"  # 처음 보낸 의견이 그대로
+
+    async def test_result_tells_if_this_user_already_sent_feedback(self):
+        """분석 결과에 내가 보낸 의견이 들어 있어, 앱이 다시 열어도 보내기를 막을 수 있다"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "g6@example.com")
+            rx = await self.prescription(user, ["641900040"], ("I10",))
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            before = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+            gid = before["medication"]["guideId"]
+            await client.post(
+                f"/api/v1/guides/{gid}/feedback", json={"rating": -1, "comment": " 글씨가 작아요 "}, headers=headers
+            )
+            after = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+            resend = await client.post(f"/api/v1/guides/{gid}/feedback", json={"rating": 1}, headers=headers)
+            again = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+        assert resend.status_code == status.HTTP_409_CONFLICT
+        assert before["medication"]["feedback"] is None and before["lifestyle"]["feedback"] is None
+        assert after["medication"]["feedback"] == {"rating": -1, "comment": "글씨가 작아요"}
+        assert after["lifestyle"]["feedback"] is None  # 다른 안내문 것은 따로
+        assert again["medication"]["feedback"] == {
+            "rating": -1,
+            "comment": "글씨가 작아요",
+        }  # 다시 보내도 처음 것이 남음
+
+    async def test_same_prescription_again_is_blocked_but_other_set_is_allowed(self):
+        """같은 처방전(중복 사진 포함)으로 다시 분석해도 못 보내고, 처방전 묶음이 다르면(A+B) 보낼 수 있다"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "g9@example.com")
+            rx_a = await self.prescription(user, ["641900040"], ("I10",))
+            rx_b = await self.prescription(user, ["645600020"], ("E11",), "△△의원")
+
+            async def analyse(*rxs):
+                aid = (await self.start(client, headers, *rxs)).json()["analysisId"]
+                return aid, (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+
+            async def send(gid):
+                return await client.post(f"/api/v1/guides/{gid}/feedback", json={"rating": 1}, headers=headers)
+
+            _, a1 = await analyse(rx_a)
+            assert (await send(a1["medication"]["guideId"])).status_code == status.HTTP_201_CREATED
+            _, a2 = await analyse(rx_a)  # 같은 처방전으로 다시 분석 (중복 사진을 올린 경우도 같은 처방전)
+            assert a2["medication"]["guideId"] != a1["medication"]["guideId"]
+            assert a2["medication"]["feedback"] == {"rating": 1, "comment": None}  # 앱이 처음부터 막힌 채로 보여 줌
+            again = await send(a2["medication"]["guideId"])
+            assert (
+                again.status_code == status.HTTP_409_CONFLICT
+                and again.json()["error"]["code"] == "FEEDBACK_ALREADY_SENT"
+            )
+            _, ab = await analyse(rx_a, rx_b)  # 처방전 묶음이 다름
+            assert ab["medication"]["feedback"] is None
+            assert (await send(ab["medication"]["guideId"])).status_code == status.HTTP_201_CREATED
+            _, ab2 = await analyse(rx_b, rx_a)  # 순서가 달라도 같은 묶음
+            assert ab2["medication"]["feedback"] == {"rating": 1, "comment": None}
+            _, b_only = await analyse(rx_b)  # A+B로 보냈어도 B만은 다른 묶음
+            assert b_only["medication"]["feedback"] is None
+            assert await GuideFeedback.filter(user=user).count() == 2
+
+    async def test_other_users_feedback_is_not_shown(self):
+        """같은 안내문이 아니어도 남의 의견은 내 결과에 보이지 않는다 (사람마다 따로)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "g7@example.com")
+            other_headers, other = await self.auth(client, "g8@example.com")
+            rx = await self.prescription(user, ["641900040"], ("I10",))
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            gid = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()["medication"]["guideId"]
+            await GuideFeedback.create(guide_id=gid, user=other, rating=1, comment="남의 의견")
+            mine = (await client.get(f"/api/v1/analyses/{aid}", headers=headers)).json()
+        assert mine["medication"]["feedback"] is None
 
     async def test_validation_and_ownership(self):
         async with self.client() as client:

@@ -259,13 +259,14 @@ export function Field({
   );
 }
 
-export function Radio({ on, label, onPress }: { on: boolean; label: string; onPress: () => void }) {
+export function Radio({ on, label, onPress, disabled }: { on: boolean; label: string; onPress: () => void; disabled?: boolean }) {
   return (
     <Pressable
       accessibilityRole="radio"
-      accessibilityState={{ checked: on }}
+      accessibilityState={{ checked: on, disabled: !!disabled }}
+      disabled={disabled}
       onPress={onPress}
-      style={[st.row, { minHeight: L.touch, paddingRight: 16 }]}
+      style={[st.row, { minHeight: L.touch, paddingRight: 16 }, disabled && { opacity: 0.5 }]}
     >
       <Text style={{ fontSize: 18, color: on ? C.p600 : C.text3 }}>{on ? '●' : '○'}</Text>
       <Text style={T.body}>{label}</Text>

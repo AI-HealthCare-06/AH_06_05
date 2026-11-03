@@ -10,7 +10,7 @@ import asyncio
 import base64
 import json
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -380,6 +380,40 @@ async def _guide_content(a: Analysis, section: GuideSection) -> tuple[int, str, 
     return g.id, "done", g.content
 
 
+async def _same_rx_analysis_ids(user: User, analysis_id: int) -> list[int]:
+    """같은 처방전 묶음(A만, A+B처럼 장 구성이 똑같은)으로 만든 이 사용자의 분석 id, 자기 자신 포함.
+    중복 사진을 올려 다시 분석해도 같은 처방전이라 같은 묶음. A와 A+B는 다른 묶음"""
+    mine = set(await AnalysisPrescription.filter(analysis_id=analysis_id).values_list("prescription_id", flat=True))
+    if not mine:
+        return [analysis_id]
+    near = set(
+        await AnalysisPrescription.filter(analysis__user_id=user.id, prescription_id__in=mine).values_list(
+            "analysis_id", flat=True
+        )
+    )
+    sets: dict[int, set[int]] = defaultdict(set)
+    for aid, rid in await AnalysisPrescription.filter(analysis_id__in=near).values_list(
+        "analysis_id", "prescription_id"
+    ):
+        sets[aid].add(rid)
+    return [aid for aid, ids in sets.items() if ids == mine] or [analysis_id]
+
+
+async def _sent_feedback(user: User, analysis_id: int) -> dict[GuideSection, dict[str, Any]]:
+    """R-9 이 사용자가 같은 처방전 묶음의 안내문에 이미 남긴 의견 (안내문 종류별, 없으면 키가 없음).
+    앱이 다시 열거나 중복 사진으로 다시 분석해도 보내기를 막는 데 씀"""
+    same = await _same_rx_analysis_ids(user, analysis_id)
+    rows = (
+        await GuideFeedback.filter(user=user, guide__analysis_id__in=same)
+        .order_by("-created_at")
+        .prefetch_related("guide")
+    )
+    out: dict[GuideSection, dict[str, Any]] = {}
+    for fb in rows:
+        out.setdefault(fb.guide.section, {"rating": fb.rating, "comment": fb.comment})  # type: ignore[attr-defined]
+    return out
+
+
 def _empty_lifestyle() -> dict[str, Any]:
     return {"diseases": [], "medicationLinks": [], "sections": [], "warningSigns": [], "sources": []}
 
@@ -414,6 +448,7 @@ async def get_result(user: User, analysis_id: int) -> dict[str, Any]:
     checked = _checked_count(items)
     med_id, med_status, med = await _guide_content(a, GuideSection.MEDICATION)
     life_id, life_status, life = await _guide_content(a, GuideSection.LIFESTYLE)
+    mine = await _sent_feedback(user, a.id)
     counts = Counter(w.severity for w in rows)
     return {
         "analysisId": a.id,
@@ -428,8 +463,18 @@ async def get_result(user: User, analysis_id: int) -> dict[str, Any]:
         "excludedDrugs": excluded,
         "warnings": [_warning_card(w, by_id) for w in rows],
         "checkedItems": [{"type": t, "label": label, "state": "checked"} for t, label in CHECKED_ITEMS],
-        "medication": {"guideId": med_id, "status": med_status, **(med or {"items": []})},
-        "lifestyle": {"guideId": life_id, "status": life_status, **await _lifestyle_view(a, life)},
+        "medication": {
+            "guideId": med_id,
+            "feedback": mine.get(GuideSection.MEDICATION),
+            "status": med_status,
+            **(med or {"items": []}),
+        },
+        "lifestyle": {
+            "guideId": life_id,
+            "feedback": mine.get(GuideSection.LIFESTYLE),
+            "status": life_status,
+            **await _lifestyle_view(a, life),
+        },
         "disclaimer": DISCLAIMER,
     }
 
@@ -599,10 +644,18 @@ async def delete_analysis(user: User, analysis_id: int) -> None:
 
 # ── R-9 안내문 피드백 ─────────────────────────────────────────────────────────────────────────
 async def save_feedback(user: User, guide_id: int, rating: int, comment: str | None) -> int:
-    """한 사람이 안내문 하나에 하나만 남김 — 다시 보내면 앞의 것을 덮어씀"""
+    """같은 처방전 묶음에는 한 사람이 한 번만 남김 — 이미 보냈으면 409 (11/3 멘토 피드백: 무분별한 의견 막기).
+    중복 사진을 올려 다시 분석한 안내문도 같은 묶음. A만 보낸 사람이 A+B로 분석하면 다른 묶음이라 다시 보낼 수 있음"""
     guide = await Guide.get_or_none(id=guide_id, analysis__user_id=user.id)
     if guide is None:
         raise AppError(status.HTTP_404_NOT_FOUND, "NOT_FOUND")
     text = (comment or "").strip() or None
-    fb, _ = await GuideFeedback.update_or_create(guide=guide, user=user, defaults={"rating": rating, "comment": text})
+    same = await _same_rx_analysis_ids(user, guide.analysis_id)  # type: ignore[attr-defined]
+    if await GuideFeedback.filter(user=user, guide__analysis_id__in=same, guide__section=guide.section).exists():
+        raise AppError(status.HTTP_409_CONFLICT, "FEEDBACK_ALREADY_SENT", "이미 의견을 보냈어요.")
+    fb, created = await GuideFeedback.get_or_create(
+        guide=guide, user=user, defaults={"rating": rating, "comment": text}
+    )  # 동시에 두 번 눌러도 (guide, user) 유일 제약으로 하나만 저장됨
+    if not created:
+        raise AppError(status.HTTP_409_CONFLICT, "FEEDBACK_ALREADY_SENT", "이미 의견을 보냈어요.")
     return fb.id
