@@ -30,12 +30,13 @@ export default function ChallengeSelect() {
       setError(null);
       const list = await getRecommendations(analysisId);
       setData(list);
-      // 이미 정한 목표가 있으면 그것들을, 처음이면 추천된 실천을 모두 미리 골라 둠 (빼거나 더할 수 있게). 못 불러오면 빈 선택으로 시작
+      // 정한 목표가 없을 때만 추천된 실천을 모두 미리 골라 둠 (빼거나 더할 수 있게). 정한 목표가 있으면 그중 이번 추천과
+      // 겹치는 것만 고르고 겹치는 게 없으면 빈 선택(서버 P-2가 안 고른 목표를 끝내서 전 목표가 모르게 끝나지 않도록). 못 불러오면 빈 선택
       try {
         const t = await getToday();
         const titles = new Set(t.items.map((i) => i.title));
         const had = list.items.filter((i) => titles.has(i.title));
-        setPicked((had.length > 0 ? had : list.items).map((i) => i.id).slice(0, MAX));
+        setPicked((t.items.length > 0 ? had : list.items).map((i) => i.id).slice(0, MAX));
       } catch {
         // 선택 없음
       }
