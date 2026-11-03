@@ -23,6 +23,9 @@ BRAND_MIN = 0.70  # 이름 앞부분(숫자 앞)의 글자 조각이 후보와 �
 SIBLING_CHOICES = 5  # 형제 약 확인에서 보여 주는 후보 수 (읽은 이름의 약 + 형제들). 형제가 많은 이름은 3개로는 진짜 약이 빠짐 (측정: 83% → 94%)
 MIN_SIBLING_LEN = 3  # 이보다 짧은 상표 이름은 형제로 보지 않음 (너무 짧으면 거의 모든 이름이 형제가 됨)
 AMBIGUOUS_GAP = 0.03  # 1등과 2등 점수 차가 이보다 작고 서로 다른 약이면 사용자에게 고르게 한다
+SEARCH_TYPO_MIN_LEN = (
+    4  # 글자 하나 오타 보완은 이름이 이만큼 길 때만 (짧은 이름은 한 글자만 달라도 다른 약이라 엉뚱한 약이 나옴)
+)
 SEARCH_MIN_LEN = 2  # 사용자가 직접 치는 검색은 2글자부터 (OCR 이름 맞추기의 MIN_LEN 4와 따로)
 
 # 2차 "비슷한 이름 추천" (pg_trgm 방식 자모 3개 조각 유사도): 규칙이 못 찾은 이름만, 사용자가 고르는 후보로만 내놓는다 (자동 확정 안 함)
@@ -45,6 +48,66 @@ def trigrams(s: str) -> frozenset[str]:
         p = f"  {w} "
         out.update(sys.intern(p[i : i + 3]) for i in range(len(p) - 2))
     return frozenset(out)
+
+
+_CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+_JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
+_JONG = (
+    "",
+    "ㄱ",
+    "ㄲ",
+    "ㄳ",
+    "ㄴ",
+    "ㄵ",
+    "ㄶ",
+    "ㄷ",
+    "ㄹ",
+    "ㄺ",
+    "ㄻ",
+    "ㄼ",
+    "ㄽ",
+    "ㄾ",
+    "ㄿ",
+    "ㅀ",
+    "ㅁ",
+    "ㅂ",
+    "ㅄ",
+    "ㅅ",
+    "ㅆ",
+    "ㅇ",
+    "ㅈ",
+    "ㅊ",
+    "ㅋ",
+    "ㅌ",
+    "ㅍ",
+    "ㅎ",
+)
+
+
+def jamo(s: str) -> str:
+    """한글 글자를 자음·모음(호환 자모)으로 풀어 한 줄로 이음. 받침과 다음 글자의 첫 자음이 같은 글자(폴 ↔ 포르)가 되게 NFD가 아니라 호환 자모로 푼다"""
+    out: list[str] = []
+    for ch in s:
+        o = ord(ch) - 0xAC00
+        if 0 <= o < 11172:
+            out.append(_CHO[o // 588] + _JUNG[o % 588 // 28] + _JONG[o % 28])
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def one_edit(a: str, b: str) -> bool:
+    """두 글자 줄이 글자 하나를 바꾸거나 넣거나 빼서 같아지는가 (같아도 True)"""
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    i = 0
+    n = min(la, lb)
+    while i < n and a[i] == b[i]:
+        i += 1
+    if la == lb:
+        return a[i + 1 :] == b[i + 1 :]
+    return a[i + 1 :] == b[i:] if la > lb else a[i:] == b[i + 1 :]
 
 
 def similarity(a: frozenset[str], b: frozenset[str]) -> float:
@@ -136,6 +199,7 @@ class NameMatcher:
         self._base = [base_name(nm) for _, nm in products]  # 이름이 글자 그대로 같은 제품을 동점에서 먼저 고르는 데 씀
         self._tidx: list[tuple[str, str, frozenset[str]]] | None = None
         self._skeys: list[str] | None = None
+        self._tindex2: tuple[list[tuple[str, list[int]]], list[tuple[str, list[int]]]] | None = None
         self._hidx: list[tuple[str, str, frozenset[str]]] | None = None
         self._ingr = ingredients
         self._sib: dict[str, list[str]] | None = None
@@ -313,7 +377,49 @@ class NameMatcher:
         if dec.status != NOT_FOUND:
             return SearchResult(False, [c for c in dec.candidates if c.score >= NOT_FOUND_BELOW][:size])
         sim = self.similar(query, top_n=min(max(size, 3), 5))
-        return SearchResult(False, list(sim.candidates) if sim else [])
+        if sim:
+            return SearchResult(False, list(sim.candidates))
+        return SearchResult(False, self._typo_search(q, size))
+
+    def _typo_search(self, q: str, size: int) -> list[Candidate]:
+        """친 글자가 상표 이름이나 성분 이름의 앞부분과 자음·모음 하나만 다른 약 (노바스그 → 노바스크정, 암로디판 → 암로디핀).
+        다른 방법이 아무것도 못 찾았을 때만 쓰고, 사용자가 고르는 후보로만 내놓는다. 이름(숫자·괄호 앞)이 4글자 이상일 때만.
+        상표 이름이 맞은 약을 성분 이름이 맞은 약보다 먼저 보여 준다"""
+        name = re.split(r"[\d(]", q)[0]
+        if len(name) < SEARCH_TYPO_MIN_LEN:
+            return []
+        qj = jamo(name)
+        n = len(qj)
+        keys = self._search_keys()
+        hits: list[tuple[int, int, str, int]] = []
+        for kind, entries in enumerate(self._typo_index()):
+            for head, ids in entries:
+                if any(one_edit(qj, head[:m]) for m in (n - 1, n, n + 1)):
+                    hits.extend((kind, len(keys[i]), keys[i], i) for i in ids)
+        hits.sort()
+        seen: set[int] = set()
+        out: list[Candidate] = []
+        for _, _, _, i in hits:
+            if i not in seen:
+                seen.add(i)
+                out.append(Candidate(self._idx[i][0], self._idx[i][1], 0.65))
+            if len(out) >= max(size, 1):
+                break
+        return out
+
+    def _typo_index(self) -> tuple[list[tuple[str, list[int]]], list[tuple[str, list[int]]]]:
+        """(상표 이름의 자모, 그 이름의 제품 번호들)과 (성분 이름의 자모, 제품 번호들) 목록. 같은 이름은 한 번만 비교하려고 묶음 (처음 쓸 때 한 번 만듦)"""
+        idx = self._tindex2
+        if idx is None:
+            brands: dict[str, list[int]] = defaultdict(list)
+            ingrs: dict[str, list[int]] = defaultdict(list)
+            for i, (_, nm, _) in enumerate(self._idx):
+                brands[jamo(unify(_brand(nm)))].append(i)
+                text = _ingredient_text(nm)
+                if text:
+                    ingrs[jamo(text)].append(i)
+            idx = self._tindex2 = (list(brands.items()), list(ingrs.items()))
+        return idx
 
     def _short_exact(self, qb: str) -> Decision:
         """짧은 이름(3글자: 울셋정 · 코푸정 · 아트정 등 급여목록에 실제로 있음)은 비슷한 이름을 찾으면 엉뚱한 약이 나오기 쉬워서,
