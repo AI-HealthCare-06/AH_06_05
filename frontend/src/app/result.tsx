@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 
 import { useChatLauncher } from '@/features/chatbot/launcher';
+import { getMe } from '@/features/common/api';
 import { useFlow } from '@/features/ocr/flow';
 import { PICKABLE_DISEASES } from '@/features/rag/diseases';
 import { getAnalysis, putDiseases, retryAnalysis, sendGuideFeedback } from '@/features/rag/api';
@@ -312,6 +313,8 @@ const Actions = ({ actions }: { actions: Action[] }) => (
 
 function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult; analysisId: number; onChange: (l: Lifestyle) => void; onRetried: () => void }) {
   const router = useRouter();
+  const [editInitial, setEditInitial] = useState<string[] | null>(null); // 질환 추가 중이면 미리 체크해 둘 질환 코드 (RG-05-E1 미리 채움)
+  const editing = editInitial !== null;
   const life = data.lifestyle;
   if (life.status === 'failed') return <GuideFailed analysisId={analysisId} onRetried={onRetried} />;
   const linkCard = life.medicationLinks.length > 0 && (
@@ -350,14 +353,51 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
     : rxCodes.length === 0
       ? r.diseaseFromProfile
       : `${hasProfile ? r.diseaseFromBoth : r.diseaseFrom} (${rxCodes.join(', ')})`;
+  // 질환 추가: 확인한 질환과 지금 내 정보의 질환을 미리 체크해 둠. 내 정보를 못 불러오면 확인한 질환만
+  const startEdit = async () => {
+    const fromAnalysis = PICKABLE_DISEASES.filter((p) => life.diseases.some((d) => d.name === p.name)).map((p) => p.code);
+    let fromProfile: string[] = [];
+    try {
+      const me = await getMe();
+      fromProfile = PICKABLE_DISEASES.filter((p) => (me.health.diseases as string[]).includes(p.id)).map((p) => p.code);
+    } catch {
+      // 확인한 질환만 미리 체크
+    }
+    setEditInitial([...new Set([...fromAnalysis, ...fromProfile])]);
+  };
   const nameOf = (code: string) => life.diseases.find((d) => d.code === code)?.name ?? code;
   return (
     <View style={{ marginTop: 12, gap: 12 }}>
       <Card style={{ gap: 4 }}>
-        <Text style={T.small}>{r.foundDiseases}</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text style={T.small}>{r.foundDiseases}</Text>
+          {!editing && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={r.editDisease}
+              hitSlop={10}
+              onPress={startEdit}
+              style={{ backgroundColor: C.p50, borderRadius: R.chip, paddingHorizontal: 10, paddingVertical: 4 }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '700', color: C.p700 }}>{r.editDisease}</Text>
+            </Pressable>
+          )}
+        </View>
         <Text style={T.subhead}>{life.diseases.map((d) => d.name).join(', ')}</Text>
         <Text style={T.caption}>{fromText}</Text>
       </Card>
+      {editInitial !== null && (
+        <DiseasePicker
+          analysisId={analysisId}
+          editing
+          initial={editInitial}
+          onChange={(l) => {
+            setEditInitial(null);
+            onChange(l);
+          }}
+          onCancel={() => setEditInitial(null)}
+        />
+      )}
       {life.sections.some((s) => s.conflict) &&
         life.sections.filter((s) => s.conflict).map((s, i) => (
           <Card key={i} tone="caution">
@@ -404,13 +444,27 @@ function Life({ data, analysisId, onChange, onRetried }: { data: AnalysisResult;
 }
 
 // RG-05-E1 질병분류기호가 없을 때 사용자가 직접 질환 고르기 (R-6)
-function DiseasePicker({ analysisId, onChange }: { analysisId: number; onChange: (l: Lifestyle) => void }) {
-  const [picks, setPicks] = useState<string[]>([]); // 여러 질환을 고를 수 있음 (서버 R-6은 질환 코드 목록을 받음)
+// editing이면 확인한 질환에 체크를 미리 해 두고 더하거나 뺌 (이 분석에만 적용, 내 정보는 그대로)
+function DiseasePicker({
+  analysisId,
+  onChange,
+  initial = [],
+  editing = false,
+  onCancel,
+}: {
+  analysisId: number;
+  onChange: (l: Lifestyle) => void;
+  initial?: string[];
+  editing?: boolean;
+  onCancel?: () => void;
+}) {
+  const [picks, setPicks] = useState<string[]>(initial); // 여러 질환을 고를 수 있음 (서버 R-6은 질환 코드 목록을 받음)
   const [none, setNone] = useState(false); // "해당 없음"은 다른 선택과 같이 고를 수 없음
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const canApply = picks.length > 0 || editing; // 추가 화면에서는 체크를 모두 풀어 질환을 모두 뺄 수도 있음
   const apply = async () => {
-    if (picks.length === 0) return;
+    if (!canApply) return;
     try {
       setBusy(true);
       setErr(null);
@@ -424,6 +478,7 @@ function DiseasePicker({ analysisId, onChange }: { analysisId: number; onChange:
   return (
     <Card>
       <Text style={T.label}>{r.pickDisease}</Text>
+      {editing && <Text style={T.caption}>{r.editDiseaseNote}</Text>}
       {PICKABLE_DISEASES.map((d) => (
         <Check
           key={d.code}
@@ -435,16 +490,19 @@ function DiseasePicker({ analysisId, onChange }: { analysisId: number; onChange:
           }}
         />
       ))}
-      <Check
-        on={none}
-        label={r.pickNone}
-        onPress={() => {
-          setNone(!none);
-          setPicks([]);
-        }}
-      />
+      {!editing && (
+        <Check
+          on={none}
+          label={r.pickNone}
+          onPress={() => {
+            setNone(!none);
+            setPicks([]);
+          }}
+        />
+      )}
       {err && <Text style={[T.caption, { color: C.danger }]}>※ {err}</Text>}
-      <Btn label={r.pickApply} disabled={picks.length === 0 || busy} onPress={apply} style={{ marginTop: 8 }} />
+      <Btn label={r.pickApply} disabled={!canApply || busy} onPress={apply} style={{ marginTop: 8 }} />
+      {editing && <Btn label={r.editDiseaseCancel} kind="secondary" disabled={busy} onPress={() => onCancel?.()} />}
     </Card>
   );
 }
