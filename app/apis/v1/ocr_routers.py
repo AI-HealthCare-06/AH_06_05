@@ -64,5 +64,5 @@ async def search_drugs(
     q: Annotated[str, Query(min_length=1, max_length=100)],
     size: Annotated[int, Query(ge=1, le=20)] = 5,
 ) -> DrugSearchResponse:
-    """O-4 — 약 이름 검색 (오타 · 띄어쓰기 · mg/밀리그람 섞여도 됨)"""
+    """O-4 — 약 이름 검색 (앞 2글자부터 · 성분명 · 용량 포함 · 오타 · mg/밀리그람 섞여도 됨)"""
     return DrugSearchResponse.model_validate(await svc.search_drugs(q, size))

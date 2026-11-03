@@ -23,6 +23,7 @@ BRAND_MIN = 0.70  # 이름 앞부분(숫자 앞)의 글자 조각이 후보와 �
 SIBLING_CHOICES = 5  # 형제 약 확인에서 보여 주는 후보 수 (읽은 이름의 약 + 형제들). 형제가 많은 이름은 3개로는 진짜 약이 빠짐 (측정: 83% → 94%)
 MIN_SIBLING_LEN = 3  # 이보다 짧은 상표 이름은 형제로 보지 않음 (너무 짧으면 거의 모든 이름이 형제가 됨)
 AMBIGUOUS_GAP = 0.03  # 1등과 2등 점수 차가 이보다 작고 서로 다른 약이면 사용자에게 고르게 한다
+SEARCH_MIN_LEN = 2  # 사용자가 직접 치는 검색은 2글자부터 (OCR 이름 맞추기의 MIN_LEN 4와 따로)
 
 # 2차 "비슷한 이름 추천" (pg_trgm 방식 자모 3개 조각 유사도): 규칙이 못 찾은 이름만, 사용자가 고르는 후보로만 내놓는다 (자동 확정 안 함)
 # 기준은 오타 시뮬레이션 + 음성 대조로 정함 (docs/design/ocr_fuzzy_match.md)
@@ -116,6 +117,12 @@ class Decision:
     sibling: bool = False  # 이름이 글자 하나 차이인 다른 성분의 약이 있어 사용자가 고르게 함 (아래 NameMatcher.decide)
 
 
+@dataclass(frozen=True)
+class SearchResult:
+    exact: bool  # 친 이름이 제품명과 (표기를 통일하면) 똑같음 → candidates는 그 약 하나
+    candidates: list[Candidate]
+
+
 class NameMatcher:
     def __init__(
         self,
@@ -128,6 +135,7 @@ class NameMatcher:
         self._idx = [(edi, nm, grams(unify(base_name(nm)))) for edi, nm in products]
         self._base = [base_name(nm) for _, nm in products]  # 이름이 글자 그대로 같은 제품을 동점에서 먼저 고르는 데 씀
         self._tidx: list[tuple[str, str, frozenset[str]]] | None = None
+        self._skeys: list[str] | None = None
         self._hidx: list[tuple[str, str, frozenset[str]]] | None = None
         self._ingr = ingredients
         self._sib: dict[str, list[str]] | None = None
@@ -257,6 +265,55 @@ class NameMatcher:
             ):
                 return Decision(AMBIGUOUS, round(best, 3), [cands[0], *sib], sibling=True)
         return Decision(FOUND, round(best, 3), cands, exact=exact, same_name=unify(base_name(top[0][2])) == unify(qb))
+
+    def _search_keys(self) -> list[str]:
+        """이름 검색용 글자(표기 통일, 공백 없음). 처음 쓸 때 한 번 만들며, 한 번 만들면 바뀌지 않는다"""
+        keys = self._skeys
+        if keys is None:
+            keys = self._skeys = [unify(b) for b in self._base]
+        return keys
+
+    def search(self, query: str, size: int = 8) -> SearchResult:
+        """사용자가 직접 치는 약 이름 검색 (O-4). 사진 속 이름을 맞추는 decide와 달리 "친 글자가 들어 있는 약"을 찾는다.
+        - 제품명 어디에든 들어 있으면 찾는다: 앞부분(타이레놀), 괄호 안 성분(메트포르민), 함량(리피토10) 모두. 2글자부터
+        - 순서: 이름이 그 글자로 시작 → 상표 이름에 들어 있음 → 성분·함량에만 들어 있음, 같으면 짧은 이름 먼저
+        - 함량 숫자를 붙여 쳤는데(타이레놀500) 그 함량의 약이 없으면 이름만으로 찾은 약을 모두 보여 준다
+        - 하나도 없으면 글자가 조금 틀린 이름(오타)만 비슷한 이름 추천으로 찾는다 (점수가 낮은 엉뚱한 약은 보이지 않음)"""
+        q = unify(base_name(unicodedata.normalize("NFKC", query))).strip("-–·")
+        if len(q) < SEARCH_MIN_LEN or not self._idx:
+            return SearchResult(False, [])
+        keys = self._search_keys()
+        exact = [i for i, k in enumerate(keys) if k == q]
+        if exact:
+            edi, nm, _ = self._idx[exact[0]]
+            return SearchResult(True, [Candidate(edi, nm, 1.0)])
+        hits = [i for i, k in enumerate(keys) if q in k]
+        if not hits:
+            m = re.match(r"^(.*?[^\d.])([\d.]+)(?:밀리그램|g|ml|%|정)?$", q)  # 이름 + 함량 숫자 (타이레놀500)
+            if m and len(m.group(1)) >= SEARCH_MIN_LEN:
+                name_part, number = m.group(1), m.group(2)
+                named = [i for i, k in enumerate(keys) if name_part in k]
+                with_number = [i for i in named if number in _strength_numbers(self._idx[i][1])]
+                hits = with_number or named
+        if hits:
+            q_name = re.split(r"[\d(]", q)[0] or q
+
+            def rank(i: int) -> tuple[int, int, str]:
+                k = keys[i]
+                brand = unify(_brand(self._idx[i][1]))
+                kind = 0 if k.startswith(q_name) else 1 if q_name in brand else 2
+                return kind, len(k), k
+
+            top = sorted(hits, key=rank)[: max(size, 1)]
+            score = {0: 0.9, 1: 0.8, 2: 0.7}
+            return SearchResult(False, [Candidate(self._idx[i][0], self._idx[i][1], score[rank(i)[0]]) for i in top])
+        if len(q) < MIN_LEN:
+            return SearchResult(False, [])
+        dec = self.decide(query, top_n=max(size, 3), siblings=False)
+        if dec.status != NOT_FOUND:
+            return SearchResult(False, [c for c in dec.candidates if c.score >= NOT_FOUND_BELOW][:size])
+        sim = self.similar(query, top_n=min(max(size, 3), 5))
+        return SearchResult(False, list(sim.candidates) if sim else [])
 
     def _short_exact(self, qb: str) -> Decision:
         """짧은 이름(3글자: 울셋정 · 코푸정 · 아트정 등 급여목록에 실제로 있음)은 비슷한 이름을 찾으면 엉뚱한 약이 나오기 쉬워서,

@@ -689,14 +689,15 @@ async def patch_item(user: User, prescription_id: int, item_id: int, body: Any) 
 
 
 async def search_drugs(q: str, size: int) -> dict[str, Any]:
-    """O-4 — 이름 맞추기는 OCR과 같은 함수(NameMatcher). 정확히 같을 때만 matched"""
+    """O-4 — 사용자가 직접 치는 약 이름 검색. 친 글자가 제품명(상표, 괄호 안 성분, 함량)에 들어 있는 약을 찾는다 (2글자부터).
+    글자가 조금 틀린 이름만 사진 읽기와 같은 이름 맞추기로 비슷한 이름을 찾는다. 정확히 같을 때만 matched"""
     matcher = await get_matcher()
-    dec = matcher.decide(q, top_n=max(size, 3), siblings=False)  # 비슷한 약이 여럿인지 보려면 최소 3개는 봐야 함
-    if dec.status not in (FOUND, AMBIGUOUS):
+    found = await asyncio.to_thread(matcher.search, q, size)  # 22,045개를 훑으므로 서버가 멈추지 않게 별도 스레드에서
+    if not found.candidates:
         return {"status": "not_found", "items": []}
-    drugs = {d.edi_code: d for d in await DrugProduct.filter(edi_code__in=[c.edi_code for c in dec.candidates])}
+    drugs = {d.edi_code: d for d in await DrugProduct.filter(edi_code__in=[c.edi_code for c in found.candidates])}
     items = []
-    for c in dec.candidates:
+    for c in found.candidates:
         d = drugs.get(c.edi_code)
         if d is None:
             continue
@@ -710,5 +711,6 @@ async def search_drugs(q: str, size: int) -> dict[str, Any]:
                 "score": float(_clamp(c.score)),
             }
         )
-    exact = dec.status == FOUND and dec.same_name
-    return {"status": "matched" if exact else "candidates", "items": items[:1] if exact else items[:size]}
+    if not items:
+        return {"status": "not_found", "items": []}
+    return {"status": "matched" if found.exact else "candidates", "items": items[:size]}

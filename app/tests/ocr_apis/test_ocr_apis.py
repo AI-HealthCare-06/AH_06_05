@@ -887,6 +887,47 @@ class TestItemsAndSearch(OcrApiCase):
         assert none == {"status": "not_found", "items": []}
         assert bad.status_code == 400 and noauth.status_code == 401
 
+    async def test_search_finds_typed_names_by_any_part(self):
+        """직접 치는 검색은 친 글자가 제품명에 들어 있으면 찾는다 (11/3 멘토 시연: 타이, 타이레, 메트포르민이 안 나왔음)"""
+
+        async def ask(client, headers, q):
+            return (await client.get("/api/v1/drugs/search", params={"q": q}, headers=headers)).json()
+
+        async with self.client() as client:
+            headers = await self.auth(client, "p5@example.com")
+            two = await ask(client, headers, "리피")  # 2글자 앞부분
+            three = await ask(client, headers, "리피토")
+            ingredient = await ask(client, headers, "메트포르민")  # 상표 이름이 아니라 괄호 안 성분
+            strength = await ask(client, headers, "리피토10")  # 이름 + 함량 숫자
+            absent_strength = await ask(client, headers, "리피토999")  # 그 함량의 약이 없으면 이름만으로 찾은 약
+            spaced = await ask(client, headers, "아스피린 100 mg")  # 띄어쓰기와 mg
+            one_char = await ask(client, headers, "리")
+            unrelated = await ask(client, headers, "자이레스테신")  # 목록에 없는 이름에 엉뚱한 약을 붙이지 않음
+        for got, edi in (
+            (two, "645600020"),
+            (three, "645600020"),
+            (strength, "645600020"),
+            (absent_strength, "645600020"),
+        ):
+            assert got["status"] == "candidates" and [i["ediCode"] for i in got["items"]] == [edi]
+        assert [i["ediCode"] for i in ingredient["items"]] == ["644300010"]
+        assert [i["ediCode"] for i in spaced["items"]] == ["648800030"]
+        assert one_char == {"status": "not_found", "items": []}
+        assert unrelated == {"status": "not_found", "items": []}
+
+    async def test_search_puts_names_starting_with_the_text_first(self):
+        """같은 글자가 들어 있어도 그 글자로 시작하는 약이 먼저, 성분에만 들어 있는 약이 뒤"""
+        await DrugProduct.create(edi_code="650000001", item_name="삼남아세트아미노펜정", entp_name="삼남제약(주)")
+        await DrugProduct.create(edi_code="650000002", item_name="세리콘정(아세트아미노펜)", entp_name="오스틴제약(주)")
+        await DrugProduct.create(
+            edi_code="650000003", item_name="아세트아미노펜정500밀리그램", entp_name="가나제약(주)"
+        )
+        svc.reset_caches()
+        async with self.client() as client:
+            headers = await self.auth(client, "p6@example.com")
+            got = (await client.get("/api/v1/drugs/search", params={"q": "아세트아미노펜"}, headers=headers)).json()
+        assert [i["ediCode"] for i in got["items"]] == ["650000003", "650000001", "650000002"]
+
 
 class OcrJobEdgeCase(OcrApiCase):
     """10/15 점검: 여러 쪽 PDF · 멈춘 작업"""
