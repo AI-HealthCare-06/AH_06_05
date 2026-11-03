@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Pressable, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getPrescription, patchItem, searchDrugs } from '@/features/ocr/api';
@@ -22,6 +22,9 @@ const STATUS: Record<MatchStatus, [string, 'success' | 'caution' | 'danger' | 'n
   excluded: [r.status.excluded, 'neutral'],
 };
 
+// 확인이 필요한 약 (직접 확인하기 전에는 분석을 시작할 수 없는 상태)
+const isOpen = (it: PrescriptionItem) => it.matchStatus === 'needs_confirm' || it.matchStatus === 'unmatched';
+
 const timing = (it: PrescriptionItem) =>
   [it.timing, it.totalDays ? `${it.totalDays}일` : null].filter(Boolean).join(', ');
 
@@ -34,6 +37,12 @@ export default function Recognize() {
   const [pick, setPick] = useState<Record<number, string | null>>({});
   const [search, setSearch] = useState<{ rxId: number; itemId: number } | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // 확인을 마치면 다음 확인 필요 약 카드로 내려가기 위한 위치 기록 (카드 위치는 목록 시작점 기준)
+  const scrollRef = useRef<ScrollView>(null);
+  const listRef = useRef<View>(null);
+  const listY = useRef(0);
+  const cardRef = useRef<Record<number, View | null>>({});
 
   const load = useCallback(async () => {
     try {
@@ -50,10 +59,27 @@ export default function Recognize() {
   }, [prescriptionIds, load, router]);
 
   const save = async (rxId: number, itemId: number, body: Record<string, unknown>) => {
+    // 지금 처리하는 약이 확인 필요 상태였다면, 처리 뒤에 보여 줄 다음 약을 미리 정한다 (뒤쪽 먼저, 없으면 앞쪽에 남은 약)
+    const flat = (list ?? []).flatMap((x) => x.items);
+    const at = flat.findIndex((v) => v.id === itemId);
+    const next = at >= 0 && isOpen(flat[at]) ? (flat.slice(at + 1).find(isOpen) ?? flat.slice(0, at).find(isOpen))?.id : undefined;
     setSaving(true);
     try {
       await patchItem(rxId, itemId, body as never);
       await load();
+      // 처리한 카드가 줄어든 뒤의 위치로 내려가야 하므로 화면이 다시 그려질 시간을 둔다
+      if (next !== undefined) {
+        setTimeout(() => {
+          const card = cardRef.current[next];
+          const list = listRef.current;
+          if (!card || !list) return;
+          card.measureLayout(
+            list,
+            (_x, y) => scrollRef.current?.scrollTo({ y: Math.max(0, listY.current + y - 12), animated: true }),
+            () => {},
+          );
+        }, 120);
+      }
     } finally {
       setSaving(false);
     }
@@ -61,21 +87,21 @@ export default function Recognize() {
 
   if (failed) {
     return (
-      <Screen title={r.title} footer={<Btn label={copy.common.retry} onPress={load} />}>
+      <Screen title={r.title} scrollRef={scrollRef} footer={<Btn label={copy.common.retry} onPress={load} />}>
         <Text style={T.body}>{r.loadFail}</Text>
       </Screen>
     );
   }
   if (!list) {
     return (
-      <Screen title={r.title}>
+      <Screen title={r.title} scrollRef={scrollRef}>
         <ActivityIndicator color={C.p600} style={{ marginTop: 40 }} />
       </Screen>
     );
   }
 
   const items = list.flatMap((x) => x.items.map((it) => ({ rx: x, it })));
-  const blocking = items.map((v, k) => ({ ...v, k })).filter(({ it }) => it.matchStatus === 'needs_confirm' || it.matchStatus === 'unmatched');
+  const blocking = items.map((v, k) => ({ ...v, k })).filter(({ it }) => isOpen(it));
   const usable = items.some(({ it }) => it.matchStatus !== 'excluded' && (it.ediCode || it.itemSeq));
   const codes = [...new Set(list.flatMap((x) => x.diseaseCodes))];
   const notices = list.flatMap((x) => x.notices ?? []);
@@ -83,6 +109,7 @@ export default function Recognize() {
   return (
     <Screen
       title={r.title}
+      scrollRef={scrollRef}
       footer={
         <View style={{ gap: 6 }}>
           <Btn label={r.start} disabled={blocking.length > 0 || !usable || saving} onPress={() => router.replace('/analyzing')} />
@@ -118,93 +145,94 @@ export default function Recognize() {
         )}
       </Card>
 
-      <View style={{ gap: 12, marginTop: 14 }}>
+      <View ref={listRef} style={{ gap: 12, marginTop: 14 }} onLayout={(e) => (listY.current = e.nativeEvent.layout.y)}>
         {items.map(({ rx, it }, k) => {
           const [label, tone] = STATUS[it.matchStatus];
           // 맨 위 후보(서버 순서, AI 추천이면 AI가 고른 약)를 미리 골라 둔다. 그래도 [이 약으로 확인]을 눌러야 확정되고, 그 전에는 분석을 시작할 수 없다 (11/2 멘토 피드백, 채연)
           const chosen = pick[it.id] ?? it.candidates[0]?.ediCode ?? null;
           const title = it.matchStatus === 'needs_confirm' ? it.rawName : (it.itemName ? drugLabel(it.itemName) : null) ?? (it.matchStatus === 'unmatched' ? `${k + 1}번째 약품` : it.rawName);
           return (
-            <Card
-              key={it.id}
-              tone={it.matchStatus === 'needs_confirm' ? 'caution' : it.matchStatus === 'unmatched' ? 'danger' : undefined}
-              style={it.matchStatus === 'excluded' ? { opacity: 0.6 } : undefined}
-            >
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={T.bodyM}>{title}</Text>
-                  <Text style={T.caption}>
-                    {it.matchStatus === 'unmatched'
-                      ? [rx.hospitalName, r.rawLabel(it.rawName)].filter(Boolean).join(', ')
-                      : [rx.hospitalName, timing(it)].filter(Boolean).join(', ')}
-                  </Text>
+            <View key={it.id} ref={(v) => { cardRef.current[it.id] = v; }}>
+              <Card
+                tone={it.matchStatus === 'needs_confirm' ? 'caution' : it.matchStatus === 'unmatched' ? 'danger' : undefined}
+                style={it.matchStatus === 'excluded' ? { opacity: 0.6 } : undefined}
+              >
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={T.bodyM}>{title}</Text>
+                    <Text style={T.caption}>
+                      {it.matchStatus === 'unmatched'
+                        ? [rx.hospitalName, r.rawLabel(it.rawName)].filter(Boolean).join(', ')
+                        : [rx.hospitalName, timing(it)].filter(Boolean).join(', ')}
+                    </Text>
+                  </View>
+                  <Chip label={label} tone={tone} />
                 </View>
-                <Chip label={label} tone={tone} />
-              </View>
 
-              {it.matchStatus !== 'excluded' && (it.checkFields ?? []).length > 0 && (
-                <Text style={[T.caption, { color: C.danger, marginTop: 8 }]}>※ {r.checkFields(it.checkFields.join(', '))}</Text>
-              )}
+                {it.matchStatus !== 'excluded' && (it.checkFields ?? []).length > 0 && (
+                  <Text style={[T.caption, { color: C.danger, marginTop: 8 }]}>※ {r.checkFields(it.checkFields.join(', '))}</Text>
+                )}
 
-              {it.matchStatus !== 'excluded' && (it.guidance ?? []).length > 0 && (
-                <View style={{ marginTop: 8, gap: 2 }}>
-                  <Text style={T.label}>{r.guidanceTitle}</Text>
-                  {it.guidance.map((g) => (
-                    <Bullet key={g} text={g} textStyle={T.caption} />
-                  ))}
-                  <Text style={T.small}>{r.guidanceNote}</Text>
-                </View>
-              )}
+                {it.matchStatus !== 'excluded' && (it.guidance ?? []).length > 0 && (
+                  <View style={{ marginTop: 8, gap: 2 }}>
+                    <Text style={T.label}>{r.guidanceTitle}</Text>
+                    {it.guidance.map((g) => (
+                      <Bullet key={g} text={g} textStyle={T.caption} />
+                    ))}
+                    <Text style={T.small}>{r.guidanceNote}</Text>
+                  </View>
+                )}
 
-              {(it.matchStatus === 'auto' || it.matchStatus === 'user_confirmed') && (
-                <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setSearch({ rxId: rx.id, itemId: it.id })}>
-                  <Text style={[T.bodyM, { color: C.p700, marginTop: 8 }]}>{r.edit}</Text>
-                </Pressable>
-              )}
-
-              {it.matchStatus === 'needs_confirm' && (
-                <View style={{ marginTop: 12, gap: 8 }}>
-                  <Text style={T.caption}>{it.suggestedBy === 'llm' ? r.suggestedLlm : it.candidates.some((c) => pct(c.score) === 100) ? r.similarExact : r.similar}</Text>
-                  {it.candidates.map((c) => {
-                    const on = chosen === c.ediCode;
-                    return (
-                      <Pressable
-                        key={c.ediCode ?? c.itemSeq ?? c.itemName}
-                        accessibilityRole="radio"
-                        accessibilityState={{ checked: on }}
-                        onPress={() => setPick({ ...pick, [it.id]: c.ediCode })}
-                        style={[st.option, { borderColor: on ? C.p600 : C.border }]}
-                      >
-                        <Text style={{ fontSize: 18, color: on ? C.p600 : C.text2 }}>{on ? '●' : '○'}</Text>
-                        <Text style={[T.label, { flex: 1 }]}>{drugLabel(c.itemName)}</Text>
-                        <Text style={T.caption}>{r.similarity(pct(c.score))}</Text>
-                      </Pressable>
-                    );
-                  })}
-                  <Pressable accessibilityRole="button" onPress={() => setSearch({ rxId: rx.id, itemId: it.id })} style={[st.option, { borderColor: C.border }]}>
-                    <Text style={{ fontSize: 18, color: C.text2 }}>○</Text>
-                    <Text style={T.label}>{r.notInList}</Text>
+                {(it.matchStatus === 'auto' || it.matchStatus === 'user_confirmed') && (
+                  <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setSearch({ rxId: rx.id, itemId: it.id })}>
+                    <Text style={[T.bodyM, { color: C.p700, marginTop: 8 }]}>{r.edit}</Text>
                   </Pressable>
-                  <Btn label={r.confirmThis} disabled={!chosen || saving} onPress={() => save(rx.id, it.id, { ediCode: chosen })} />
-                  <Btn label={r.exclude} kind="ghost" onPress={() => save(rx.id, it.id, { exclude: true, ediCode: null, itemSeq: null })} />
-                </View>
-              )}
+                )}
 
-              {it.matchStatus === 'unmatched' && (
-                <View style={{ marginTop: 12, gap: 8 }}>
-                  <Pressable accessibilityRole="button" onPress={() => setSearch({ rxId: rx.id, itemId: it.id })} style={st.input}>
-                    <Text style={[T.body, { color: C.text2 }]}>{r.typeName}</Text>
+                {it.matchStatus === 'needs_confirm' && (
+                  <View style={{ marginTop: 12, gap: 8 }}>
+                    <Text style={T.caption}>{it.suggestedBy === 'llm' ? r.suggestedLlm : it.candidates.some((c) => pct(c.score) === 100) ? r.similarExact : r.similar}</Text>
+                    {it.candidates.map((c) => {
+                      const on = chosen === c.ediCode;
+                      return (
+                        <Pressable
+                          key={c.ediCode ?? c.itemSeq ?? c.itemName}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: on }}
+                          onPress={() => setPick({ ...pick, [it.id]: c.ediCode })}
+                          style={[st.option, { borderColor: on ? C.p600 : C.border }]}
+                        >
+                          <Text style={{ fontSize: 18, color: on ? C.p600 : C.text2 }}>{on ? '●' : '○'}</Text>
+                          <Text style={[T.label, { flex: 1 }]}>{drugLabel(c.itemName)}</Text>
+                          <Text style={T.caption}>{r.similarity(pct(c.score))}</Text>
+                        </Pressable>
+                      );
+                    })}
+                    <Pressable accessibilityRole="button" onPress={() => setSearch({ rxId: rx.id, itemId: it.id })} style={[st.option, { borderColor: C.border }]}>
+                      <Text style={{ fontSize: 18, color: C.text2 }}>○</Text>
+                      <Text style={T.label}>{r.notInList}</Text>
+                    </Pressable>
+                    <Btn label={r.confirmThis} disabled={!chosen || saving} onPress={() => save(rx.id, it.id, { ediCode: chosen })} />
+                    <Btn label={r.exclude} kind="ghost" onPress={() => save(rx.id, it.id, { exclude: true, ediCode: null, itemSeq: null })} />
+                  </View>
+                )}
+
+                {it.matchStatus === 'unmatched' && (
+                  <View style={{ marginTop: 12, gap: 8 }}>
+                    <Pressable accessibilityRole="button" onPress={() => setSearch({ rxId: rx.id, itemId: it.id })} style={st.input}>
+                      <Text style={[T.body, { color: C.text2 }]}>{r.typeName}</Text>
+                    </Pressable>
+                    <Btn label={r.exclude} kind="ghost" onPress={() => save(rx.id, it.id, { exclude: true, ediCode: null, itemSeq: null })} />
+                  </View>
+                )}
+
+                {it.matchStatus === 'excluded' && (
+                  <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setSearch({ rxId: rx.id, itemId: it.id })}>
+                    <Text style={[T.bodyM, { color: C.p700, marginTop: 8 }]}>{r.undo}</Text>
                   </Pressable>
-                  <Btn label={r.exclude} kind="ghost" onPress={() => save(rx.id, it.id, { exclude: true, ediCode: null, itemSeq: null })} />
-                </View>
-              )}
-
-              {it.matchStatus === 'excluded' && (
-                <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setSearch({ rxId: rx.id, itemId: it.id })}>
-                  <Text style={[T.bodyM, { color: C.p700, marginTop: 8 }]}>{r.undo}</Text>
-                </Pressable>
-              )}
-            </Card>
+                )}
+              </Card>
+            </View>
           );
         })}
       </View>
