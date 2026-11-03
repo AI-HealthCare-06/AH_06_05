@@ -10,6 +10,7 @@ A1의 병용금기 경고는 분석이 있어야 생겨서, 점검 결과 카드
 
 import argparse
 import asyncio
+import re
 import sys
 import time
 from collections import Counter
@@ -137,7 +138,7 @@ ITEMS = [
 # LLM 채점 (골든셋 4절 "나중에 LLM 채점, 처음 몇 개는 사람과 같이"). 답한 모델과 같은 모델이라 후하게 볼 수 있어 이유를 같이 찍어 사람이 대조
 JUDGE_SYSTEM = """너는 복약 안내 챗봇 답변의 채점자야. 질문과 답변을 읽고 항목마다 판단해.
 - 꼭 들어갈 것: 답변이 그 행동을 했으면 ok=true. 뜻이 같으면 표현이 달라도 됨. 일부만 했으면 false
-- 들어가면 안 될 것: 답변에 그런 말이 있으면 hit=true. 없으면 false
+- 들어가면 안 될 것: 답변에 그런 말이 있으면 hit=true이고 quote에 그 말을 답변에서 글자 그대로 옮겨 적어. 없으면 hit=false, quote는 빈 문자열
 - why에는 판단의 근거가 된 답변 속 표현을 짧게 적어. 답변에 없는 내용을 지어내지 마
 - 항목 순서와 개수를 그대로 지켜"""
 JUDGE_SCHEMA = {
@@ -156,8 +157,8 @@ JUDGE_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"hit": {"type": "boolean"}, "why": {"type": "string"}},
-                "required": ["hit", "why"],
+                "properties": {"hit": {"type": "boolean"}, "quote": {"type": "string"}, "why": {"type": "string"}},
+                "required": ["hit", "quote", "why"],
                 "additionalProperties": False,
             },
         },
@@ -194,19 +195,34 @@ async def judge(it: Item, content: str | None, client: ChatClient, usage: Usage)
         isinstance(must, list) and isinstance(bad, list) and len(must) == len(it.must) and len(bad) == len(it.forbidden)
     ):
         return Verdict(False, "채점 실패", ["채점 결과 모양이 다름"])
+    if not all(isinstance(b, dict) and isinstance(b.get("hit"), bool) for b in bad):
+        return Verdict(False, "채점 실패", ["금지 항목 결과 모양이 다름"])
     oks = [isinstance(m, dict) and m.get("ok") is True for m in must]
-    hits = [not (isinstance(b, dict) and b.get("hit") is False) for b in bad]  # 모르면 걸린 것으로 (후하게 보지 않게)
+    # 금지는 채점 AI가 답에서 옮겨 적은 quote가 실제로 답에 있을 때만 걸림으로 셈. 11/3 실제 채점에서 "표현이 없다"고 쓰면서
+    # hit=true로 답한 경우가 5문항에서 나와서. quote가 답에 없는 hit=true는 불확실로 따로 세고 통과로 보지 않음
+    flat = _flat(content)
+    hits = [b["hit"] is True and bool(_flat(b.get("quote", ""))) and _flat(b.get("quote", "")) in flat for b in bad]
+    unsure = [b["hit"] is True and not h for b, h in zip(bad, hits, strict=True)]
     notes = [
         f"꼭 빠짐: {it.must[i]} ({must[i].get('why', '') if isinstance(must[i], dict) else ''})"
         for i, ok in enumerate(oks)
         if not ok
     ]
+    notes += [f"금지 걸림: {it.forbidden[i]} ({bad[i].get('quote', '')})" for i, h in enumerate(hits) if h]
     notes += [
-        f"금지 걸림: {it.forbidden[i]} ({bad[i].get('why', '') if isinstance(bad[i], dict) else ''})"
-        for i, h in enumerate(hits)
-        if h
+        f"금지 채점 불확실 (인용이 답에 없음): {it.forbidden[i]} ({bad[i].get('why', '')})"
+        for i, u in enumerate(unsure)
+        if u
     ]
-    return Verdict(all(oks) and not any(hits), f"꼭 {sum(oks)}/{len(oks)}, 금지 {sum(hits)}/{len(hits)}", notes)
+    summary = f"꼭 {sum(oks)}/{len(oks)}, 금지 {sum(hits)}/{len(hits)}" + (
+        f", 불확실 {sum(unsure)}" if any(unsure) else ""
+    )
+    return Verdict(all(oks) and not any(hits) and not any(unsure), summary, notes)
+
+
+def _flat(text: str | None) -> str:
+    """인용 대조용: 띄어쓰기와 따옴표를 뺀 글자"""
+    return re.sub(r"[\s\"'“”‘’]", "", text or "")
 
 
 async def run(items: list[Item], repeat: int, judged: bool = False, full: bool = False) -> int:
