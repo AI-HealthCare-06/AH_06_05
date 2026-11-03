@@ -94,7 +94,7 @@ class Config(BaseSettings):
     SAFETY_COMBO_EXT: bool = False
 
     # 챗봇 1층에 Jev(TypeSafe) 판단을 더함. 1층 규칙에 안 걸린 질문만 저장 전에 보냄 (10/26 수인 결정)
-    # 기본 꺼짐: 질문(건강 정보)이 TypeSafe로 가므로 개인정보 고지(처리 위탁, 국외 이전)가 정해지면 켬
+    # 코드 기본값은 꺼짐(개발 예시도 꺼짐). 운영은 동의 문구와 개인정보 고지가 11/2 확정돼 켜 둠 (envs/example.prod.env)
     SAFETY_JEV: bool = False
     TYPESAFE_API_KEY: str = ""
     SAFETY_JEV_TIMEOUT_SEC: float = 1.0  # 넘으면 1층 규칙 결과만 씀
