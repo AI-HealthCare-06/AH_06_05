@@ -1,6 +1,6 @@
 // 공통 부품 — 프로토타입 ui.tsx에서 가져옴 (안건 버튼 · 화면 ID 표시 · 프로토타입 메모는 뺌)
 import { useRouter } from 'expo-router';
-import { useState, type ReactNode } from 'react';
+import { useState, type ReactNode, type Ref } from 'react';
 import {
   KeyboardTypeOptions,
   Modal,
@@ -145,6 +145,7 @@ export function Screen({
   fab = false,
   onBack,
   right,
+  scrollRef,
 }: {
   title: string;
   children: ReactNode;
@@ -154,6 +155,7 @@ export function Screen({
   fab?: boolean; // 챗봇 버튼이 떠 있는 탭 화면: 맨 아래 내용이 버튼에 가려지지 않게 여백을 둠
   onBack?: () => void;
   right?: ReactNode; // 제목 줄 오른쪽 버튼
+  scrollRef?: Ref<ScrollView>; // 화면 안에서 원하는 위치로 스크롤해야 할 때
 }) {
   const router = useRouter();
   const ins = useSafeAreaInsets();
@@ -183,6 +185,7 @@ export function Screen({
       </View>
       {scroll ? (
         <ScrollView
+          ref={scrollRef}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{
             padding: S.side,
