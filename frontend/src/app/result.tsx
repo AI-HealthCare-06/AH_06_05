@@ -253,7 +253,7 @@ function Medication({ data, analysisId, onRetried, onAsk }: { data: AnalysisResu
   );
 }
 
-// RG-04 안내문 피드백 (R-9). 한 번 보내면 이 화면에서는 막음 (서버는 사람당 안내문 하나에 의견 하나만 남기고 다시 보내면 덮어씀)
+// RG-04 안내문 피드백 (R-9). 같은 처방전으로는 한 번만 보낼 수 있음. 보내면 잠그고, 다시 열어도 서버가 준 feedback으로 잠근 채 보여 줌 (이미 보냈으면 서버가 409 FEEDBACK_ALREADY_SENT)
 function GuideFeedbackBox({ guideId, saved }: { guideId: number; saved: GuideFeedback | null }) {
   const [rating, setRating] = useState<1 | -1 | null>(saved?.rating ?? null);
   const [comment, setComment] = useState(saved?.comment ?? '');
