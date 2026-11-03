@@ -4,6 +4,8 @@
 - 질환은 분석의 질환(처방전, 내 정보, 질환 직접 선택)만 봄. 생활습관 탭과 같은 기준이라 약 링크도 그 질환 아래에서만 찾음
 - 질환이 없으면 약을 먹어도 추천하지 않음. 팩트표는 질환별이고 약 링크도 질환 아래에 있어, 생활습관 탭과 같은 기준을 씀 (10/30 수인 결정)
 - 허혈성심질환은 운동을 의료진이 정한 강도로 하라고 해서, 다른 질환이 걷기를 권해도 그 모양으로 바꿈 (10/30 수인 결정)
+- 골다공증은 팩트표가 "걷기 같은 체중이 실리는 운동"이라 "빠르게"를 빼고 제목을 "걷기 30분"으로, 설명은 골다공증 팩트표의 목표 문장으로 (11/4 채연 결정).
+  다른 걷기 질환이 같이 있어도 조심하는 쪽을 따르고, 허혈성심질환이 같이 있으면 그쪽(의료진 강도)이 먼저
 - 술은 금주까지 말하는 근거만 (고혈압 "절주"는 아님). 내 정보 음주가 "안 마심"이면 뺌 (10/30 수인 결정)
 """
 
@@ -79,6 +81,9 @@ CHALLENGES: tuple[Challenge, ...] = (
 HEART = "IHD"
 HEART_WALK = {"title": "걷기", "goal_type": "check", "target_value": None, "unit": None}
 HEART_APPROVAL = r"승인"
+# 골다공증이 있으면 걷기 제목에서 "빠르게"를 뺌 (속도가 부담일 수 있음). 30분 기록은 그대로
+BONE = "OP"
+BONE_WALK_TITLE = "걷기 30분"
 
 
 def _disease(did: str) -> dict[str, Any]:
@@ -129,11 +134,12 @@ def recommend(codes: list[str], drug_names: list[str], drinking: str | None) -> 
             continue
         reasons = [DRUG_REASON if s.drug else _disease(s.disease)["name"] for s, _ in hits]
         heart = next((_heart_desc(desc) for s, desc in hits if s.disease == HEART), None)
+        bone = None if heart else next((desc for s, desc in hits if s.disease == BONE and c.key == "walk"), None)
         out.append(
             {
                 "key": c.key,
-                "title": c.title,
-                "desc": heart or hits[0][1],
+                "title": BONE_WALK_TITLE if bone else c.title,
+                "desc": heart or bone or hits[0][1],
                 "goal_type": c.goal_type,
                 "target_value": c.target_value,
                 "unit": c.unit,
