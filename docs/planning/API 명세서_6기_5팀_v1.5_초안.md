@@ -31,7 +31,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | v1.5 초안 추가 | 2026-10-31 | H-3: 질문의 번호(주민번호, 전화번호, 이메일, 생년월일 등)를 저장과 OpenAI로 가기 전에 가림. 요청과 응답 모양은 그대로 (10/31 수인) | 이수인 |
 | v1.5 초안 추가 | 2026-10-31 | H-1: `analysisId`도 맥락 카드도 없는 대화는 가장 최근 완료 분석을 쓰고 대화에 적음(R-8로 같이 지워짐). 완료 분석이 없으면 일반 질문 모드 그대로. API 요청과 응답 모양은 그대로 (#159, 10/31 수인) | 이수인 |
 | v1.5 초안 추가 | 2026-11-01 | H-1: 쓸 분석을 질문마다 다시 고름(맥락 카드, 대화에 적힌 분석, 가장 최근에 끝난 완료 분석 중 가장 나중에 생긴 것). 같은 날 새 분석을 하면 다음 질문부터 새 분석을 씀. R-8: 그 분석으로 답한 대화도 지움. 7장 18번 `chat_messages.analysis_id`. API 요청과 응답 모양은 그대로 (#159, 11/1 수인) | 이수인 |
-| v1.5 초안 추가 | 2026-11-04 | 11/4 배포(main 4bc626b)까지 채연 몫 API를 코드에 맞춤: R-9는 같은 처방전 묶음에서 안내문 종류마다 한 번만 받고 두 번째부터 `409 FEEDBACK_ALREADY_SENT`(앞의 것을 덮어쓰지 않음, #224, 11/3 멘토링) / R-4 `medication.feedback`, `lifestyle.feedback` 추가(이미 낸 의견, 없으면 `null`) / P-1 `items[]`에 선택 필드 `replaces` 추가(하던 목표와 모양이 달라진 추천, #243, #244), 다른 분석에서 고른 실천 중 목표도 같이 내려줌, 골다공증이면 걷기 제목 "걷기 30분"(#230) | 김채연 |
+| v1.5 초안 추가 | 2026-11-04 | 11/4 배포(main 4bc626b)까지 채연 몫 API를 코드에 맞춤: R-9는 같은 처방전 묶음에서 안내문 종류마다 한 번만 받고 두 번째부터 `409 FEEDBACK_ALREADY_SENT`(앞의 것을 덮어쓰지 않음, #224, 11/3 멘토링) / R-4 `medication.feedback`, `lifestyle.feedback` 추가(이미 낸 의견, 없으면 `null`) / P-1 `items[]`에 선택 필드 `replaces` 추가(하던 목표와 모양이 달라진 추천, #243, #244), 다른 분석에서 고른 실천 중 목표도 같이 내려줌, 골다공증이면 걷기 제목 "걷기 30분"(#230) / H-9 챗봇 사진 올리기는 11/3 배포에 구현되어 2단계 ⚪에서 ✅로 올리고 "챗봇 사진 올리기 (H-9)" 절로 옮김(요청 · 응답 · 오류는 11/2 제안 그대로 코드와 맞음) | 김채연 |
 
 <details>
 <summary><b>v0.2</b> · 2026-09-23 · 화면 번호 통합 — 세부 5건</summary>
@@ -376,7 +376,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | H-6 | DELETE | `/chat/sessions/{id}` | 대화 삭제 | CB-03 · MY-S1 | 수인 | ✅ |
 | H-7 | POST | `/chat/sessions/{id}/context` | 오늘 대화에 분석 맥락 붙이기 (1단계) | CB-01-E2 | 수인 | ✅ |
 | H-8 | GET | `/chat/sessions/today` | 오늘 대화 찾기 (찾기만 하고 만들지 않음) | CB-01 · CB-01-E1 | 수인 | 🟡 |
-| H-9 | POST | `/chat/sessions/{id}/attachments` | 사진, 파일 올리기 (2단계) | CB-04 | 수인 | ⚪ |
+| H-9 | POST | `/chat/sessions/{id}/attachments` | 사진 올리기 | CB-04 | 수인 | ✅ |
 | H-10 | POST | `/chat/sessions/{id}/safety-events` | 앱에서 먼저 감지한 긴급, 자해 기록 (2단계) | CB-01-E4 | 수인 | ⚪ |
 | H-11 | POST | `/chat/messages/{id}/feedback` | 답변 피드백 (2단계) | CB-01 | 수인 | ⚪ |
 | P-1 | GET | `/recommendations?analysisId=` | 생활습관 추천 목록 | RG-05 | 서버 수인(#155) 이어서 채연 · 화면 채연 | 🟡 |
@@ -1311,16 +1311,20 @@ CB-02(`?month=2026-09` → 기록 있는 날짜 목록) · CB-03(`?date=` → �
 - `safetyModeUntil`: 자해 표현 뒤 안전 모드가 끝나는 시각. 없으면 `null`. `crisis`가 나온 날 자정(한국 시간)까지 씀. 지난 대화를 열어도(CB-03) 같이 적용 (제안, 11/2) (ERD `chat_sessions.safety_mode_until`, 자정은 10/22 #100)
 - 2단계에서 `?analysisId=&contextType=&contextId=`로 같은 날, 같은 대상의 대화를 찾도록 넓힘
 
-### 2단계 API (H-9 ~ H-11, 1장 전체 목록에도 ⚪로 있음) ⚪
-
-> 번호 H-9 ~ H-11은 1장 목록에 넣으면서 채연이 붙인 제안입니다. 바꾸고 싶으면 알려 주세요.
+### 챗봇 사진 올리기 (H-9) ✅
 
 | API | 용도 | 비고 |
 |---|---|---|
-| H-9 `POST /chat/sessions/{id}/attachments` | CB-04 사진, 파일 올리기 | `multipart/form-data`로 보내고 `{ attachmentId }`를 받음. H-3 요청의 `attachmentIds`로 씀. REQ-079 |
-| (제안, 11/2) H-9 바꾼 모양 | 위 표의 `attachmentId`와 H-3 `attachmentIds`는 쓰지 않음 | 사진을 저장하지 않으므로 올린 사진을 가리킬 번호가 필요 없음. 요청은 `file`(사진, PDF 1개, 10MB 이하, JPG, PNG, PDF)과 `clientRequestId`, 응답은 `201 { messageId }`(답 줄 번호). 사용자 줄(고정 글 "사진 1장을 보냈어요.")과 답 줄을 한 번에 만들고 앱은 H-2로 받음. 같은 `clientRequestId`면 새로 만들지 않고 처음 답 줄 번호를 돌려줌. 건강 정보 동의가 없으면 `403 CONSENT_REQUIRED`, 형식이나 크기가 어긋나면 `400`(`FILE_TYPE_NOT_SUPPORTED`, `FILE_TOO_LARGE`), 하루 질문 상한에 걸리면 `429`, O-1과 합산한 하루 사진 상한(`OCR_DAILY_FILE_LIMIT`)에 걸려도 `429 DAILY_LIMIT_EXCEEDED`(챗봇 사진은 대화와 따로 남긴 기록으로 세어 대화를 지워도 줄지 않음, #199 채연 리뷰), OCR이 실패하면 `502 OCR_FAILED`(줄을 만들지 않으니 다시 시도, 상한에는 셈). 사진 답 줄에는 `noFeedback: true`(규칙으로 만든 안내라 피드백 버튼 없음). 글자와 함께 보내기는 하지 않음(사진만, 글은 다음 질문으로) |
+| H-9 `POST /chat/sessions/{id}/attachments` ✅ | CB-04 사진 올리기 (11/3 배포에 구현) | 사진을 저장하지 않으므로 올린 사진을 가리킬 번호가 필요 없음. 요청은 `multipart/form-data`의 `file`(사진 또는 PDF 1개, 10MB 이하, JPG, PNG, PDF)과 `clientRequestId`, 응답은 `201 { messageId }`(답 줄 번호). 사용자 줄(고정 글 "사진 1장을 보냈어요.")과 답 줄을 한 번에 만들고 앱은 H-2로 받음. 같은 `clientRequestId`면 새로 만들지 않고 처음 답 줄 번호를 돌려줌. 건강 정보 동의가 없으면 `403 CONSENT_REQUIRED`, 형식이나 크기가 어긋나면 `400`(`FILE_TYPE_NOT_SUPPORTED`, `FILE_TOO_LARGE`), 하루 질문 상한에 걸리면 `429`, O-1과 합산한 하루 사진 상한(`OCR_DAILY_FILE_LIMIT`)에 걸려도 `429 DAILY_LIMIT_EXCEEDED`(챗봇 사진은 대화와 따로 남긴 기록으로 세어 대화를 지워도 줄지 않음, #199 채연 리뷰), OCR이 실패하면 `502 OCR_FAILED`(줄을 만들지 않으니 다시 시도, 상한에는 셈). 사진 답 줄에는 `noFeedback: true`(규칙으로 만든 안내라 피드백 버튼 없음). 글자와 함께 보내기는 하지 않음(사진만, 글은 다음 질문으로) REQ-079 |
+| H-2 답 줄 `imageResult`, `action` (H-9의 답) | (없음) | 사진 첨부의 답 줄에만. `imageResult`는 `prescription`(처방전, 약봉투: OCR이 표를 읽음, `answerType` normal, `action: "open_analysis"`도 함께), `drug`(약 이름을 읽음: `answerType` clarify, `chips`에 후보 이름, `drugMatch`에 `{ status, items }`), `unreadable`(`answerType` no_evidence). 약은 후보가 하나여도 늘 되물음 |
+
+### 2단계 API (H-10 ~ H-11, 1장 전체 목록에도 ⚪로 있음) ⚪
+
+> 번호 H-10 ~ H-11은 1장 목록에 넣으면서 채연이 붙인 제안입니다. 바꾸고 싶으면 알려 주세요.
+
+| API | 용도 | 비고 |
+|---|---|---|
 | (제안, 11/4) H-4 `title` | 고친 제목, 첫 질문 앞 30자, 그것도 없으면 "대화" | 첫 질문 없이 경고나 약 카드에서 연 대화는 첫 답의 첫 줄 앞 30자, 첫 답도 없고 맥락 카드만 있으면 "분석 결과 대화". 모두 "대화"로 보여 어떤 대화인지 알 수 없었음 (11/4 E2E). 응답 모양은 그대로 |
-| (제안, 11/2) H-2 답 줄 `imageResult`, `action` | (없음) | 사진 첨부의 답 줄에만. `imageResult`는 `prescription`(처방전, 약봉투: OCR이 표를 읽음, `answerType` normal, `action: "open_analysis"`도 함께), `drug`(약 이름을 읽음: `answerType` clarify, `chips`에 후보 이름, `drugMatch`에 `{ status, items }`), `unreadable`(`answerType` no_evidence). 약은 후보가 하나여도 늘 되물음 |
 | H-10 `POST /chat/sessions/{id}/safety-events` | 앱에서 먼저 감지한 긴급, 자해 기록 | 원문 없이 `{ types, overdose, rule, clientRequestId }`. 긴급 기록 표는 민감정보 보관 문제로 팀 확인 뒤에 정함 |
 | H-11 `POST /chat/messages/{id}/feedback` | 답변 피드백 | 지금은 화면만 있음 |
 
