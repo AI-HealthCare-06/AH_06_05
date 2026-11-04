@@ -45,6 +45,25 @@ def test_diabetes_walk_and_sulfonylurea_alcohol():
     assert by_key(items, "alcohol")["desc"] == "음주 시 저혈당 위험 증가"
 
 
+def test_osteoporosis_walk_has_no_speed_and_uses_the_sourced_goal():
+    # 골다공증은 "걷기 같은 체중이 실리는 운동"이라 "빠르게"를 뺌. 설명은 검수된 팩트표 목표 문장 (11/4 채연 결정)
+    goal = "주 150분 중등도 이상 유산소 운동과 주 2회 이상 근력 운동을 함께 하기"
+    walk = by_key(challenges.recommend(["M81"], [], "monthly"), "walk")
+    assert walk["title"] == "걷기 30분" and walk["goal_type"] == "quantity"
+    assert walk["target_value"] == 30 and walk["unit"] == "분" and walk["caution_label"] is None
+    assert walk["desc"] == goal and walk["reason_label"] == "골다공증"
+    # 다른 걷기 질환이 같이 있어도 조심하는 쪽 (제목은 걷기 30분, 설명은 골다공증 문장)
+    both = by_key(challenges.recommend(["I10", "M81"], [], "monthly"), "walk")
+    assert both["title"] == "걷기 30분" and both["desc"] == goal and both["reason_label"] == "고혈압, 골다공증"
+    # 골다공증이 아니면 그대로
+    assert by_key(challenges.recommend(["E78"], [], "monthly"), "walk")["title"] == "빠르게 걷기 30분"
+
+
+def test_osteoporosis_with_ischemic_heart_keeps_clinician_intensity():
+    walk = by_key(challenges.recommend(["M81", "I25"], [], "monthly"), "walk")
+    assert walk["title"] == "걷기" and walk["caution_label"] == "의료진이 정한 강도로"
+
+
 def test_ischemic_heart_walk_by_clinician_intensity():
     # 허혈성심질환 팩트표: 심장재활 운동은 의료진이 정한 강도로. 다른 질환이 걷기를 권해도 이 모양으로 바꿈
     items = challenges.recommend(["I10", "I25"], [], "monthly")
