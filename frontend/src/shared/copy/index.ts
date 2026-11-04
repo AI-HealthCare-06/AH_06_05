@@ -33,6 +33,7 @@ export const copy = {
     selectHead: '오늘부터 해 볼 실천을 골라 주세요',
     selectBody: '최대 3개까지 고를 수 있어요. 나중에 바꿀 수 있어요.',
     selectBodyOne: '나중에 바꿀 수 있어요.',
+    replaces: (t: string) => `지금 하는 '${t}' 대신 이 목표로 바뀌어요`,
     picked: (n: number) => `${n}개 골랐어요`,
     max: '최대 3개까지 고를 수 있어요',
     begin: '이 목표로 시작하기',
