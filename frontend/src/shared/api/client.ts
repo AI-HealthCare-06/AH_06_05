@@ -4,7 +4,7 @@
 // - 401 TOKEN_EXPIRED면 A-4로 출입증을 다시 받고 같은 요청을 한 번만 다시 보냄
 // - A-4도 실패하면 저장한 두 값을 지우고 로그인 화면으로 보내도록 알림 (setAuthLostHandler)
 import { copy } from '@/shared/copy';
-import { clearFailed } from '@/shared/storage/chat';
+import { clearFailed, clearRiskCheckLater } from '@/shared/storage/chat';
 import { tokens } from '@/shared/storage/tokens';
 
 import { mockFetch } from './mock';
@@ -31,7 +31,7 @@ export class ApiError extends Error {
 }
 
 // expired: 로그인이 끝남 ("다시 로그인해 주세요"를 보여 줌), unauthorized: 처음부터 로그인 안 됨
-export type AuthLostReason = 'expired' | 'unauthorized' | 'withdrawn';
+export type AuthLostReason = 'expired' | 'unauthorized' | 'withdrawn' | 'loggedOut';
 let onAuthLost: ((reason: AuthLostReason) => void) | null = null;
 
 export function setAuthLostHandler(handler: ((reason: AuthLostReason) => void) | null) {
@@ -41,8 +41,12 @@ export function setAuthLostHandler(handler: ((reason: AuthLostReason) => void) |
 async function loseAuth(reason: AuthLostReason) {
   await tokens.clear();
   await clearFailed(); // 기기에 남긴 실패한 챗봇 질문도 (설계 메모 4-7)
+  if (reason === 'loggedOut' || reason === 'withdrawn') await clearRiskCheckLater(); // 다른 사람이 이 기기로 로그인할 수 있어서
   onAuthLost?.(reason);
 }
+
+// 로그아웃: 기기에 저장한 값만 지우고 로그인 화면으로. 서버 호출은 없음 (A-3은 10/6 결정대로 넣지 않음, 앱 로그아웃은 11/4 수인 결정)
+export const logout = () => loseAuth('loggedOut');
 
 // 탈퇴한 뒤: 서버가 이 계정을 이미 지웠으므로 저장한 값을 지우고 로그인 화면으로 보냄
 export const forgetLogin = () => loseAuth('withdrawn'); // 로그인 화면에 탈퇴했다는 안내를 띄움 (11/4 E2E: 안내 없이 로그인 화면만 나와 탈퇴됐는지 알 수 없었음)

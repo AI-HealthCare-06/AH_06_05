@@ -4,6 +4,7 @@ import { Pressable, Text, View } from 'react-native';
 
 import { deleteAllSessions } from '@/features/chatbot/api';
 import { getMe, type Me as MeInfo } from '@/features/common/api';
+import { logout } from '@/shared/api/client';
 import { copy } from '@/shared/copy';
 import { clearFailed } from '@/shared/storage/chat';
 import { C, L, T } from '@/shared/theme';
@@ -103,6 +104,10 @@ export default function Me() {
                   <Text style={[T.body, { color: C.text3 }]}>›</Text>
                 </Pressable>
               ))}
+              {/* 확인 창 없이 바로: 다시 로그인하면 그대로 이어서 쓸 수 있어서 (11/4, 와이어프레임 CM-05 ⑥) */}
+              <Pressable accessibilityRole="button" onPress={() => void logout()} style={{ minHeight: L.touch, justifyContent: 'center' }}>
+                <Text style={T.body}>{c.logout}</Text>
+              </Pressable>
               <Pressable accessibilityRole="button" onPress={() => setAsking(true)} style={{ minHeight: L.touch, justifyContent: 'center' }}>
                 <Text style={[T.body, { color: C.danger }]}>{c.chatsDelete}</Text>
               </Pressable>

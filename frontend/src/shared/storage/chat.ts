@@ -124,3 +124,6 @@ export async function riskCheckLater(): Promise<boolean> {
 }
 
 export const setRiskCheckLater = () => write(RISK_LATER, '1');
+
+// 로그아웃, 탈퇴 때 지움: 같은 기기에서 다른 사람이 로그인하면 그 사람에게도 동의 카드가 다시 보이게 (11/4)
+export const clearRiskCheckLater = () => remove(RISK_LATER);
