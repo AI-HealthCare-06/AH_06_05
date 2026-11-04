@@ -595,6 +595,32 @@ class TestUploadAndJob(OcrApiCase):
         timings = {i["timing"] for i in rx["items"]}
         assert timings and all(t and "5678" not in t and t.startswith("식후 30분") for t in timings)
 
+    async def test_237_layout_stores_each_drugs_own_timing_and_a_clean_hospital_name(self):
+        # 용법이 약마다 표 칸에 있고, 병원 이름 줄에 전화 · 질병분류기호 · 교부일이 이어진 처방전 (11/4 E2E)
+        from app.tests.ocr_pipeline.test_pipeline import _237_layout
+
+        async with self.client() as client:
+            headers = await self.auth(client, "mk3@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1200, 1600)], [_237_layout(True)])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        assert rx["hospitalName"] == "가나다내과의원(가상)"
+        assert [i["timing"] for i in rx["items"]] == [
+            "저녁 식후",
+            "아침 저녁 식후 30분",
+        ]  # 앞 약 줄의 용법이 번지지 않는다
+        assert sorted(rx["diseaseCodes"]) == ["E11", "I10"]
+
+    async def test_237_real_clova_response_is_saved_per_drug(self):
+        # 수인님이 11/3에 만든 가짜 처방전(배포 서버 분석 37번)의 실제 CLOVA 응답
+        from app.tests.ocr_pipeline.test_pipeline import REAL_237
+
+        async with self.client() as client:
+            headers = await self.auth(client, "mk4@example.com")
+            _, job = await self.read_with(client, headers, [jpeg_of_size(1400, 1980)], [REAL_237])
+            rx = (await client.get(f"/api/v1/prescriptions/{job['prescriptionIds'][0]}", headers=headers)).json()
+        assert rx["hospitalName"] == "가나다내과의원(가상)"
+        assert [i["timing"] for i in rx["items"]] == ["저녁 식후", "아침 저녁 식후", "아침 식후", "아침 식후"]
+
     async def test_clean_prescription_has_no_notices(self):
         sample = json.loads(clova.SAMPLE.read_text(encoding="utf-8"))
         async with self.client() as client:
