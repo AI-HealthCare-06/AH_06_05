@@ -42,7 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((refresh) => setStatus(refresh ? 'signedIn' : 'signedOut'))
       .catch(() => setStatus('signedOut'));
     setAuthLostHandler((reason) => {
-      setNotice(reason === 'expired' ? copy.login.expired : null);
+      setNotice(reason === 'expired' ? copy.login.expired : reason === 'withdrawn' ? copy.login.withdrawn : null);
       setStatus('signedOut');
     });
     return () => setAuthLostHandler(null);
