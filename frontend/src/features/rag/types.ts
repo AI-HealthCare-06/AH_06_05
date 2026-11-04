@@ -28,6 +28,8 @@ export type Warning = {
 
 export type Action = { text: string; kind: 'fact' | 'safety_notice'; sourceIds: number[] };
 
+export type GuideFeedback = { rating: 1 | -1; comment: string | null };
+
 export type AnalysisResult = {
   analysisId: number;
   status: 'done';
@@ -43,6 +45,7 @@ export type AnalysisResult = {
   checkedItems: { type: string; label: string; state: string }[];
   medication: {
     guideId: number;
+    feedback: GuideFeedback | null; // 내가 이미 보낸 의견 (R-9). 있으면 다시 보내지 못하게 막음
     status: 'done' | 'failed';
     items: {
       itemId: number;
@@ -58,6 +61,7 @@ export type AnalysisResult = {
   };
   lifestyle: {
     guideId: number;
+    feedback: GuideFeedback | null;
     status: 'done' | 'failed';
     diseases: { code: string; name: string; origin: 'prescription' | 'profile' | 'user' }[];
     medicationLinks: { itemId: number; itemName: string; requiresClinician: boolean; actions: Action[] }[];

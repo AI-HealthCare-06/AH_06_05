@@ -191,7 +191,7 @@ class DrugGuide(models.Model):
 
 
 class GuideFeedback(models.Model):
-    """안내문 피드백 (R-9) — 한 사람이 안내문 하나에 하나만 남기고, 다시 보내면 덮어씀. 안내문이 지워지면 같이 지워짐"""
+    """안내문 피드백 (R-9) — 한 사람이 같은 처방전 묶음에는 한 번만 남김(다시 보내면 409, 서비스에서 확인). 안내문이 지워지면 같이 지워짐"""
 
     id = fields.BigIntField(primary_key=True)
     guide: fields.ForeignKeyRelation[Guide] = fields.ForeignKeyField(

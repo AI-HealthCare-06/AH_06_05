@@ -302,6 +302,7 @@ export const copy = {
     feedbackNo: '도움이 안 됐어요',
     feedbackComment: '하고 싶은 말이 있으면 적어 주세요 (선택)',
     feedbackSend: '보내기',
+    feedbackSent: '보냈어요', // 11/3 멘토 피드백: 한 번 보내면 버튼을 막음
     feedbackThanks: '의견을 보냈어요.',
   },
   // CM-03 홈의 최근 기록 카드, CM-04 지난 기록, CM-04-E1 삭제 확인, CM-04-E2 기록 없음

@@ -215,6 +215,15 @@ function buildWarnings() {
 
 const act = (text: string, ids: number[], kind = 'fact') => ({ text, kind, sourceIds: ids });
 
+// R-9 보낸 의견을 기억했다가 R-4에 돌려 줌 (서버처럼)
+let sentFeedback: { rating: 1 | -1; comment: string | null } | null = null;
+export function saveFeedbackMock(body: unknown) {
+  if (sentFeedback) return { status: 409, body: { error: { code: 'FEEDBACK_ALREADY_SENT', message: '이미 의견을 보냈어요.' } } };
+  const b = (body ?? {}) as { rating?: 1 | -1; comment?: string };
+  sentFeedback = { rating: b.rating ?? 1, comment: b.comment?.trim() || null };
+  return { status: 201, body: { feedbackId: 1 } };
+}
+
 // R-4
 export function analysisResult() {
   const ws = buildWarnings();
@@ -241,7 +250,7 @@ export function analysisResult() {
       { type: 'polypharmacy', label: '여러 약 함께 복용', state: 'checked' },
     ],
     medication: {
-      guideId: 7001, status: guideFailed ? 'failed' : 'done',
+      guideId: 7001, feedback: sentFeedback, status: guideFailed ? 'failed' : 'done',
       items: guideFailed ? [] : items.map((i) => ({
         itemId: i.id, ediCode: i.ediCode, itemName: i.itemName ?? i.rawName,
         category: '복약 안내 예시', purpose: '(허가정보를 바탕으로 AI가 쉬운 말로 쓰는 자리)',
@@ -250,7 +259,7 @@ export function analysisResult() {
       })),
     },
     lifestyle: {
-      guideId: 7002, status: guideFailed ? 'failed' : 'done', diseases: guideFailed ? [] : diseases,
+      guideId: 7002, feedback: null, status: guideFailed ? 'failed' : 'done', diseases: guideFailed ? [] : diseases,
       medicationLinks: guideFailed || !has(['암로디핀']) ? [] : [{
         itemId: items.find((i) => i.itemName?.includes('암로디핀'))?.id ?? 0, itemName: '암로디핀정 5mg', requiresClinician: false,
         actions: [act('자몽과 자몽주스는 피하기', [31])],
