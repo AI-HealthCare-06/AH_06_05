@@ -588,6 +588,7 @@ export const copy = {
     chatsDeleteFail: '삭제하지 못했어요. 다시 시도해 주세요.',
     consentHistory: '동의 내역 보기',
     withdraw: '회원 탈퇴',
+    logout: '로그아웃', // 11/4 수인 결정 (제안 위치: 동의와 계정 카드)
     edit: '정보 수정하기',
     save: '저장하기',
     loadFailed: '내 정보를 불러오지 못했어요.',

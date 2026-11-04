@@ -1,5 +1,7 @@
 // 촬영에서 결과까지 이어지는 흐름의 값 (찍은 사진, 처방전 번호, 분석 번호)
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+
+import { useAuth } from '@/features/common/auth';
 
 type Flow = {
   photos: string[];
@@ -32,6 +34,11 @@ export function FlowProvider({ children }: { children: ReactNode }) {
     setDuplicates([]);
     setAnalysisId(null);
   }, []);
+  // 로그아웃, 탈퇴, 로그인 만료로 로그인이 풀리면 비움: 같은 기기의 다음 사람에게 앞 사람의 사진과 번호가 남지 않게 (#239 채연 리뷰)
+  const { status } = useAuth();
+  useEffect(() => {
+    if (status === 'signedOut') reset();
+  }, [status, reset]);
   const value = useMemo(
     () => ({ photos, setPhotos, prescriptionIds, setPrescriptionIds, duplicates, setDuplicates, analysisId, setAnalysisId, reset }),
     [photos, prescriptionIds, duplicates, analysisId, reset],

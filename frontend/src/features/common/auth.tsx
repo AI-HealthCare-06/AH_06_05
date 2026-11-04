@@ -1,4 +1,4 @@
-// 로그인 상태 (CM-01, CM-02, API 명세서 A-1, A-2, A-4). 로그아웃은 넣지 않음 (10/6 결정)
+// 로그인 상태 (CM-01, CM-02, API 명세서 A-1, A-2, A-4). 서버 로그아웃(A-3)은 넣지 않음 (10/6 결정). 앱 로그아웃은 client.ts logout (11/4)
 // 앱을 켜면 재발급권이 저장돼 있는지로 상태를 정함. 출입증이 끝났으면 API를 부를 때 api()가 알아서 다시 받음
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
@@ -42,7 +42,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((refresh) => setStatus(refresh ? 'signedIn' : 'signedOut'))
       .catch(() => setStatus('signedOut'));
     setAuthLostHandler((reason) => {
-      setNotice(reason === 'expired' ? copy.login.expired : reason === 'withdrawn' ? copy.login.withdrawn : null);
+      // 늦게 돌아온 401(unauthorized)이 방금 띄운 탈퇴 안내를 지우지 않게 그 밖의 이유는 지금 안내를 둠 (#236 채연 리뷰)
+      setNotice((prev) => (reason === 'expired' ? copy.login.expired : reason === 'withdrawn' ? copy.login.withdrawn : prev));
       setStatus('signedOut');
     });
     return () => setAuthLostHandler(null);

@@ -128,7 +128,7 @@ API를 바꿀 때마다 버전 요약 한 줄 + 세부 표를 추가하고, **�
 | 2. 회원 / U-5 철회 시 남김 | 실천 목표(`status = ended`로 종료, `reason_label` 질환 라벨은 지움) | 실천 목표(`status = ended`로 종료, 추천 연결 `recommendation_id`는 비움 — 질환 라벨 `reason_label`은 추천과 함께 삭제). `reason_label`은 `habit_goals`가 아니라 `recommendations`에 있음 (성규 10/6 확인) |
 | 4. RAG / R-8 실천 목표 처리 | 추천(`recommendations`) 연결만 끊음 | 같은 내용 + 근거 "ERD v1.3: `habit_goals.recommendation_id` ON DELETE SET NULL" (성규 10/6 확인 — 없으면 분석 삭제가 막힘) |
 | 0. 공통 규칙 / 인증 | 로그인 후 받은 토큰을 헤더에 넣음 | 출입증 60분 · 끝나면 재발급권(14일)으로 A-4 (10/6) |
-| 1. 전체 목록 / A-3 로그아웃 | `POST /auth/logout` ✅ | 넣지 않음 (10/6 결정) |
+| 1. 전체 목록 / A-3 로그아웃 | `POST /auth/logout` ✅ | 넣지 않음 (10/6 결정). (11/4 수인) 앱에서만 로그아웃: 서버를 부르지 않고 기기에 저장한 출입증, 재발급권, 보내지 못한 챗봇 질문, 위험 판단 동의 카드의 [나중에] 기록을 지움. 재발급권은 서버에서 무효화되지 않아 만료(14일)까지 남음 |
 | 1. 전체 목록 / A-4 — 신규 | (없음) | `POST /auth/token/refresh` 출입증 다시 받기 (10/6) |
 | 2. 회원 / A-2 응답 | `accessToken` · `user` | + `refreshToken` (앱 보안 저장소용), 쿠키도 같이 (10/6) |
 | 2. 회원 / A-4 — 신규 | (없음, 코드는 `GET` · 쿠키에서만 읽음) | `POST` · 본문 `refreshToken` (없으면 쿠키) · 에러 2가지 · 앱 처리 순서 (10/6) |
