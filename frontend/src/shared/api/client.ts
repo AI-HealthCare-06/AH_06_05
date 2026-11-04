@@ -31,7 +31,7 @@ export class ApiError extends Error {
 }
 
 // expired: 로그인이 끝남 ("다시 로그인해 주세요"를 보여 줌), unauthorized: 처음부터 로그인 안 됨
-export type AuthLostReason = 'expired' | 'unauthorized';
+export type AuthLostReason = 'expired' | 'unauthorized' | 'withdrawn';
 let onAuthLost: ((reason: AuthLostReason) => void) | null = null;
 
 export function setAuthLostHandler(handler: ((reason: AuthLostReason) => void) | null) {
@@ -45,7 +45,7 @@ async function loseAuth(reason: AuthLostReason) {
 }
 
 // 탈퇴한 뒤: 서버가 이 계정을 이미 지웠으므로 저장한 값을 지우고 로그인 화면으로 보냄
-export const forgetLogin = () => loseAuth('unauthorized');
+export const forgetLogin = () => loseAuth('withdrawn'); // 로그인 화면에 탈퇴했다는 안내를 띄움 (11/4 E2E: 안내 없이 로그인 화면만 나와 탈퇴됐는지 알 수 없었음)
 
 async function send(method: Method, path: string, body: unknown, auth: boolean): Promise<Response> {
   const headers: Record<string, string> = { Accept: 'application/json' };

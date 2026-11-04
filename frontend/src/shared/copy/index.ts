@@ -107,6 +107,7 @@ export const copy = {
     lockedLeft: (mmss: string) => `남은 시간  ${mmss}`,
     lockedSubmit: (mmss: string) => `로그인  (${mmss} 후 가능)`,
     expired: '다시 로그인해 주세요', // 로그인이 끝났을 때 (API 명세서 TOKEN_EXPIRED, CM-08 문구)
+    withdrawn: '탈퇴했어요.\n같은 이메일로 다시 가입할 수 있어요.', // 탈퇴 직후 로그인 화면 (11/4 E2E, 제안, Figma 반영 전). 휴대폰 폭에서 "요."만 넘어가지 않게 문장마다 줄을 나눔
   },
   // OC-01 촬영 · 업로드, OC-01-E1~E3 예외 (프로토타입 Capture, Exception 문구)
   capture: {
@@ -333,6 +334,7 @@ export const copy = {
     launcher: 'AI 챗봇 열기',
     launcherNew: 'AI 챗봇 열기, 새 답변 있음',
     close: '챗봇 닫기',
+    home: '홈으로', // 창 머리 집 아이콘의 스크린 리더 이름 (11/3 E2E: 경고에서 연 챗봇은 홈까지 뒤로 4번)
     title: 'AI 챗봇',
     recommended: [
       '약은 언제 먹는 게 좋나요?',
@@ -372,7 +374,7 @@ export const copy = {
     stopListen: '멈춤',
     clarifyChips: '이렇게 답하실 수 있어요', // E3 되물음 예상 답 칩 제목 (설계 메모 4-5, 신규 임시)
     historyTitle: '대화 기록',
-    historyGuide: '기록이 있는 날짜를 누르면 그날의 대화를 볼 수 있어요.',
+    historyGuide: '기록이 있는 날짜를 누르면\n그날의 대화를 볼 수 있어요.', // Figma 문구 그대로, 휴대폰 폭에서 "요."만 넘어가지 않게 줄을 나눔 (11/4)
     historyEmpty: '이 달에는 대화 기록이 없어요',
     historyFail: '대화 기록을 불러오지 못했어요',
     legendHas: '기록 있음',
@@ -383,7 +385,7 @@ export const copy = {
     nextMonth: '다음 달',
     dayA11y: (label: string, has: boolean) => `${label}${has ? ', 기록 있음' : ''}`,
     dayTitle: (label: string) => `${label} 대화`,
-    dayGuide: '대화 제목은 첫 질문으로 만들어져요. [제목 수정]으로 바꿀 수 있어요.',
+    dayGuide: '대화 제목은 첫 질문으로 만들어져요.\n질문 없이 연 대화는 첫 답으로 만들어져요.\n[제목 수정]으로 바꿀 수 있어요.', // 제목 규칙(명세서 H-4, 11/4)에 맞춤 (제안, Figma 반영 전)
     titleEdit: '제목 수정',
     titleSave: '저장',
     titleFail: '제목을 저장하지 못했어요. 다시 시도해 주세요.',
