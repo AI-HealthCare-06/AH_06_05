@@ -1475,6 +1475,8 @@ async def test_listing_every_timing_needs_a_question_about_my_medicine():
         chat, search = FakeChat(classify=classified()), FakeSearch()
         r = await answer(q, S0, [], chat, search=search)
         assert r.content.startswith("처방에 적힌 먹는 법이에요."), q
-    chat, search = FakeChat(classify=classified()), FakeSearch()
-    r = await answer("아침 먹고 바로 먹어도 돼요?", S0, [], chat, search=search)
-    assert not (r.content or "").startswith("처방에 적힌") and search.calls
+    # 기간을 묻는 "언제까지", "언제부터"는 먹는 때가 아님 (#234 채연 리뷰 2차)
+    for q in ("아침 먹고 바로 먹어도 돼요?", "약은 언제까지 먹어요?", "약 언제부터 먹어요?"):
+        chat, search = FakeChat(classify=classified()), FakeSearch()
+        r = await answer(q, S0, [], chat, search=search)
+        assert not (r.content or "").startswith("처방에 적힌") and search.calls, q
