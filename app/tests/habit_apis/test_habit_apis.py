@@ -7,6 +7,7 @@ from starlette import status
 from app.core import config
 from app.models.analysis import AnalysisDisease
 from app.models.habits import HabitGoal, HabitRecord, HabitStatus
+from app.models.masters import Disease
 from app.tests.analysis_apis.test_analysis_apis import AnalysisCase
 
 REC = "/api/v1/recommendations"
@@ -152,6 +153,26 @@ class TestGoals(HabitCase):
                 soup,
             ]
             assert await HabitGoal.filter(status=HabitStatus.ENDED).count() == 0
+
+    async def test_picker_marks_walk_that_changed_shape(self):
+        # 당뇨 분석에서 "빠르게 걷기 30분"을 하던 중 허혈성심질환이 있는 분석을 열면 걷기가 "걷기"로 바뀜.
+        # 같은 챌린지라서 어떤 목표를 대신하는지(replaces) 알려 줘야 앱이 미리 골라 주고 하던 목표가 사라진 것처럼 안 보임
+        async with self.client() as client:
+            await Disease.create(code="I25", name_kr="만성 허혈심장병")
+            headers, user = await self.auth(client, "g7@example.com")
+            old = await self.recs(client, headers, await self.analysis(client, headers, user, diseases=("E11",)))
+            assert all("replaces" not in i for i in old["items"])
+            (walk,) = (await self.goals(client, headers, [old["items"][0]["id"]])).json()["goalIds"]
+            new = await self.recs(client, headers, await self.analysis(client, headers, user, diseases=("I25",)))
+            assert [i["title"] for i in new["items"]] == ["걷기"]
+            assert new["items"][0]["replaces"] == "빠르게 걷기 30분"
+            # 고르면 하던 걷기는 끝나고 새 걷기가 만들어짐 (모양이 바뀌면 다른 목표, 10/30 수인)
+            (heart,) = (await self.goals(client, headers, [new["items"][0]["id"]])).json()["goalIds"]
+            assert heart != walk
+            assert await HabitGoal.filter(status=HabitStatus.ENDED).values_list("id", flat=True) == [walk]
+            # 이제 하는 목표와 제목이 같으니 replaces는 없음
+            again = await self.recs(client, headers, await self.analysis(client, headers, user, diseases=("I25",)))
+            assert [i["title"] for i in again["items"]] == ["걷기"] and "replaces" not in again["items"][0]
 
 
 class TestToday(HabitCase):

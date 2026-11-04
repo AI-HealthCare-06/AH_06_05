@@ -11,6 +11,7 @@ export type Recommendation = {
   targetValue?: number;
   unit?: string;
   cautionLabel?: string;
+  replaces?: string; // 지금 하는 같은 챌린지의 제목. 모양이 바뀌어 제목이 다를 때만 내려옴 (예: 빠르게 걷기 30분 → 걷기)
 };
 export type RecommendationList = { items: Recommendation[]; hasDiseases: boolean };
 

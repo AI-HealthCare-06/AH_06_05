@@ -31,11 +31,12 @@ export default function ChallengeSelect() {
       const list = await getRecommendations(analysisId);
       setData(list);
       // 정한 목표가 없을 때만 추천된 실천을 모두 미리 골라 둠 (빼거나 더할 수 있게). 정한 목표가 있으면 그중 이번 추천과
-      // 겹치는 것만 고르고 겹치는 게 없으면 빈 선택(서버 P-2가 안 고른 목표를 끝내서 전 목표가 모르게 끝나지 않도록). 못 불러오면 빈 선택
+      // 겹치는 것만 고르고 겹치는 게 없으면 빈 선택(서버 P-2가 안 고른 목표를 끝내서 전 목표가 모르게 끝나지 않도록).
+      // 겹침은 제목이 같거나, 같은 챌린지의 모양이 바뀐 것(replaces)이면 같은 목표로 봄. 못 불러오면 빈 선택
       try {
         const t = await getToday();
         const titles = new Set(t.items.map((i) => i.title));
-        const had = list.items.filter((i) => titles.has(i.title));
+        const had = list.items.filter((i) => titles.has(i.title) || (i.replaces !== undefined && titles.has(i.replaces)));
         setPicked((t.items.length > 0 ? had : list.items).map((i) => i.id).slice(0, MAX));
       } catch {
         // 선택 없음
@@ -126,6 +127,7 @@ export default function ChallengeSelect() {
             <Card key={it.id} style={{ gap: 4, borderWidth: on ? 2 : 1, padding: on ? 15 : 16, borderColor: on ? C.p600 : C.border }}>
               <Check on={on} label={it.title} bold onPress={() => toggle(it.id)} />
               <Text style={[T.body, { color: C.text2 }]}>{it.desc}</Text>
+              {it.replaces && <Text style={[T.caption, { color: C.text2 }]}>{c.replaces(it.replaces)}</Text>}
               {it.cautionLabel && <Chip label={it.cautionLabel} tone="caution" />}
             </Card>
           );

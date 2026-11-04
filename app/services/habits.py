@@ -83,10 +83,14 @@ async def recommendations(user: User, analysis_id: int) -> dict[str, Any]:
             if r is not None and r.challenge_key not in have:
                 have.add(r.challenge_key)
                 kept.append(r)
-    return {"items": [_rec_view(r) for r in rows + kept], "hasDiseases": bool(codes)}
+    # 같은 챌린지인데 모양이 바뀐 경우(예: 빠르게 걷기 30분 → 걷기)는 어떤 목표를 대신하는지 알려 줌.
+    # 안 그러면 다시 고르기에서 하던 목표가 사라진 것처럼 보이고 미리 골라지지도 않음
+    doing = {g.recommendation.challenge_key: g for g in goals if g.recommendation is not None}
+    return {"items": [_rec_view(r, doing.get(r.challenge_key)) for r in rows + kept], "hasDiseases": bool(codes)}
 
 
-def _rec_view(r: Recommendation) -> dict[str, Any]:
+def _rec_view(r: Recommendation, doing: HabitGoal | None = None) -> dict[str, Any]:
+    same = doing is None or (doing.title, doing.goal_type) == (r.title, r.goal_type)
     return _drop_none(
         {
             "id": r.id,
@@ -97,6 +101,7 @@ def _rec_view(r: Recommendation) -> dict[str, Any]:
             "goalType": r.goal_type.value,
             "targetValue": _num(r.target_value),
             "unit": r.unit,
+            "replaces": None if same else doing.title,
         }
     )
 
