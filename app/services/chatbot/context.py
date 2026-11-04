@@ -81,7 +81,9 @@ def drug_keys(drug: UserDrug) -> list[str]:
     for word in ("혈압", "당뇨", "콜레스테롤"):
         if word in drug.purpose:
             keys.append(word)
-    return keys
+    # 빈 말은 모든 글에 들어 있다고 봐서 뺌. 성분을 못 찾은 약(점검 DB에 없음)이 하나라도 있으면 어떤 질문이든 그 약도 걸려
+    # 약 하나를 정하지 못했음 ("노바스크는 언제 먹어요?"가 약 고르기 되묻기로 감, 11/4 서버 E2E)
+    return [k for k in keys if len(k) >= 2]
 
 
 def find_drug(text: str, drugs: list[UserDrug]) -> UserDrug | None:

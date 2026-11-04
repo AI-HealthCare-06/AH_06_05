@@ -43,6 +43,19 @@ class ChatRepository:
         )
         return {r["session_id"]: r["content"] for r in rows}  # 오래된 줄이 뒤에 와서 첫 질문이 남음
 
+    async def first_answers(self, session_ids: list[int]) -> dict[int, tuple[str, bool]]:
+        """대화마다 첫 답 줄의 글과 맥락 카드가 있는지. 질문 없이 경고나 분석에서 연 대화의 제목에 씀 (11/4 E2E)"""
+        rows = (
+            await ChatMessage.filter(session_id__in=session_ids, role=MessageRole.ASSISTANT)
+            .order_by("-id")
+            .values("session_id", "content", "context_card")
+        )
+        out: dict[int, tuple[str, bool]] = {}
+        for r in rows:  # 오래된 줄이 뒤에 와서 첫 줄이 남음
+            text, card = out.get(r["session_id"], ("", False))
+            out[r["session_id"]] = ((r["content"] or "").strip() or text, card or r["context_card"] is not None)
+        return out
+
     async def set_title(self, session_id: int, title: str) -> None:
         await ChatSession.filter(id=session_id).update(title=title)
 

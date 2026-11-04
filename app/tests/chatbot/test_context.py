@@ -4,6 +4,7 @@ from app.services.chatbot.context import (
     FixedInfo,
     UserDrug,
     dialogue,
+    find_drug,
     fixed_info_text,
     recent,
     resolve_ordinal,
@@ -61,3 +62,15 @@ def test_fixed_info_text():
     assert "진단받은 질환: 고혈압" in text
     assert "- 노바스크정5밀리그람 (암로디핀, 혈압) 1일 1회 아침" in text
     assert "처방 약 없음" in fixed_info_text(FixedInfo(age=None, diseases=[], drugs=[]))
+
+
+def test_find_drug_ignores_a_drug_without_ingredient():
+    """성분을 못 찾은 약(빈 성분)이 있어도 다른 약 이름으로 하나를 정함. 빈 말은 모든 글에 들어 있어 전에는 그 약도 함께 걸렸음
+    ("노바스크는 언제 먹어요?"가 약 고르기 되묻기로 감, 11/4 서버 E2E)"""
+    drugs = [
+        UserDrug("낙센정(나프록센)", "", "", "1일 2회 아침 저녁 식후"),
+        UserDrug("노바스크정5밀리그람(암로디핀베실산염)", "암로디핀베실산염", "", "1일 1회 아침"),
+    ]
+    found = find_drug("노바스크는 언제 먹는 게 좋아요?", drugs)
+    assert found is not None and found.name.startswith("노바스크")
+    assert find_drug("오늘 날씨 어때요?", drugs) is None

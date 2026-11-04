@@ -404,6 +404,16 @@ class TestAsk(ChatCase):
         assert a["safety"]["types"] == ["emergency"] and a["safety"]["overdose"] is False and a["safety"]["rule"]
         assert not await ChatMessage.filter(content__contains="가슴").exists()
 
+    async def test_layer1_only_session_title_stays_default(self):
+        """1층이 잡은 질문만 있는 대화는 긴급 답을 목록 제목으로 쓰지 않음 (첫 답 제목은 질문 없이 카드에서 연 대화만)"""
+        async with self.client() as client:
+            headers, _ = await self.auth(client, "a6t@example.com")
+            sid = await self.session(client, headers)
+            assert (await self.ask(client, headers, sid, EMERGENCY_TEXT)).status_code == 202
+            today = datetime.now(config.TIMEZONE).date()
+            items = (await client.get(f"{API}?date={today}", headers=headers)).json()["items"]
+        assert {i["sessionId"]: i["title"] for i in items}[sid] == "대화"
+
     async def test_dismissed_resend_skips_emergency(self):
         async with self.client() as client:
             headers, _ = await self.auth(client, "a7@example.com")
@@ -781,6 +791,30 @@ class TestFixedInfo(ChatCase):
                 aid = a if target == "a" else b
                 assert (await client.delete(f"/api/v1/analyses/{aid}", headers=headers)).status_code == 204
             assert not await ChatSession.exists(id=sid), target
+
+    async def test_card_session_title_uses_first_answer(self):
+        """질문 없이 약 카드에서 연 대화는 목록 제목이 첫 답 첫 줄. 카드만 있으면 "분석 결과 대화" (11/4 E2E: 모두 "대화"였음)"""
+        async with self.client() as client:
+            headers, user = await self.auth(client, "f31@example.com")
+            await DrugGuide.create(
+                edi_code="641900040",
+                content={"purpose": "혈압 관리에 쓰는 약이에요"},
+                review_status=ReviewStatus.APPROVED,
+            )
+            rx = await self.prescription(user, ["641900040"])
+            aid = (await self.start(client, headers, rx)).json()["analysisId"]
+            item = (await PrescriptionItem.filter(prescription=rx).first()).id
+            drug_sid = await self.session(client, headers, analysisId=aid)
+            body = {"analysisId": aid, "context": {"type": "drug", "id": item}, "clientRequestId": "ctx-t1"}
+            first = (await client.post(f"{API}/{drug_sid}/context", json=body, headers=headers)).json()["firstMessage"]
+            card_sid = await self.session(client, headers, analysisId=aid, crid="s-card")
+            only_card = {"analysisId": aid, "clientRequestId": "ctx-t2"}
+            assert (await client.post(f"{API}/{card_sid}/context", json=only_card, headers=headers)).status_code == 201
+            today = datetime.now(config.TIMEZONE).date()
+            items = (await client.get(f"{API}?date={today}", headers=headers)).json()["items"]
+        titles = {i["sessionId"]: i["title"] for i in items}
+        assert titles[drug_sid] == first["content"].split("\n")[0][:30]
+        assert titles[card_sid] == "분석 결과 대화"
 
     async def test_unapproved_guide_gives_no_purpose(self):
         async with self.client() as client:

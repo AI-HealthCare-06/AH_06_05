@@ -28,7 +28,7 @@ from app.services.chatbot.classify import (
     classify,
     classify_message,
 )
-from app.services.chatbot.context import FixedInfo, PairWarning, find_drug, recent, resolve_ordinal
+from app.services.chatbot.context import FixedInfo, PairWarning, UserDrug, find_drug, recent, resolve_ordinal
 from app.services.chatbot.guard import guard
 from app.services.chatbot.llm import ChatClient, LLMError, Usage
 from app.services.rag.gate import Verdicts
@@ -290,22 +290,66 @@ _WHEN = re.compile(
     r"(아침|점심|저녁|언제|몇\s*시|자기\s*전|밤|식전|식후|밥\s*(?:먹고|먹기\s*전))\S*\s*\S*(먹|드시|드셔|복용)"
 )
 _PRESCRIBED_TIME = re.compile(r"(아침|점심|저녁|자기\s*전|취침|식전|식후|식사\s*중|공복)")
+# 처방 먹는 때 모두 나열은 내 약 먹는 때를 묻는 모양일 때만 ("약은 언제", "약을 몇 시에"). "저녁 먹고", "자몽은 언제 먹어도"처럼
+# 먹는 때 말만 걸린 질문까지 처방 목록으로 답하면 근거 검색을 건너뛰어 음식, 술 경고가 빠짐 (#234 채연 리뷰)
+# "언제까지", "언제부터"는 기간을 묻는 말이라 뺌 (#234 채연 리뷰 2차)
+_MY_TIMING = re.compile(r"약(?:은|을|들은|들을)?\s*(?:언제(?!\s*(?:까지|부터))|몇\s*시)")
+# 음식, 술, 음료를 같이 물으면 처방 먹는 때로 답하지 않고 근거를 찾음. _NOT_CHECKED에서 식사는 뺌("식사 후에 먹어요?"는 먹는 때 질문)
+_NOT_TIMING = re.compile(
+    r"(?<![수기])술|음주|맥주|소주|와인|막걸리|양주|음식|주스|자몽|커피|우유|녹차|영양제|한약|건강식품"
+)
 
 
-def _prescribed_timing(question: str, cls: dict[str, Any], info: FixedInfo) -> tuple[str, str] | None:
+HOW_MAX = (
+    40  # 처방 먹는 법이 이보다 길면 사진 속 줄이 통째로 들어온 것으로 봄 ("1일 2회 아침 저녁 식후 30분"은 20자 안팎)
+)
+
+
+def _timed(d: UserDrug, info: FixedInfo) -> bool:
+    """처방 먹는 법에 먹는 때가 있고 믿을 만한가. 사진 읽기가 복용 칸을 줄 전체로 읽으면 다른 약 이름과 그 약의 먹는 때가
+    섞여 들어와(11/4 서버 E2E: 네 약 모두 "아토르스타정... 저녁 식후 다이아벡스정500") 그대로 옮기면 틀린 때를 안내함"""
+    how = d.how or ""
+    if not _PRESCRIBED_TIME.search(how) or len(how) > HOW_MAX:
+        return False
+    return not any(
+        o.name[:3] in how for o in info.drugs
+    )  # 먹는 법 칸에 약 이름(자기 것 포함)이 있으면 줄 전체를 읽은 것
+
+
+def _prescribed_timing(question: str, cls: dict[str, Any], info: FixedInfo) -> tuple[str, list[str]] | None:
     """먹는 때를 묻고 그 약의 처방 먹는 법에 먹는 때가 적혀 있으면 처방대로 답함 (AI 없음, 출처 처방전 P:<약 코드>).
-    허가정보에는 아침, 저녁 같은 때가 없어 근거 없음이 됨 (11/2 골든셋 N1). 약을 하나로 특정하지 못하면 None"""
+    허가정보에는 아침, 저녁 같은 때가 없어 근거 없음이 됨 (11/2 골든셋 N1). 대상 약을 하나로 특정하지 못하면 None,
+    대상 약이 없고 질문 글로도 약을 정하지 못하면 처방의 먹는 때를 모두 보여 줌 (11/4)"""
     target = cls.get("target_drug") or ""
-    if not _WHEN.search(question) or not target:
+    if not _WHEN.search(question) or _NOT_TIMING.search(question):
         return None
-    d = find_drug(target, info.drugs) or find_drug(question, info.drugs)  # 약 하나로 특정될 때만 (#203 채연 리뷰)
-    if d is None or not _PRESCRIBED_TIME.search(d.how or ""):
+    d = (find_drug(target, info.drugs) if target else None) or find_drug(question, info.drugs)
+    if d is None and not target:
+        return _all_prescribed_timing(info) if _MY_TIMING.search(question) else None
+    if d is None or not _timed(d, info):  # 약 하나로 특정될 때만 (#203 채연 리뷰)
         return None
     text = (
         f"처방에 적힌 {d.name}의 먹는 법은 {d.how}이에요.\n"
         "처방대로 드시고, 먹는 시간을 바꾸고 싶으시면 약사나 의사와 먼저 상의해 주세요."
     )
-    return text, f"P:{d.code}"
+    return text, [f"P:{d.code}"]
+
+
+def _all_prescribed_timing(info: FixedInfo) -> tuple[str, list[str]] | None:
+    """대상 약 없이 "약은 언제 먹는 게 좋나요?"(앱 추천 칩): 처방에 먹는 때가 적힌 약을 모두 처방대로 보여 줌 (AI 없음).
+    약 하나를 짐작하지 않고 처방을 그대로 옮김. 전에는 허가정보만 찾다 근거 없음으로 끝남 (11/4 서버 E2E, 추천 칩 첫 질문)"""
+    timed = [d for d in info.drugs if _timed(d, info)]
+    if not timed:
+        return None
+    lines = "\n".join(f"{d.name}: {d.how}" for d in timed)
+    rest = [d.name for d in info.drugs if d not in timed]
+    # 약 이름 뒤에 조사를 붙이면 받침에 따라 어색해서 이름을 문장 끝에 둠 (#234 채연 리뷰)
+    tail = f"\n처방에 먹는 때가 적혀 있지 않은 약: {', '.join(rest)}. 약사에게 확인해 주세요." if rest else ""
+    text = (
+        f"처방에 적힌 먹는 법이에요.\n{lines}{tail}\n"
+        "처방대로 드시고, 먹는 시간을 바꾸고 싶으시면 약사나 의사와 먼저 상의해 주세요."
+    )
+    return text, [f"P:{d.code}" for d in timed]
 
 
 def _analysis_reply(question: str, info: FixedInfo, r: Route, usage: Usage) -> Reply:
@@ -375,7 +419,7 @@ async def answer(
     if (checked := _check_reply(question, cls, info, r, usage)) is not None:
         return checked
     if r.kind == "medication" and (prescribed := _prescribed_timing(question, cls, info)):
-        return Reply("normal", prescribed[0], r, [prescribed[1]], usage=usage)
+        return Reply("normal", prescribed[0], r, prescribed[1], usage=usage)
     if r.kind == "medication" and asks_this_analysis(question):
         return _analysis_reply(question, info, r, usage)
     if r.kind == "out_of_scope":
