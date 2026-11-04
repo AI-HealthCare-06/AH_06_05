@@ -302,7 +302,8 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
             file_index=file_index,
             doc_type=DocType.PILL_BAG if res.doc_type == "pill_bag" else DocType.PRESCRIPTION,
             issued_date=res.issued,
-            hospital_name=res.hospital_name,
+            # 병원 이름에 옆 칸 글자(전화번호 등)가 섞여도 저장하지 않는다 (#237)
+            hospital_name=mask(res.hospital_name) if res.hospital_name else None,
             content_key=key,
             ocr_confidence=Decimal(str(res.confidence)) if res.confidence is not None else None,
             quality_flag=QualityFlag.OK,
@@ -323,8 +324,8 @@ async def save_read(user_id: int, job_id: int, file_index: int, res: OcrRead, ke
                 "dose_per_time": Decimal(str(r.dose)) if r.dose is not None else None,
                 "times_per_day": int(r.times) if r.times is not None else None,
                 "total_days": int(r.days) if r.days is not None else None,
-                # 용법 문구 끝에 다른 글자가 섞여도 전화번호 등은 저장하지 않는다
-                "timing": mask(res.timing) if res.timing else None,
+                # 용법 문구 끝에 다른 글자가 섞여도 전화번호 등은 저장하지 않는다. 용법 칸이 있으면 약마다 그 줄의 글 (#237)
+                "timing": mask(r.timing) if r.timing else None,
                 "suggested_by": r.suggested_by,
                 # 약국이 약 카드에 인쇄한 안내 (영수증 띠는 읽지 않는다). 가려서 저장하고, 없으면 null
                 "guidance": [m for g in r.guide if (m := mask(g))] or None,

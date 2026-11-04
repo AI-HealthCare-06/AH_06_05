@@ -61,6 +61,9 @@ class RowRead:
     guide: list[str] = field(
         default_factory=list
     )  # 약봉투: 약국이 약 아래에 인쇄한 복약 안내 (마스킹 전 · 저장할 때 mask)
+    timing: str | None = (
+        None  # 이 약의 용법 (마스킹 전 · 저장할 때 mask). 용법 칸이 있으면 그 줄의 글, 없으면 처방전 아래 "용법:" 문구
+    )
 
 
 @dataclass
@@ -72,7 +75,9 @@ class OcrRead:
     birth: int | None = None
     meta_flags: list[str] = field(default_factory=list)
     hospital_name: str | None = None
-    timing: str | None = None  # 처방전 아래쪽 "용법" 문구 (모든 약 공통)
+    timing: str | None = (
+        None  # 처방전 표 아래 "용법:" 문구 (용법 칸이 없는 양식에서 모든 약 공통). 칸이 있으면 약마다 RowRead.timing
+    )
     confidence: float | None = None
     row_count_mismatch: bool = False
     diseases: list[DiseaseRead] = field(default_factory=list)
@@ -80,13 +85,21 @@ class OcrRead:
     raw_text: str = ""
 
 
+# 병원 이름 뒤에 오는 칸 이름. 양식마다 "전화번호", "전화:", "팩스", "질병분류기호", "교부일"이 먼저 올 수 있다 (#237, 11/4 E2E)
+_HOSPITAL_STOP = (
+    r"(?:환자|전화|팩스|FAX|성명|질병\s*분류|분류\s*기호|교\s*부|처방\s*의료인|의료인|면허|요양기관|사업자|주소)"
+)
+HOSPITAL_MAX = 40  # 병원 이름이 이보다 길면 옆 칸 글자까지 읽은 것으로 보고 비워 둔다 (잘라 저장하면 이름처럼 보이는 잘못된 글이 됨)
+
+
 def _hospital(text: str) -> str | None:
-    m = re.search(r"의료기관\s*명칭\s*(.+?)\s*(?:환자|전화번호|성명)", text)
-    name = m[1].strip() if m else ""
-    return name[:200] or None
+    m = re.search(r"의료기관\s*명칭\s*[:：]?\s*(.+?)\s*" + _HOSPITAL_STOP, text)
+    name = m[1].strip(" :：") if m else ""
+    return name if 0 < len(name) <= HOSPITAL_MAX else None
 
 
 def _timing(text: str) -> str | None:
+    """표 끝 뒤의 글(Table.tail_text)에서 "용법:" 문구를 읽는다. 처방전 전체에서 찾으면 표 머리글의 "용법" 칸 뒤 글자를 읽는다 (#237)"""
     m = re.search(r"용법\s*[:：]?\s*(.+?)\s*(?:사용기간|※|$)", text)
     t = m[1].strip() if m else ""
     return t[:50] or None
@@ -135,7 +148,7 @@ def read(  # noqa: C901
         birth=birth,
         meta_flags=mflags,
         hospital_name=None if pouch else _hospital(text),
-        timing=None if pouch else _timing(text),
+        timing=None if pouch else _timing(table.tail_text),
         confidence=round(sum(confs) / len(confs), 4) if confs else None,
         # 숫자 칸 중 가장 많이 읽힌 칸의 숫자 수와 약 줄 수가 다르면 줄 나누기가 틀렸을 수 있다
         row_count_mismatch=table.n_anchor >= 2 and len(table.rows) != table.n_anchor,
@@ -147,9 +160,10 @@ def read(  # noqa: C901
         seg: list[float] = []
         if i0 is not None:
             for f in pfields[i0 + 1 : i0 + 6]:
-                if "면허" in f["inferText"]:
-                    break
-                seg.append(f["inferConfidence"])
+                if re.search(r"면허|교\s*부|처\s*방|의료인", f["inferText"]):
+                    break  # 옆 칸("교부일:" 등)부터는 코드가 아니다 (#237)
+                if not icd.not_a_code(f["inferText"]):
+                    seg.append(f["inferConfidence"])  # ":" 같은 기호의 확실도는 코드 확실도가 아니다
         dzconf = min(seg, default=1.0)
         for raw, stt, value in icd.fix_field(table.disease_raw, codes):
             out.diseases.append(
@@ -206,5 +220,17 @@ def read(  # noqa: C901
             decision = similar
             flags.append(SIMILAR_FLAG)
             suggested_by = SUGGESTED_SIMILAR
-        out.rows.append(RowRead(name, decision, dose, times, days, flags, suggested_by, list(r.guide)))
+        out.rows.append(
+            RowRead(
+                name,
+                decision,
+                dose,
+                times,
+                days,
+                flags,
+                suggested_by,
+                list(r.guide),
+                r.timing if table.has_timing_col else out.timing,
+            )
+        )
     return out

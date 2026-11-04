@@ -46,11 +46,20 @@ def fix_one(tok: str, codes: Container[str]) -> tuple[str, str | list[str] | Non
     return UNKNOWN, None
 
 
+_DATE_WORD = re.compile(r"\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}")
+
+
+def not_a_code(tok: str) -> bool:
+    """코드가 아닌 낱말: 한글이 들어 있거나("교부일:", "2026년", "11월", "03일"), 영문자 · 숫자가 하나도 없거나(":"), 날짜 모양.
+    질병분류기호 칸 뒤 같은 줄의 다른 칸 글자가 코드 후보("모름", "후보 여러 개")로 붙지 않게 한다 (#237)"""
+    return bool(re.search(r"[가-힣]", tok)) or not re.search(r"[0-9A-Za-z]", tok) or bool(_DATE_WORD.fullmatch(tok))
+
+
 def fix_field(raw: str, codes: Container[str]) -> list[tuple[str, str, str | list[str] | None]]:
     """OCR 원문 문자열(예: "110,E11")을 나눠 각각 바로잡는다 → [(원문, 상태, 결과)]"""
     out = []
     for t in re.split(r"[,\s]+", raw.strip()):
-        if t:
+        if t and not not_a_code(t):
             st, v = fix_one(t, codes)
             out.append((t, st, v))
     return out

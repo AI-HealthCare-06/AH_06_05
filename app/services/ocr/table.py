@@ -21,7 +21,9 @@ _SPLIT_CANON = {"량": "투약량", "횟수": "투여횟수", "일수": "투약�
 # 질병분류기호 칸 뒤에서 값을 읽을 때 멈추는 말
 _DZ_LABEL = r"질\s*병\s*분\s*류\s*기\s*호(?![를은는이가]\s*기재)"
 _DZ_LABEL_SHORT = r"분\s*류\s*기\s*호(?![를은는이가]\s*기재)"
-_DZ_STOP = r"(?:처\s*방|의료인|면허\s*종|※|환자의\s*요구)"
+_DZ_STOP = (
+    r"(?:처\s*방|의료인|면허\s*종|※|환자의\s*요구|교\s*부)"  # 같은 줄의 "교부일: 2026년 …"까지 코드로 읽지 않게 (#237)
+)
 
 
 def _add_conf(row: "Row", c: Any) -> None:
@@ -42,6 +44,7 @@ class Row:
     )  # 약봉투: 약국이 약 아래에 인쇄한 복약 안내 표시 · 문장 (pouch_guide)
     cut: bool = False  # 이름 끝이 "···"로 잘려 있음 (약봉투). 뒷부분(함량 등)이 없어서 사용자가 확인한다
     confs: list[float] = field(default_factory=list)  # 이름을 이룬 글자 조각들의 CLOVA 인식 신뢰도
+    timing: str | None = None  # 표에 "용법" 열이 있을 때 이 약 줄의 용법 칸 글자 (#237). 못 읽었으면 None
     nums_unsure: bool = False  # 숫자 줄이 이 약 줄과 이웃 약 줄의 한가운데쯤에 있어, 어느 약의 숫자인지 확실하지 않다. 사용자가 확인한다
 
     @property
@@ -58,6 +61,10 @@ class Table:
     headerless: bool = (
         False  # 약봉투에서 머리글 없이 "이름 + 숫자 3개" 목록을 읽음: 칸 순서(1회량 · 횟수 · 일수)는 추정이다
     )
+    has_timing_col: bool = (
+        False  # 머리글에 "용법" 칸이 있음 (#237). 이 경우 약마다 그 칸에서만 읽고, 못 읽은 줄은 비워 둔다
+    )
+    tail_text: str = ""  # 표 끝("용법:" 문구, 사용기간 등) 뒤의 글. 표 아래 "용법:" 한 줄은 여기서만 찾는다 (#237)
 
 
 def _merge_split_heads(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -142,6 +149,50 @@ def join_code_boxes(raw: str) -> str:
         lambda m: "".join(g for g in m.groups() if g),
         raw,
     )
+
+
+def _read_timing_column(
+    fields: list[dict[str, Any]],
+    rows: list[Row],
+    head: int,
+    col_x: dict[int, float],
+    head_y: float,
+    level_y: Any,
+    end: int,
+) -> bool:
+    """머리글 줄에 "용법" 칸이 있으면(투약일수 오른쪽) 약 줄마다 그 칸의 글자를 읽어 Row.timing에 담는다.
+    표 위의 "용법"을 처방전 전체 글에서 한 번만 읽어 모든 약에 붙이면, 칸 뒤의 다른 약 줄까지 읽힌다 (#237, 11/4 E2E).
+    줄에 맞는 글자가 없으면 비워 둔다. 용법 칸이 없는 양식(표 아래 "용법: …" 한 줄)은 건드리지 않는다"""
+    if 2 not in col_x or not rows:
+        return False
+    hh = _box_height(fields[head])
+    yong = next(
+        (
+            f
+            for f in fields
+            if f["inferText"].startswith("용법") and abs(level_y(f) - head_y) <= hh and center(f)[0] > col_x[2] + 20
+        ),
+        None,
+    )
+    if yong is None:
+        return False
+    left = (col_x[2] + center(yong)[0]) / 2  # 일수 칸과 용법 칸 머리글의 가운데보다 오른쪽 글자가 용법 칸의 것이다
+    floor = min((level_y(f) for f in fields[end:] if _TABLE_END.match(f["inferText"])), default=float("inf"))
+    cells: dict[int, list[dict[str, Any]]] = {}
+    for f in fields:
+        if f is yong or _NUM.fullmatch(f["inferText"]) or center(f)[0] < left:
+            continue
+        y = level_y(f)
+        if y <= head_y + 5 or y >= floor:
+            continue
+        i = min(range(len(rows)), key=lambda i: abs(rows[i].y - y))
+        if abs(rows[i].y - y) <= 40:
+            cells.setdefault(i, []).append(f)
+    for i, group in cells.items():
+        group.sort(key=lambda f: (round(level_y(f) / 10), center(f)[0]))
+        text = " ".join(f["inferText"] for f in group).strip()
+        rows[i].timing = text[:50] or None
+    return True
 
 
 def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 폴더에서 검증한 코드를 그대로 옮긴 것이라 나누지 않음
@@ -247,11 +298,27 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
 
     nums.extend(out_of_slice)
     cnt = dict.fromkeys(col_x, 0)
-    for f in [*fields[start:end], *out_of_slice]:
-        if _NUM.fullmatch(f["inferText"]) and col_x:
-            k = min(col_x, key=lambda k: abs(col_x[k] - center(f)[0]))
-            if abs(col_x[k] - center(f)[0]) <= 120:
-                cnt[k] += 1
+    if col_x:
+        # 줄마다 숫자를 모아 한 줄에 칸 수만큼 읽혔으면 왼쪽부터 순서대로 칸에 넣어 센다 (약 줄에 숫자를 쓰는 것과 같은 방식).
+        # 머리글 가운데에서 먼 칸(넓은 칸의 왼쪽에 찍힌 숫자)을 가까운 옆 칸으로 세면 한 칸이 부풀어 줄 수 확인 안내가 거짓으로 뜬다 (#237 11/4 분석 37번)
+        order = sorted(col_x, key=lambda k: col_x[k])
+        by_line: list[list[dict[str, Any]]] = []
+        cands = [f for f in [*fields[start:end], *out_of_slice] if _NUM.fullmatch(f["inferText"])]
+        for f in sorted(cands, key=level_y):
+            if by_line and abs(level_y(f) - level_y(by_line[-1][0])) <= min_gap:
+                by_line[-1].append(f)
+            else:
+                by_line.append([f])
+        for grp in by_line:
+            grp.sort(key=lambda f: center(f)[0])
+            if len(grp) == len(order):
+                for k in order:
+                    cnt[k] += 1
+                continue
+            for f in grp:
+                k = min(col_x, key=lambda k: abs(col_x[k] - center(f)[0]))
+                if abs(col_x[k] - center(f)[0]) <= 120:
+                    cnt[k] += 1
     n_anchor = max(cnt.values(), default=0)
     if n_anchor >= 2 and len(lines) > 1:
         big = sorted(range(1, len(lines)), key=lambda i: lines[i]["y"] - lines[i - 1]["y"], reverse=True)[
@@ -320,4 +387,11 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
     )
     raw = re.sub(r"\s*질병\s*", " ", dz[1]).strip() if dz else None
     raw = raw or _disease_by_position(fields)
-    return Table(rows=rows, n_anchor=n_anchor, disease_raw=join_code_boxes(raw) if raw else None)
+    has_timing_col = _read_timing_column(fields, rows, head, col_x, head_y, level_y, end)
+    return Table(
+        rows=rows,
+        n_anchor=n_anchor,
+        disease_raw=join_code_boxes(raw) if raw else None,
+        has_timing_col=has_timing_col,
+        tail_text=" ".join(tokens[end:]),
+    )

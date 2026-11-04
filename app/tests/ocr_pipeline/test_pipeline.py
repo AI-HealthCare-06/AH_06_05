@@ -2,6 +2,7 @@
 
 import json
 from datetime import date
+from pathlib import Path
 
 from app.services.ocr import clova, icd, numeric
 from app.services.ocr.matcher import AMBIGUOUS, FOUND, NOT_FOUND, NameMatcher
@@ -578,3 +579,175 @@ def test_numbers_halfway_between_two_drugs_are_confirmed_by_the_user():
     middle = read(_two_drugs(30), matcher(), CODES, today=TODAY)  # 이름 줄과 이름 줄의 한가운데
     assert [r.decision.status for r in middle.rows] == [AMBIGUOUS, AMBIGUOUS]
     assert all(NUMS_FLAG in r.flags for r in middle.rows)  # 어느 약의 숫자인지 확실하지 않으니 사용자가 확인한다
+
+
+# ── #237 (11/4 E2E): 용법 · 병원 이름 · 질병분류기호가 옆 칸 글자까지 읽히던 문제 ──────────────────────
+def _237_layout(with_yongbeop_column: bool, tail: list[dict] | None = None) -> dict:
+    """병원 이름 줄(전화 · 질병분류기호 · 교부일이 같은 줄), 용법 칸이 있는 표, 표 아래 문구"""
+    top = [
+        _fld("의료기관", 50, 20, 70),
+        _fld("명칭", 125, 20, 40),
+        _fld(":", 170, 20, 10),
+        _fld("가나다내과의원(가상)", 185, 20, 200),
+        _fld("전화:", 400, 20, 50),
+        _fld("(번호)", 455, 20, 60),
+        _fld("질병분류기호:", 520, 20, 120),
+        _fld("I10,", 645, 20, 40),
+        _fld("E11", 690, 20, 40),
+        _fld("교부일:", 740, 20, 60),
+        _fld("2026년", 805, 20, 60),
+        _fld("11월", 870, 20, 40),
+        _fld("03일", 915, 20, 40),
+    ]
+    head = [_fld("명칭", 100, 100), _fld("투약량", 380, 100), _fld("투여횟수", 480, 100), _fld("총투약일수", 580, 100)]
+    if with_yongbeop_column:
+        head.append(_fld("용법", 700, 100, 40))
+    body = []
+    drugs = (
+        (200, "리피토정10밀리그램", (1, 1, 30), ["저녁", "식후"]),
+        (260, "다이아벡스정500밀리그램", (1, 2, 30), ["아침", "저녁", "식후", "30분"]),
+    )
+    for y, name, nums, timing in drugs:
+        body.append(_fld(name, 100, y, 200))
+        body += [_fld(str(v), x, y, 20) for x, v in zip((400, 500, 600), nums, strict=True)]
+        if with_yongbeop_column:
+            body += [_fld(w, 700 + i * 50, y, 45) for i, w in enumerate(timing)]
+    return {"images": [{"fields": top + head + body + (tail or [])}]}
+
+
+def test_yongbeop_column_is_read_per_drug_row():
+    from app.services.ocr.table import parse_table
+
+    t = parse_table(_237_layout(True))
+    assert t is not None
+    assert [(r.name, r.nums, r.timing) for r in t.rows] == [
+        ("리피토정10밀리그램", [1.0, 1.0, 30.0], "저녁 식후"),
+        ("다이아벡스정500밀리그램", [1.0, 2.0, 30.0], "아침 저녁 식후 30분"),
+    ]  # 앞 약 줄의 용법이 뒤 약 줄로 번지지 않는다
+
+
+def test_yongbeop_per_row_reaches_the_rows_read():
+    res = read(_237_layout(True), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["저녁 식후", "아침 저녁 식후 30분"]
+
+
+def test_row_whose_yongbeop_cell_is_unread_stays_empty_when_the_form_has_a_yongbeop_column():
+    tail = [
+        _fld("조제시", 100, 700),
+        _fld("용법:", 100, 800, 50),
+        _fld("식후", 160, 800, 40),
+        _fld("복용", 205, 800, 40),
+    ]
+    d = _237_layout(True, tail)
+    d["images"][0]["fields"] = [
+        f
+        for f in d["images"][0]["fields"]
+        if not (f["inferText"] in ("아침", "저녁", "식후", "30분") and f["boundingPoly"]["vertices"][0]["y"] == 260)
+    ]  # 둘째 약 줄의 용법 칸 글자를 모두 못 읽음
+    res = read(d, matcher(), CODES, today=TODAY)
+    assert res.rows[0].timing == "저녁 식후"
+    assert (
+        res.rows[1].timing is None
+    )  # 이슈 #237: 못 읽으면 비워 두기 (다른 약의 용법이나 표 아래 문구로 채우지 않는다)
+
+
+def test_no_yongbeop_column_keeps_the_single_text_below_the_table():
+    tail = [
+        _fld("조제시", 100, 700),
+        _fld("용법:", 100, 800, 50),
+        _fld("식후", 160, 800, 40),
+        _fld("30분", 205, 800, 40),
+    ]
+    res = read(_237_layout(False, tail), matcher(), CODES, today=TODAY)
+    assert res.timing == "식후 30분"
+    assert [r.timing for r in res.rows] == ["식후 30분", "식후 30분"]  # 칸이 없는 양식: 모든 약 공통
+
+
+def test_header_yongbeop_word_is_not_read_as_the_timing_text():
+    res = read(_237_layout(True), matcher(), CODES, today=TODAY)
+    assert res.timing is None  # 표 머리글의 "용법" 칸 뒤 글자 (옆 약 줄)를 처방전 공통 용법으로 읽지 않는다
+
+
+def test_hospital_name_stops_at_the_next_label_even_with_a_colon_and_phone():
+    res = read(_237_layout(True), matcher(), CODES, today=TODAY)
+    assert res.hospital_name == "가나다내과의원(가상)"
+
+
+def test_hospital_name_too_long_is_left_empty():
+    from app.services.ocr.pipeline import _hospital
+
+    assert _hospital("의료기관 명칭 " + "가" * 41 + " 전화번호 02") is None
+    assert _hospital("의료기관 명칭 " + "가" * 40 + " 전화번호 02") == "가" * 40
+    assert _hospital("의료기관 명칭 : 가나다의원 팩스 02") == "가나다의원"
+    assert _hospital("처방전 본문") is None
+
+
+def test_sample_prescription_hospital_and_timing_are_unchanged():
+    res = read(SAMPLE, matcher(), CODES, today=TODAY)
+    assert res.hospital_name == "가나다내과의원 (가상)"
+    assert res.timing == "식후 30분 복용"
+    assert [r.timing for r in res.rows] == ["식후 30분 복용"] * 4
+
+
+def test_disease_codes_do_not_include_the_issue_date_on_the_same_line():
+    res = read(_237_layout(True), matcher(), CODES, today=TODAY)
+    assert [d.raw for d in res.diseases] == ["I10", "E11"]
+    assert all(d.status == icd.NORMAL for d in res.diseases)
+
+
+def test_non_code_tokens_are_skipped_by_fix_field():
+    assert icd.fix_field(": I10, E11 교부일: 2026년 11월 03일", CODES) == icd.fix_field("I10, E11", CODES)
+    for tok in ("교부일:", "2026.11.03", "2026-11-03", "2026년", "처방"):
+        assert icd.not_a_code(tok), tok
+    for tok in ("I10", "E11", "M54.5", "l10", "E1L"):
+        assert not icd.not_a_code(tok), tok
+
+
+def test_disease_confidence_ignores_the_neighbouring_cells_after_the_code():
+    # "교부일:" 같은 옆 칸 글자의 확실도가 낮아도 코드 확실도(질환 자동 확정)에 섞이지 않는다
+    d = _237_layout(True)
+    for f in d["images"][0]["fields"]:
+        if f["inferText"] in (":", "교부일:", "2026년", "11월"):
+            f["inferConfidence"] = 0.30
+    res = read(d, matcher(), CODES, today=TODAY)
+    assert [(x.raw, x.confirmed) for x in res.diseases] == [("I10", True), ("E11", True)]
+
+
+def test_disease_confidence_still_uses_the_code_boxes():
+    d = _237_layout(True)
+    for f in d["images"][0]["fields"]:
+        if f["inferText"] == "E11":
+            f["inferConfidence"] = 0.60
+    res = read(d, matcher(), CODES, today=TODAY)
+    assert not any(x.confirmed for x in res.diseases)  # 코드 글자 자체가 흐리면 지금처럼 사용자가 확인한다
+
+
+# ── #237 실제 CLOVA 응답: 수인님이 11/3에 만든 가짜 처방전(배포 서버 분석 37번)을 그대로 읽은 결과 ──────────
+REAL_237 = json.loads((Path(__file__).parent / "clova_237_fake_prescription.json").read_text(encoding="utf-8"))
+PRODUCTS_237 = [
+    ("641900040", "노바스크정5밀리그람(암로디핀베실산염)_(6.944mg/1정)"),
+    ("644300010", "다이아벡스정500밀리그램(메트포르민염산염)_(0.5g/1정)"),
+    ("645600020", "아토르스타정10밀리그램(아토르바스타틴칼슘삼수화물)_(10.85mg/1정)"),
+    ("648800030", "아스피린프로텍트정100밀리그람_(0.1g/1정)"),
+]
+
+
+def test_real_clova_237_each_drug_gets_its_own_timing_and_the_hospital_name_is_clean():
+    res = read(REAL_237, NameMatcher(PRODUCTS_237), CODES, today=date(2026, 11, 4))
+    assert res.status == "ok" and res.issued == date(2026, 11, 3)
+    assert [r.decision.candidates[0].edi_code for r in res.rows] == ["645600020", "644300010", "641900040", "648800030"]
+    assert [(r.dose, r.times, r.days) for r in res.rows] == [(1, 1, 30), (1, 2, 30), (1, 1, 30), (1, 1, 30)]
+    assert [r.timing for r in res.rows] == ["저녁 식후", "아침 저녁 식후", "아침 식후", "아침 식후"]
+    assert res.hospital_name == "가나다내과의원(가상)" and res.timing is None
+    # 숫자가 넓은 칸의 왼쪽에 찍혀 머리글 가운데에서 멀어도 칸마다 4개로 세어 "약 줄 수가 다를 수 있어요" 안내가 거짓으로 뜨지 않는다 (main에서는 7개로 셌음)
+    assert not res.row_count_mismatch
+
+
+def test_real_clova_237_disease_codes_have_no_neighbour_cells():
+    res = read(REAL_237, NameMatcher(PRODUCTS_237), CODES, today=date(2026, 11, 4))
+    assert [(d.raw, d.status, d.value) for d in res.diseases] == [
+        ("I10", icd.NORMAL, "I10"),
+        ("E11", icd.NORMAL, "E11"),
+    ]
+    # CLOVA가 "I10,", "E11"을 0.76으로 읽어서(I와 1이 헷갈림) 자동 확정하지 않고 사용자가 고른다 (RG-05-E1). 옆 칸 글자 때문이 아니다
+    assert not any(d.confirmed for d in res.diseases) and {d.conf for d in res.diseases} == {0.76}
