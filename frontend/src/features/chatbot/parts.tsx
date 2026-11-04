@@ -172,7 +172,7 @@ export function AnswerBubble({ m, reveal = false }: { m: Message; reveal?: boole
       {shown.done && m.action === 'open_analysis' && <AnalysisButton />}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         {shown.done && <SpeakButton id={String(m.id)} text={spoken} />}
-        {shown.done && FEEDBACK_ON.includes(type) && !m.noFeedback && <Feedback />}
+        {shown.done && FEEDBACK_ON.includes(type) && !m.noFeedback && <Feedback id={String(m.id)} />}
       </View>
     </Card>
   );
@@ -191,52 +191,39 @@ function Pill({ label, on, onPress }: { label: string; on: boolean; onPress: () 
   );
 }
 
-// [도움 됐어요] [답변이 이상해요]: 누르면 바로 바뀌고, 같은 것을 다시 누르면 취소, 반대쪽을 누르면 바뀜 (설계 메모 4-3 항목)
-// "이상해요"는 이유 창을 띄우고 이유를 안 골라도 닫을 수 있음. 피드백 API가 없어 이 창에서만 기억함
-type Choice = { kind: 'good' } | { kind: 'bad'; reason?: string } | null;
+// [도움 됐어요] [답변이 이상해요]: 한 번 고르면 버튼을 숨기고 "알려 주셔서 고마워요"만 남김 (11/4 E2E: 버튼이 남아 계속 누를 수 있었음, 수인 결정).
+// "이상해요"는 이유 창을 띄우고 이유를 안 골라도 닫으면 보낸 것으로 봄. 피드백 API(H-11)가 없어 앱을 켜 둔 동안만 답 번호로 기억함
+const sentFeedback = new Map<string, 'good' | 'bad'>();
 
-function Feedback() {
-  const [choice, setChoice] = useState<Choice>(null);
+function Feedback({ id }: { id: string }) {
+  const [sent, setSent] = useState(sentFeedback.get(id) ?? null);
   const [asking, setAsking] = useState(false);
-  const [thanks, setThanks] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
-  const thank = () => {
-    setThanks(true);
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setThanks(false), 2000);
+  const done = (kind: 'good' | 'bad') => {
+    sentFeedback.set(id, kind);
+    setSent(kind);
   };
-  const pickGood = () => {
-    if (choice?.kind === 'good') return setChoice(null);
-    setChoice({ kind: 'good' }); // "이상해요"에서 바꾸면 골랐던 이유는 지움
-    thank();
-  };
-  const pickBad = () => {
-    if (choice?.kind === 'bad') return setChoice(null);
-    setChoice({ kind: 'bad' });
-    setAsking(true);
-  };
-  const close = (reason?: string) => {
+  const close = () => {
     setAsking(false);
-    if (reason) setChoice({ kind: 'bad', reason });
-    thank();
+    done('bad');
   };
+  if (sent) {
+    return (
+      <Text style={T.caption} accessibilityLiveRegion="polite">
+        {c.feedbackThanks}
+      </Text>
+    );
+  }
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-      <Pill label={c.feedbackGood} on={choice?.kind === 'good'} onPress={pickGood} />
-      <Pill label={c.feedbackBad} on={choice?.kind === 'bad'} onPress={pickBad} />
-      {thanks && (
-        <Text style={T.caption} accessibilityLiveRegion="polite">
-          {c.feedbackThanks}
-        </Text>
-      )}
-      <Modal visible={asking} transparent animationType="slide" onRequestClose={() => close()}>
-        <Pressable style={{ flex: 1, backgroundColor: C.dim, justifyContent: 'flex-end' }} onPress={() => close()}>
+      <Pill label={c.feedbackGood} on={false} onPress={() => done('good')} />
+      <Pill label={c.feedbackBad} on={asking} onPress={() => setAsking(true)} />
+      <Modal visible={asking} transparent animationType="slide" onRequestClose={close}>
+        <Pressable style={{ flex: 1, backgroundColor: C.dim, justifyContent: 'flex-end' }} onPress={close}>
           <Pressable style={{ backgroundColor: C.card, borderTopLeftRadius: R.card, borderTopRightRadius: R.card, padding: 20, gap: 10 }} accessibilityViewIsModal>
             {c.feedbackReasons.map((r) => (
-              <Btn key={r} label={r} kind="secondary" onPress={() => close(r)} />
+              <Btn key={r} label={r} kind="secondary" onPress={close} />
             ))}
-            <Btn label={c.feedbackClose} kind="ghost" onPress={() => close()} />
+            <Btn label={c.feedbackClose} kind="ghost" onPress={close} />
           </Pressable>
         </Pressable>
       </Modal>

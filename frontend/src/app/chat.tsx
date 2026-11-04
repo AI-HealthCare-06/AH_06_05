@@ -30,7 +30,7 @@ import { C, L, S, T } from '@/shared/theme';
 import { agreeRiskCheck, getConsents } from '@/features/common/api';
 import { riskCheckLater, setRiskCheckLater } from '@/shared/storage/chat';
 import { Btn, Card, ConsentText, Screen } from '@/shared/ui';
-import { CalendarIcon } from '@/shared/ui/icons';
+import { CalendarIcon, HomeIcon } from '@/shared/ui/icons';
 
 const c = copy.chatbot;
 const rc = copy.me; // 위험 판단용 AI 전달 동의 문구 (내 정보의 동의 내역과 같은 글)
@@ -182,33 +182,50 @@ export default function Chat() {
     <Screen
       title={c.title}
       onBack={() => router.back()}
+      backIcon="close" // 화면 위에 뜬 창이라 × 닫기 (설계 메모 4-1). 닫으면 열었던 화면으로 돌아감
+      backLabel={c.close}
       scroll={false}
       right={
-        // 지난 대화에서는 둘 다 숨김: 챗봇 → 달력 → 목록 → 챗봇으로 쌓이지 않게 (설계 메모 4-1)
-        past ? undefined : (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: chat.busy || chat.loading }}
-              onPress={chat.busy || chat.loading ? undefined : chat.startNew}
-              style={{ minHeight: L.touch, paddingHorizontal: 8, justifyContent: 'center', opacity: chat.busy || chat.loading ? 0.4 : 1 }}
-            >
-              <Text style={[T.label, { color: C.p700 }]}>{c.newChat}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={c.historyTitle}
-              hitSlop={8}
-              onPress={() => {
-                stopSpeaking();
-                router.push({ pathname: '/chat-history', params: chat.sessionId ? { current: chat.sessionId } : {} });
-              }}
-              style={{ width: L.touch, height: L.touch, alignItems: 'flex-end', justifyContent: 'center' }}
-            >
-              <CalendarIcon color={C.text2} />
-            </Pressable>
-          </View>
-        )
+        // 홈 아이콘은 늘 보임: 경고에서 연 챗봇은 홈까지 뒤로가 4번이라(11/3 E2E) 한 번에 감.
+        // 새 대화와 달력은 지난 대화에서 숨김: 챗봇 → 달력 → 목록 → 챗봇으로 쌓이지 않게 (설계 메모 4-1)
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={c.home}
+            hitSlop={8}
+            onPress={() => {
+              stopSpeaking();
+              router.dismissTo('/'); // 챗봇 위에 쌓인 창을 모두 걷고 홈 탭으로
+            }}
+            style={{ width: L.touch, height: L.touch, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <HomeIcon color={C.text2} size={24} />
+          </Pressable>
+          {past ? null : (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: chat.busy || chat.loading }}
+                onPress={chat.busy || chat.loading ? undefined : chat.startNew}
+                style={{ minHeight: L.touch, paddingHorizontal: 8, justifyContent: 'center', opacity: chat.busy || chat.loading ? 0.4 : 1 }}
+              >
+                <Text style={[T.label, { color: C.p700 }]}>{c.newChat}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={c.historyTitle}
+                hitSlop={8}
+                onPress={() => {
+                  stopSpeaking();
+                  router.push({ pathname: '/chat-history', params: chat.sessionId ? { current: chat.sessionId } : {} });
+                }}
+                style={{ width: L.touch, height: L.touch, alignItems: 'flex-end', justifyContent: 'center' }}
+              >
+                <CalendarIcon color={C.text2} />
+              </Pressable>
+            </>
+          )}
+        </View>
       }
     >
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>

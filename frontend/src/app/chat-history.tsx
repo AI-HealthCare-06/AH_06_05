@@ -28,10 +28,10 @@ function Arrow({ label, text, onPress }: { label: string; text: string; onPress?
   );
 }
 
-function Dot({ color, label }: { color: string; label: string }) {
+function Dot({ color, label, ring = false }: { color: string; label: string; ring?: boolean }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: color }} />
+      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: ring ? 'transparent' : color, borderWidth: ring ? 2 : 0, borderColor: color }} />
       <Text style={T.caption}>{label}</Text>
     </View>
   );
@@ -109,8 +109,9 @@ export default function ChatHistory() {
                   onPress={has ? () => router.push({ pathname: '/chat-history-day', params: { date, current: current ?? '' } }) : undefined}
                   style={{ width: WIDTH, height: CELL, alignItems: 'center', justifyContent: 'center' }}
                 >
-                  <View style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: isToday ? C.p600 : has ? C.p100 : 'transparent' }}>
-                    <Text style={{ fontSize: 16, fontWeight: has || isToday ? '700' : '400', color: isToday ? C.onPrimary : has ? C.p700 : C.text3 }}>{i + 1}</Text>
+                  {/* 오늘은 테두리, 기록 있음은 채움. 전에는 오늘을 진하게 채워 기록이 없어 눌리지 않는 날도 눌릴 것처럼 보였음 (11/4 E2E) */}
+                  <View style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: has ? C.p100 : 'transparent', borderWidth: isToday ? 2 : 0, borderColor: C.p600 }}>
+                    <Text style={{ fontSize: 16, fontWeight: has || isToday ? '700' : '400', color: has || isToday ? C.p700 : C.text3 }}>{i + 1}</Text>
                   </View>
                 </Pressable>
               );
@@ -118,7 +119,7 @@ export default function ChatHistory() {
           </View>
           <View style={{ flexDirection: 'row', gap: 16, paddingTop: 4 }}>
             <Dot color={C.p100} label={c.legendHas} />
-            <Dot color={C.p600} label={c.legendToday} />
+            <Dot color={C.p600} label={c.legendToday} ring />
           </View>
         </Card>
         {state === 'loading' && <ActivityIndicator color={C.p600} />}

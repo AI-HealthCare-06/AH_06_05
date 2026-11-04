@@ -43,6 +43,15 @@ export function BackIcon({ color = C.text, size = 24 }: IconProps) {
   );
 }
 
+// 닫기 × (챗봇 창 머리: 설계 메모 4-1 "제목 + 달력 + × 닫기")
+export function CloseIcon({ color = C.text, size = 24 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" {...line} strokeWidth={2.2} stroke={color}>
+      <Path d="M6 6l12 12M18 6 6 18" />
+    </Svg>
+  );
+}
+
 // 문서 (근거와 출처 카드 머리)
 // 달력 (챗봇 창 머리, 대화 기록)
 export function CalendarIcon({ color = C.text2, size = 24 }: IconProps) {
