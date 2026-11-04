@@ -107,6 +107,7 @@ export const copy = {
     lockedLeft: (mmss: string) => `남은 시간  ${mmss}`,
     lockedSubmit: (mmss: string) => `로그인  (${mmss} 후 가능)`,
     expired: '다시 로그인해 주세요', // 로그인이 끝났을 때 (API 명세서 TOKEN_EXPIRED, CM-08 문구)
+    withdrawn: '탈퇴했어요.\n같은 이메일로 다시 가입할 수 있어요.', // 탈퇴 직후 로그인 화면 (11/4 E2E, 제안, Figma 반영 전). 휴대폰 폭에서 "요."만 넘어가지 않게 문장마다 줄을 나눔
   },
   // OC-01 촬영 · 업로드, OC-01-E1~E3 예외 (프로토타입 Capture, Exception 문구)
   capture: {
