@@ -51,6 +51,14 @@
 //   새 분석이 끝나면 다음 질문부터 새 분석을 써서 chat_sessions.analysis_id가 A에서 B로 바뀜. 그래도 R-8로 A를 지울 때 이 칸으로 대화를 찾아 지움.
 //   예전 답 줄은 비어 있음(채우지 않음). FK는 set null, R-8은 같은 트랜잭션에서 대화를 먼저 지움. 마이그레이션 19번.
 //
+// [v1.5 초안 추가, 2026-11-04, 채연] 배포된 서버(main 4bc626b, 마이그레이션 24번까지)와 맞춤. 10/23: 새 표 prescription_file_hashes(마이그레이션 15번),
+//   ocr_jobs.photos(16번). 11/2: chat_messages.chips, drug_match, image_result(20, 21, 23번), user_consents.consent_type에 risk_check(22번),
+//   새 표 chat_photo_uses(24번). 11/4 배포(b4830d4, 4bc626b)에는 마이그레이션이 없음.
+// [v1.5 초안 추가, 2026-11-04, 채연] 배포 서버(main 4bc626b, 마이그레이션 24번)와 맞춤. 새 표 prescription_file_hashes, chat_photo_uses, ocr_jobs.photos,
+//   chat_messages.chips, drug_match, image_result, user_consents.consent_type의 risk_check는 위에서 반영. 이번에 analysis_prescriptions와 analysis_diseases를
+//   복합 PK에서 id + 유일 제약으로, analysis_diseases.disease_code를 disease_id로 바꿈. prescription_items와 prescription_item_candidates의 item_seq는 배포 DB에 없고
+//   후보의 edi_code는 필수. 배포 PostgreSQL에 없는 표(안전성 점검 표는 safety.sqlite, 생활습관 표는 팩트표 파일, rewards 등)는 Note에 표시만 하고 지우지 않음.
+//
 // [v1.4, 2026-10-08, 채연] 팩트표 v0.12 반영. lifestyle_guides에 group_type(위험 신호, 교차 규칙을 같은 표에 담음),
 //   requires_clinician, goal_eligible, applies_when, show_when_unknown, condition, user_message 추가. lifestyle_guide_actions에 kind(fact 또는
 //   safety_notice), scope, use_in_answer 추가하고 source_id는 비워도 되게 바꿈(출처는 새 표 lifestyle_source_links로). 새 표
@@ -95,7 +103,7 @@ Table users {
 Table user_consents {
   id           bigint      [pk, increment]
   user_id      bigint      [ref: > users.id, not null]
-  consent_type varchar(30) [not null, note: 'terms / privacy / sensitive_health']
+  consent_type varchar(30) [not null, note: 'terms / privacy / sensitive_health / risk_check. risk_check(v1.5)는 질문 글을 위험 판단 AI 서비스(TypeSafe, 미국)로 보내는 선택 동의 (11/2, 마이그레이션 22번)']
   agreed       boolean     [not null]
   agreed_at    timestamp
   withdrawn_at timestamp   [note: '철회 시각. sensitive_health 철회 시 업로드 · 분석 불가 (🟡 기존 기록 처리 팀 결정)']
@@ -132,6 +140,7 @@ Table ocr_jobs {
   file_count    smallint    [not null, note: '한 번에 올린 사진 수 (최대 5)']
   error_code    varchar(50) [note: '전체 실패 시 OCR_FAILED 등']
   duplicates    jsonb       [note: 'v1.5 이미 있는 처방전이라 새로 저장하지 않은 사진 [{fileIndex, prescriptionId}] (10/14 중복 처방전 처리)']
+  photos        jsonb       [note: 'v1.5 임시 저장한 사진의 위치 [{fileIndex, key}]. 24시간 뒤 지우고 null로 비움. 사진을 저장하지 않는 서버는 null (마이그레이션 16번, 10/23)']
   created_at    timestamp   [default: `now()`]
   finished_at   timestamp
 
@@ -156,6 +165,19 @@ Table prescriptions {
   Note: '사진 1장 = 1행. 업로드된 원본 이미지는 OCR 처리 후 즉시 폐기'
 }
 
+Table prescription_file_hashes {
+  id              bigint      [pk, increment]
+  user_id         bigint      [ref: > users.id, not null]
+  prescription_id bigint      [ref: > prescriptions.id, not null, note: '처방전을 지우면 같이 지움 (ON DELETE CASCADE). 탈퇴와 동의 철회(U-3, U-5)에서 처방전과 함께 지워짐']
+  file_hash       varchar(64) [not null, note: '올린 파일의 SHA-256. 인덱스']
+  created_at      timestamp   [default: `now()`]
+
+  indexes {
+    (prescription_id, file_hash) [unique]
+  }
+  Note: 'v1.5 신규 · 올린 파일의 SHA-256와 그 파일에서 나온 처방전. 같은 사용자가 같은 파일을 다시 올렸는지 OCR을 부르기 전에 봄(O-5 duplicatedFiles). 사진을 지운 뒤에도 남음. 여러 쪽 PDF는 쪽마다 한 줄 (마이그레이션 15번, 10/23)'
+}
+
 Table prescription_diseases {
   id              bigint      [pk, increment, note: 'v1.3 · 코드 맞춤 (Tortoise는 복합 PK 미지원)']
   prescription_id bigint      [ref: > prescriptions.id, not null]
@@ -173,7 +195,7 @@ Table prescription_items {
   id              bigint        [pk, increment]
   prescription_id bigint        [ref: > prescriptions.id, not null]
   edi_code        varchar(9)    [ref: > drug_products.edi_code, note: '매칭 실패 · 제외 · 급여목록에 없는 약이면 null']
-  item_seq        varchar(9)    [ref: > drug_details.item_seq, note: 'v1.3 · 급여목록에 없는 약(일반약 등)만 채움 — 있는 약은 edi_code로 약 정보까지 이어짐']
+  item_seq        varchar(9)    [ref: > drug_details.item_seq, note: '[11/4 기준 배포 DB에 없음, drug_details 표를 만들지 않아 이 칸이 없음] v1.3 · 급여목록에 없는 약(일반약 등)만 채움 — 있는 약은 edi_code로 약 정보까지 이어짐']
   raw_name        varchar(300)  [not null, note: 'OCR이 읽은 원문 약품명']
   match_score     decimal(5,4)
   match_status    varchar(20)   [not null, note: 'v1.0 · auto / needs_confirm / user_confirmed / unmatched / excluded(빼고 진행)']
@@ -191,8 +213,8 @@ Table prescription_item_candidates {
   id        bigint       [pk, increment, note: 'v1.3 · 코드 맞춤 (Tortoise는 복합 PK 미지원)']
   item_id   bigint       [ref: > prescription_items.id, not null]
   rank      smallint     [not null]
-  edi_code  varchar(9)   [ref: > drug_products.edi_code, note: '급여목록에 있는 약']
-  item_seq  varchar(9)   [ref: > drug_details.item_seq, note: 'v1.3 · 급여목록에 없는 약']
+  edi_code  varchar(9)   [ref: > drug_products.edi_code, not null, note: '급여목록에 있는 약. 11/4 배포 DB는 이 칸이 필수 (급여목록에 있는 약만 후보로 둠)']
+  item_seq  varchar(9)   [ref: > drug_details.item_seq, note: '[11/4 기준 배포 DB에 없음, drug_details 표를 만들지 않아 이 칸이 없음] v1.3 · 급여목록에 없는 약']
   score     decimal(5,4)
 
   indexes {
@@ -209,7 +231,7 @@ Table health_checkups {
   ocr_raw_text text
   created_at   timestamp [default: `now()`]
 
-  Note: '보류 (REQ-015 · 멘토링 확인 후 결정)'
+  Note: '[11/4 기준 배포 DB에 없음] 보류 (REQ-015 · 멘토링 확인 후 결정)'
 }
 
 Table checkup_results {
@@ -219,7 +241,7 @@ Table checkup_results {
   value_num   decimal(12,3)
   value_text  varchar(200)
 
-  Note: '보류 (REQ-015)'
+  Note: '[11/4 기준 배포 DB에 없음] 보류 (REQ-015)'
 }
 
 
@@ -245,18 +267,28 @@ Table analyses {
 }
 
 Table analysis_prescriptions {
-  analysis_id     bigint [pk, ref: > analyses.id]
-  prescription_id bigint [pk, ref: > prescriptions.id]
+  id              bigint [pk, increment]
+  analysis_id     bigint [ref: > analyses.id, not null]
+  prescription_id bigint [ref: > prescriptions.id, not null]
 
-  Note: 'v1.0 신규 · 여러 병원 처방전을 한 번에 점검 (최대 5장, REQ-013)'
+  indexes {
+    (analysis_id, prescription_id) [unique]
+  }
+
+  Note: 'v1.0 신규 · 여러 병원 처방전을 한 번에 점검 (최대 5장, REQ-013) · 11/4 배포 DB 맞춤: 복합 PK 대신 id를 두고 두 칸을 유일로 묶음 (Tortoise는 복합 PK 미지원)'
 }
 
 Table analysis_diseases {
-  analysis_id  bigint      [pk, ref: > analyses.id]
-  disease_code varchar(10) [pk, ref: > diseases.code]
+  id          bigint      [pk, increment]
+  analysis_id bigint      [ref: > analyses.id, not null]
+  disease_id  varchar(10) [ref: > diseases.code, not null, note: '값은 상병기호. 11/4 배포 DB의 칸 이름']
   origin       varchar(20) [not null, note: 'prescription(처방전 코드) / profile(내 정보 질환, 대표 질병분류기호로 바꿔 넣음. 처방전에 같은 질환이 있으면 넣지 않음, 10/19 합의, #101) / user(RG-05-E1에서 직접 선택)']
 
-  Note: 'v1.0 신규 · 생활습관 가이드 조회 기준'
+  indexes {
+    (analysis_id, disease_id) [unique]
+  }
+
+  Note: 'v1.0 신규 · 생활습관 가이드 조회 기준 · 11/4 배포 DB 맞춤: 복합 PK 대신 id를 두고 (analysis_id, disease_id)를 유일로 묶음'
 }
 
 Table analysis_warnings {
@@ -356,6 +388,9 @@ Table chat_messages {
   safety      jsonb       [note: 'v1.5, 서버가 감지한 긴급, 자해 결과 { types, overdose, rule }. answer_type이 emergency, crisis인 답에만. 원문은 담지 않음 (이슈 #100, 수인 10/22)']
   route_kind  varchar(20) [note: 'v1.5, 답 줄만. 답을 만든 갈래(Route.kind: emergency, crisis, medication, lifestyle, refer, clarify, out_of_scope). out_of_scope면 다음 질문의 대화 기억에서 뺌. H-2 응답에는 내보내지 않음 (#140, 수인 10/28)']
   analysis_id bigint      [ref: > analyses.id, note: 'v1.5, 답 줄만. 이 답이 쓴 분석. 대화의 분석이 바뀌어도(같은 날 A에서 B로) R-8로 A를 지울 때 이 대화를 찾음. H-2 응답에는 내보내지 않음. FK는 set null (#159, 수인 11/1)']
+  chips       jsonb       [note: 'v1.5, 답 줄만. 되물음(clarify) 아래 예상 답 칩 ["아침 약이요"]. 15자 안, 3개까지 (11/2, 마이그레이션 20번)']
+  drug_match  jsonb       [note: 'v1.5, 답 줄만. 질문의 약 이름 맞추기 { status, items }(O-4 모양) (11/2, 마이그레이션 21번)']
+  image_result varchar(20) [note: 'v1.5, 답 줄만. 사진 첨부의 종류 prescription / drug / unreadable (CB-04, H-9) (11/2, 마이그레이션 23번)']
   status      varchar(20) [not null, default: 'done', note: 'v1.5 · generating / done. 화면을 나갔다 와도 만드는 중인 답을 알 수 있게 (이슈 #88). 사용자 줄은 늘 done. 실패(failed)는 두지 않음: 서버가 실패하면 만드는 중이던 줄을 지우고 앱이 E6을 보여 줌. 30초를 넘긴 줄은 다시 시도 때 지움 (수인 10/12 확정, 줄을 지우는 것은 10/22 #100)']
   model       varchar(50) [note: 'v1.5 · 답을 만든 모델 이름 (예: gpt-4o-mini). 답변마다 비용과 시간을 재려고 둠 (이슈 #88). assistant 줄만 채움 (수인 10/12 확정)']
   prompt_tokens     int   [note: 'v1.5 · 입력 토큰 수. 답 하나에 AI를 여러 번 부르면 합친 값. assistant 줄만 채움 (이슈 #88)']
@@ -366,6 +401,14 @@ Table chat_messages {
   indexes {
     (session_id, client_request_id) [unique]
   }
+}
+
+Table chat_photo_uses {
+  id         bigint      [pk, increment]
+  user_id    bigint      [ref: > users.id, not null, note: '탈퇴와 동의 철회(U-3, U-5) 때 코드가 지움 (users 행은 탈퇴 뒤에도 남음)']
+  created_at timestamp   [default: `now()`]
+
+  Note: 'v1.5 신규 · 챗봇 사진 첨부(H-9)로 OCR을 부른 기록. O-1 업로드와 합쳐 하루 사진 상한(OCR_DAILY_FILE_LIMIT)을 셈. CLOVA를 부르기 전에 남기므로 읽기에 실패해도 한 번 쓴 것으로 셈 (마이그레이션 24번, 11/2)'
 }
 
 
@@ -432,6 +475,7 @@ Table rewards {
   created_at  timestamp   [default: `now()`]
 
   indexes { (user_id, reward_date, reward_type, record_id) [unique, note: '중복 지급 방지 (REQ-113). v1.3 · NULLS NOT DISTINCT — record_id가 빈 all_done도 하루 1번만 (PostgreSQL 15+, Tortoise로 안 만들어져 마이그레이션에 SQL 직접)'] }
+  Note: '[11/4 기준 배포 DB에 없음, 포인트는 뒤로 미룸]'
 }
 
 
@@ -476,7 +520,7 @@ Table drug_details {
   chart       varchar(300) [note: '성상 — 낱알 식별에 활용 가능']
   embedding_id varchar(100) [note: '벡터DB 문서 ID (RAG 검색용)']
 
-  Note: 'XML 파싱 시 <ARTICLE title="..."> 속성과 CDATA 양쪽에서 내용 추출 필요. 허가정보는 EDI 코드가 없는 품목이 많고(10/2에 받은 42,707건 중 허가가 살아 있는 35,194건 가운데 14,436건) 한 품목에 EDI 코드가 여러 개인 경우도 있어서(858건) item_seq를 키로 씀. 허가 취소 품목은 뺌'
+  Note: '[11/4 기준 배포 DB에 없음] XML 파싱 시 <ARTICLE title="..."> 속성과 CDATA 양쪽에서 내용 추출 필요. 허가정보는 EDI 코드가 없는 품목이 많고(10/2에 받은 42,707건 중 허가가 살아 있는 35,194건 가운데 14,436건) 한 품목에 EDI 코드가 여러 개인 경우도 있어서(858건) item_seq를 키로 씀. 허가 취소 품목은 뺌'
 }
 
 
@@ -494,7 +538,7 @@ Table dur_interaction {
   notice_date  date        [note: '고시일자']
   notice_no    varchar(10)
 
-  Note: 'm.db TBJBD43 기준 성분쌍 97,326건 (제품 단위 CSV 873,147행을 정규화)'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 안전성 점검은 safety.sqlite에서 읽음] m.db TBJBD43 기준 성분쌍 97,326건 (제품 단위 CSV 873,147행을 정규화)'
 }
 
 Table dur_interaction_exception {
@@ -502,7 +546,7 @@ Table dur_interaction_exception {
   ingr_code_b varchar(9) [pk]
   edi_code    varchar(9) [pk, note: '이 제품은 금기에서 제외']
 
-  Note: 'm.db TBJBD46. CSV에는 없는 데이터 — 없으면 오탐 발생'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 안전성 점검은 safety.sqlite에서 읽음] m.db TBJBD46. CSV에는 없는 데이터 — 없으면 오탐 발생'
 }
 
 Table dur_elderly {
@@ -511,7 +555,7 @@ Table dur_elderly {
   reason      text
   notice_date date
 
-  Note: 'm.db TBDUC230 + 노인주의 CSV. 고령 타겟의 핵심'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 안전성 점검은 safety.sqlite에서 읽음] m.db TBDUC230 + 노인주의 CSV. 고령 타겟의 핵심'
 }
 
 Table dur_age_limit {
@@ -521,6 +565,7 @@ Table dur_age_limit {
   age_condition varchar(10) [note: '미만 / 이하 / 이상']
   reason       text
   notice_date  date
+  Note: '[11/4 기준 PostgreSQL에는 없음, 안전성 점검은 safety.sqlite에서 읽음]'
 }
 
 Table dur_pregnancy {
@@ -528,6 +573,7 @@ Table dur_pregnancy {
   grade       varchar(2) [note: '금기등급']
   reason      text
   notice_date date
+  Note: '[11/4 기준 배포 DB에 없음]'
 }
 
 Table dur_dose_limit {
@@ -536,7 +582,7 @@ Table dur_dose_limit {
   max_daily_text  varchar(100)
   max_period_days smallint      [note: '최대 투여기간']
 
-  Note: 'm.db TBDUC200/202. prescription_items의 1일 총량과 비교해 과용량 검출'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 안전성 점검은 safety.sqlite에서 읽음] m.db TBDUC200/202. prescription_items의 1일 총량과 비교해 과용량 검출'
 }
 
 
@@ -550,7 +596,7 @@ Table dup_ingredient {
   dur_ingr_code varchar(10) [not null, note: 'DH##### 형식']
   dur_ingr_name varchar(300)
 
-  Note: '동일성분 중복점검 29,051품목. dur_ingr_code가 같으면 동일 성분'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 안전성 점검은 safety.sqlite에서 읽음] 동일성분 중복점검 29,051품목. dur_ingr_code가 같으면 동일 성분'
 }
 
 Table dup_efficacy {
@@ -559,7 +605,7 @@ Table dup_efficacy {
   check_code     varchar(10) [not null, note: '효능군중복점검코드 — 같으면 중복']
   gnl_name       varchar(300)
 
-  Note: '효능군중복 11,718품목 / 점검코드 278개'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 안전성 점검은 safety.sqlite에서 읽음] 효능군중복 11,718품목 / 점검코드 278개'
 }
 
 
@@ -586,7 +632,7 @@ Table checkup_items {
   type_code  varchar(1)  [note: 'A=일반건강검진 1차']
   sub_code   varchar(4)
 
-  Note: '공단 건강검진검사항목코드 1,953건'
+  Note: '[11/4 기준 배포 DB에 없음] 공단 건강검진검사항목코드 1,953건'
 }
 
 Table lifestyle_diseases {
@@ -595,7 +641,7 @@ Table lifestyle_diseases {
   source_note varchar(500) [note: '이 질환에서 쓴 출처의 범위 메모. 지금은 허혈성심질환(IHD)만 있음']
   sort_order  smallint
 
-  Note: 'v1.5 초안. 생활습관 가이드가 다루는 질환 10개. 상병마스터 diseases(KCD 코드)와는 다른 표. 이름이 겹쳐서 lifestyle_ 를 붙임'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] v1.5 초안. 생활습관 가이드가 다루는 질환 10개. 상병마스터 diseases(KCD 코드)와는 다른 표. 이름이 겹쳐서 lifestyle_ 를 붙임'
 }
 
 Table lifestyle_disease_codes {
@@ -607,7 +653,7 @@ Table lifestyle_disease_codes {
     kcd_prefix
   }
 
-  Note: 'v1.5 초안. 팩트표 diseases[].kcd. 질환 하나에 코드 여러 개 (고혈압 I10, I11, I12, I13, I15 등, 모두 31개)'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] v1.5 초안. 팩트표 diseases[].kcd. 질환 하나에 코드 여러 개 (고혈압 I10, I11, I12, I13, I15 등, 모두 31개)'
 }
 
 Table lifestyle_disease_aliases {
@@ -615,7 +661,7 @@ Table lifestyle_disease_aliases {
   disease_id varchar(10) [ref: > lifestyle_diseases.id, not null]
   alias      varchar(50) [not null, note: '고지혈증, 당뇨 등 사용자가 쓰는 다른 이름. 질문 속 말과 질환을 잇는 데 씀']
 
-  Note: 'v1.5 초안. 팩트표 diseases[].aliases'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] v1.5 초안. 팩트표 diseases[].aliases'
 }
 
 Table lifestyle_disease_targets {
@@ -626,7 +672,7 @@ Table lifestyle_disease_targets {
   unit       varchar(30)  [note: 'mmHg, %, mg/dL 등. 없으면 -']
   sort_order smallint
 
-  Note: 'v1.5 초안. 팩트표 diseases[].targets. 근거는 lifestyle_source_links.target_id로 이음'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] v1.5 초안. 팩트표 diseases[].targets. 근거는 lifestyle_source_links.target_id로 이음'
 }
 
 Table lifestyle_guides {
@@ -643,7 +689,7 @@ Table lifestyle_guides {
   condition          jsonb        [note: 'v1.4 신규. 교차 규칙(cross_rule)을 띄우는 질환 코드 조합. 예: {"all":["HTN","CKD"]}. 다른 group_type은 비어 있음']
   user_message       varchar(300) [note: 'v1.4 신규. 교차 규칙을 화면에 보여 줄 사람이 쓴 문장 (AI가 새로 쓰지 않음)']
 
-  Note: '자체 구축 팩트 테이블. 원문 인용이 아닌 사실, 수치 기반 (저작권 제약 회피). v1.2에서 actions, source 칸 삭제 → lifestyle_guide_actions, lifestyle_guide_sources. v1.4에서 group_type 등 7개 칸 추가 (팩트표 v0.12 반영)'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] 자체 구축 팩트 테이블. 원문 인용이 아닌 사실, 수치 기반 (저작권 제약 회피). v1.2에서 actions, source 칸 삭제 → lifestyle_guide_actions, lifestyle_guide_sources. v1.4에서 group_type 등 7개 칸 추가 (팩트표 v0.12 반영)'
 }
 
 Table lifestyle_guide_actions {
@@ -658,7 +704,7 @@ Table lifestyle_guide_actions {
   use_in_answer      boolean      [not null, default: true, note: 'v1.4 신규. false면 근거 기록으로만 두고 화면과 챗봇 답변에는 쓰지 않음 (아세트아미노펜을 권하는 문장 2개)']
   sort_order         smallint
 
-  Note: 'v1.2 신규. 행동별 출처 추적 (리뷰 지적 5). v1.4에서 kind, scope, medication_link_id 추가하고 source_id는 비워도 되게 바꿈 (팩트표 v0.12 반영)'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] v1.2 신규. 행동별 출처 추적 (리뷰 지적 5). v1.4에서 kind, scope, medication_link_id 추가하고 source_id는 비워도 되게 바꿈 (팩트표 v0.12 반영)'
 }
 
 Table lifestyle_guide_sources {
@@ -671,7 +717,7 @@ Table lifestyle_guide_sources {
   identifier     varchar(100) [note: 'DOI · ISBN · 문서번호 등']
   accessed_date  date         [note: '마지막 확인일 — 갱신 점검용']
 
-  Note: 'v1.2 신규 · 화면 · API에 기관 · 문서명 · 발행일 · URL을 그대로 보여줌'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] v1.2 신규 · 화면 · API에 기관 · 문서명 · 발행일 · URL을 그대로 보여줌'
 }
 
 Table lifestyle_medication_links {
@@ -685,7 +731,7 @@ Table lifestyle_medication_links {
   requires_clinician boolean [not null, default: false, note: 'v1.2. true면 의료진 확인 안내로만 표시 (예: 이뇨제, ACE억제제/ARB와 칼륨)']
   goal_eligible boolean [not null, default: true, note: 'v1.2. false면 실천 목표로 만들지 않음']
 
-  Note: '차별점. 복용 약물과 생활수칙을 연결. 약 정보만으로도, 질환 정보만으로도 안 나오는 안내. v1.4에서 disease_id 추가, advice는 과도기 동안 비워도 됨'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] 차별점. 복용 약물과 생활수칙을 연결. 약 정보만으로도, 질환 정보만으로도 안 나오는 안내. v1.4에서 disease_id 추가, advice는 과도기 동안 비워도 됨'
 }
 
 Table lifestyle_medication_link_ingredients {
@@ -701,7 +747,7 @@ Table lifestyle_medication_link_ingredients {
     dur_ingr_code
   }
 
-  Note: 'v1.5 초안. RAG 담당 요청 1번. 약 연결 줄 35개에 성분 코드 목록을 붙임. 초안 224건은 약연결_성분코드_초안_1012.xlsx 참고 (A 36건, B 188건). 10/12 결정: 제외 16건과 보류 6건은 쓰지 않고 나머지 202건은 approved로 적재, 추가 제안 중 5건은 approved, 칼슘 복합성분 7건은 draft로 둠. 약사 검토는 아직 받지 못했음. 줄 제목이 약이 아닌 2줄(조영제 사용 검사, 한약과 건강보조식품)은 성분 코드가 없음'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] v1.5 초안. RAG 담당 요청 1번. 약 연결 줄 35개에 성분 코드 목록을 붙임. 초안 224건은 약연결_성분코드_초안_1012.xlsx 참고 (A 36건, B 188건). 10/12 결정: 제외 16건과 보류 6건은 쓰지 않고 나머지 202건은 approved로 적재, 추가 제안 중 5건은 approved, 칼슘 복합성분 7건은 draft로 둠. 약사 검토는 아직 받지 못했음. 줄 제목이 약이 아닌 2줄(조영제 사용 검사, 한약과 건강보조식품)은 성분 코드가 없음'
 }
 
 Table lifestyle_source_links {
@@ -714,7 +760,7 @@ Table lifestyle_source_links {
   locator            varchar(200) [note: '권고 번호, 쪽수 등 (예: 권고 21, PDF 74쪽)']
   sort_order         smallint
 
-  Note: 'v1.4 신규. guide_id, medication_link_id, action_id 중 하나만 채움 (v1.5 초안부터 target_id 포함 넷 중 하나). 출처 글 157개 → 출처 행 70개 옮김표는 만들어 뒀고, DB 적재는 아직'
+  Note: '[11/4 기준 PostgreSQL에는 없음, 생활습관 팩트표 파일에서 읽음] v1.4 신규. guide_id, medication_link_id, action_id 중 하나만 채움 (v1.5 초안부터 target_id 포함 넷 중 하나). 출처 글 157개 → 출처 행 70개 옮김표는 만들어 뒀고, DB 적재는 아직'
 }
 
 
