@@ -290,6 +290,13 @@ _WHEN = re.compile(
     r"(아침|점심|저녁|언제|몇\s*시|자기\s*전|밤|식전|식후|밥\s*(?:먹고|먹기\s*전))\S*\s*\S*(먹|드시|드셔|복용)"
 )
 _PRESCRIBED_TIME = re.compile(r"(아침|점심|저녁|자기\s*전|취침|식전|식후|식사\s*중|공복)")
+# 처방 먹는 때 모두 나열은 내 약 먹는 때를 묻는 모양일 때만 ("약은 언제", "약을 몇 시에"). "저녁 먹고", "자몽은 언제 먹어도"처럼
+# 먹는 때 말만 걸린 질문까지 처방 목록으로 답하면 근거 검색을 건너뛰어 음식, 술 경고가 빠짐 (#234 채연 리뷰)
+_MY_TIMING = re.compile(r"약(?:은|을|들은|들을)?\s*(?:언제|몇\s*시)")
+# 음식, 술, 음료를 같이 물으면 처방 먹는 때로 답하지 않고 근거를 찾음. _NOT_CHECKED에서 식사는 뺌("식사 후에 먹어요?"는 먹는 때 질문)
+_NOT_TIMING = re.compile(
+    r"(?<![수기])술|음주|맥주|소주|와인|막걸리|양주|음식|주스|자몽|커피|우유|녹차|영양제|한약|건강식품"
+)
 
 
 HOW_MAX = (
@@ -313,11 +320,11 @@ def _prescribed_timing(question: str, cls: dict[str, Any], info: FixedInfo) -> t
     허가정보에는 아침, 저녁 같은 때가 없어 근거 없음이 됨 (11/2 골든셋 N1). 대상 약을 하나로 특정하지 못하면 None,
     대상 약이 없고 질문 글로도 약을 정하지 못하면 처방의 먹는 때를 모두 보여 줌 (11/4)"""
     target = cls.get("target_drug") or ""
-    if not _WHEN.search(question):
+    if not _WHEN.search(question) or _NOT_TIMING.search(question):
         return None
     d = (find_drug(target, info.drugs) if target else None) or find_drug(question, info.drugs)
     if d is None and not target:
-        return _all_prescribed_timing(info)
+        return _all_prescribed_timing(info) if _MY_TIMING.search(question) else None
     if d is None or not _timed(d, info):  # 약 하나로 특정될 때만 (#203 채연 리뷰)
         return None
     text = (
@@ -335,7 +342,8 @@ def _all_prescribed_timing(info: FixedInfo) -> tuple[str, list[str]] | None:
         return None
     lines = "\n".join(f"{d.name}: {d.how}" for d in timed)
     rest = [d.name for d in info.drugs if d not in timed]
-    tail = f"\n{', '.join(rest)}은 처방에 먹는 때가 적혀 있지 않아요. 약사에게 확인해 주세요." if rest else ""
+    # 약 이름 뒤에 조사를 붙이면 받침에 따라 어색해서 이름을 문장 끝에 둠 (#234 채연 리뷰)
+    tail = f"\n처방에 먹는 때가 적혀 있지 않은 약: {', '.join(rest)}. 약사에게 확인해 주세요." if rest else ""
     text = (
         f"처방에 적힌 먹는 법이에요.\n{lines}{tail}\n"
         "처방대로 드시고, 먹는 시간을 바꾸고 싶으시면 약사나 의사와 먼저 상의해 주세요."

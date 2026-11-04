@@ -1286,7 +1286,7 @@ async def test_when_to_take_without_a_drug_lists_every_prescribed_timing():
     assert r.answer_type == "normal" and r.content.startswith("처방에 적힌 먹는 법이에요.")
     for d in timed:
         assert f"{d.name}: {d.how}" in r.content
-    assert f"{untimed.name}은 처방에 먹는 때가 적혀 있지 않아요" in r.content
+    assert f"처방에 먹는 때가 적혀 있지 않은 약: {untimed.name}." in r.content
     assert r.sources == [f"P:{d.code}" for d in timed] and "answer" not in chat.calls and search.calls == []
 
 
@@ -1448,3 +1448,33 @@ async def test_when_to_take_finds_the_drug_in_the_question_before_listing_all():
     r = await answer("혈압약은 언제 먹어요?", S0, [], chat, search=search)
     assert r.content.startswith(f"처방에 적힌 {S0.drugs[0].name}의 먹는 법은")
     assert r.sources == [f"P:{S0.drugs[0].code}"]
+
+
+@pytest.mark.parametrize(
+    ("question", "target"),
+    [
+        ("자몽은 언제 먹어도 돼요?", None),
+        ("저녁 먹고 술 마셔도 돼요?", None),
+        ("노바스크 먹고 자몽은 언제 먹어도 돼요?", "노바스크정5밀리그람"),
+    ],
+)
+@sync
+async def test_when_words_with_food_or_drink_go_to_evidence(question, target):
+    """먹는 때 말("언제 먹", "저녁 먹")이 있어도 음식, 술을 물으면 처방 먹는 때로 답하지 않고 근거 검색으로 감.
+    처방 목록이 나가면 자몽, 술 경고가 빠짐 (#234 채연 리뷰)"""
+    chat, search = FakeChat(classify=classified(target_drug=target)), FakeSearch()
+    r = await answer(question, S0, [], chat, search=search)
+    assert not (r.content or "").startswith("처방에 적힌")
+    assert search.calls
+
+
+@sync
+async def test_listing_every_timing_needs_a_question_about_my_medicine():
+    """처방 먹는 때 모두 나열은 "약은 언제", "약을 몇 시에"처럼 내 약 먹는 때를 묻는 모양일 때만 (#234 채연 리뷰)"""
+    for q in ("약은 언제 먹는 게 좋나요?", "약을 몇 시에 먹어요?", "약 언제 먹어요?"):
+        chat, search = FakeChat(classify=classified()), FakeSearch()
+        r = await answer(q, S0, [], chat, search=search)
+        assert r.content.startswith("처방에 적힌 먹는 법이에요."), q
+    chat, search = FakeChat(classify=classified()), FakeSearch()
+    r = await answer("아침 먹고 바로 먹어도 돼요?", S0, [], chat, search=search)
+    assert not (r.content or "").startswith("처방에 적힌") and search.calls
