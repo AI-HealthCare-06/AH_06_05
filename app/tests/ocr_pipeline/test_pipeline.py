@@ -751,3 +751,101 @@ def test_real_clova_237_disease_codes_have_no_neighbour_cells():
     ]
     # CLOVA가 "I10,", "E11"을 0.76으로 읽어서(I와 1이 헷갈림) 자동 확정하지 않고 사용자가 고른다 (RG-05-E1). 옆 칸 글자 때문이 아니다
     assert not any(d.confirmed for d in res.diseases) and {d.conf for d in res.diseases} == {0.76}
+
+
+def _with_above_table(above: list[dict], with_yongbeop_column: bool = False) -> dict:
+    """머리글 바로 위(읽는 순서상 머리글 앞)에 줄을 끼워 넣는다 (CLOVA는 위에서 아래로 읽는다)"""
+    d = _237_layout(with_yongbeop_column)
+    f = d["images"][0]["fields"]
+    i = next(k for k, x in enumerate(f) if x["inferText"] == "명칭" and x["boundingPoly"]["vertices"][0]["y"] == 100)
+    d["images"][0]["fields"] = f[:i] + above + f[i:]
+    return d
+
+
+def test_yongbeop_line_above_the_table_is_read_when_the_form_has_no_yongbeop_column():
+    above = [
+        _fld("용법:", 100, 60, 50),
+        _fld("식후", 160, 60, 40),
+        _fld("30분", 205, 60, 40),
+        _fld("복용", 250, 60, 40),
+    ]
+    res = read(_with_above_table(above), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후 30분 복용", "식후 30분 복용"]
+    assert res.row_count_mismatch is False
+
+
+def test_yongbeop_label_split_from_its_colon_above_the_table_is_read():
+    above = [_fld("용법", 100, 60, 40), _fld(":", 145, 60, 10), _fld("식후", 160, 60, 40), _fld("복용", 205, 60, 40)]
+    res = read(_with_above_table(above), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후 복용", "식후 복용"]
+
+
+def test_yongbeop_above_the_table_reads_only_its_own_line_and_needs_a_colon():
+    other_line = [
+        _fld("용법:", 100, 60, 50),
+        _fld("식후", 160, 60, 40),
+        _fld("복용", 205, 60, 40),
+        _fld("아무개", 100, 90, 60),
+    ]
+    res = read(_with_above_table(other_line), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후 복용", "식후 복용"]  # 아래 줄(아무개)은 이어 읽지 않는다
+    no_colon = [_fld("용법", 100, 60, 40), _fld("참고", 145, 60, 40)]
+    res = read(_with_above_table(no_colon), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == [None, None]  # 콜론이 없는 "용법"은 용법 줄로 보지 않는다
+
+
+def test_yongbeop_above_the_table_stops_at_the_next_cell_name_on_the_same_line():
+    # 같은 줄 오른쪽 칸("교부일:", "전화:")의 글자까지 용법으로 읽지 않는다 (#242 리뷰)
+    with_colon_word = [
+        _fld("용법:", 100, 60, 50),
+        _fld("식후", 160, 60, 40),
+        _fld("30분", 205, 60, 40),
+        _fld("교부일:", 300, 60, 60),
+        _fld("2026년", 365, 60, 50),
+    ]
+    res = read(_with_above_table(with_colon_word), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후 30분", "식후 30분"]
+    phone = [
+        _fld("용법:", 100, 60, 50),
+        _fld("식후", 160, 60, 40),
+        _fld("전화:", 300, 60, 40),
+        _fld("02-123-4567", 345, 60, 80),
+    ]
+    res = read(_with_above_table(phone), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후", "식후"]
+
+
+def test_yongbeop_above_the_table_stops_at_a_cell_name_read_apart_from_its_colon():
+    split_name = [
+        _fld("용법:", 100, 60, 50),
+        _fld("식후", 160, 60, 40),
+        _fld("교부일", 300, 60, 50),
+        _fld(":", 355, 60, 10),
+        _fld("2026년", 370, 60, 50),
+    ]
+    res = read(_with_above_table(split_name), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후", "식후"]
+    both_split = [
+        _fld("용법", 100, 60, 40),
+        _fld(":", 145, 60, 10),
+        _fld("식후", 160, 60, 40),
+        _fld("교부일", 300, 60, 50),
+        _fld(":", 355, 60, 10),
+    ]
+    res = read(_with_above_table(both_split), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후", "식후"]
+
+
+def test_yongbeop_above_the_table_is_ignored_when_the_form_has_a_yongbeop_column():
+    above = [_fld("용법:", 100, 60, 50), _fld("식전", 160, 60, 40)]
+    res = read(_with_above_table(above, with_yongbeop_column=True), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["저녁 식후", "아침 저녁 식후 30분"]  # 칸에서 읽은 값만
+
+
+def test_yongbeop_below_the_table_still_wins_over_one_above():
+    above = [_fld("용법:", 100, 60, 50), _fld("식전", 160, 60, 40)]
+    tail = [_fld("조제시", 100, 700), _fld("용법:", 100, 800, 50), _fld("식후", 160, 800, 40)]
+    d = _with_above_table(above)
+    d["images"][0]["fields"] += tail
+    res = read(d, matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후", "식후"]

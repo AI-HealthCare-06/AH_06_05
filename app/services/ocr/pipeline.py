@@ -148,7 +148,7 @@ def read(  # noqa: C901
         birth=birth,
         meta_flags=mflags,
         hospital_name=None if pouch else _hospital(text),
-        timing=None if pouch else _timing(table.tail_text),
+        timing=None if pouch else (_timing(table.tail_text) or table.above_timing),
         confidence=round(sum(confs) / len(confs), 4) if confs else None,
         # 숫자 칸 중 가장 많이 읽힌 칸의 숫자 수와 약 줄 수가 다르면 줄 나누기가 틀렸을 수 있다
         row_count_mismatch=table.n_anchor >= 2 and len(table.rows) != table.n_anchor,
