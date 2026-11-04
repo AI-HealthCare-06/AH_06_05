@@ -65,6 +65,7 @@ class Table:
         False  # 머리글에 "용법" 칸이 있음 (#237). 이 경우 약마다 그 칸에서만 읽고, 못 읽은 줄은 비워 둔다
     )
     tail_text: str = ""  # 표 끝("용법:" 문구, 사용기간 등) 뒤의 글. 표 아래 "용법:" 한 줄은 여기서만 찾는다 (#237)
+    above_timing: str | None = None  # 용법 칸이 없는 양식에서 표 위에 "용법: …" 한 줄이 있을 때 그 줄의 글
 
 
 def _merge_split_heads(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -193,6 +194,34 @@ def _read_timing_column(
         text = " ".join(f["inferText"] for f in group).strip()
         rows[i].timing = text[:50] or None
     return True
+
+
+def _timing_above(fields: list[dict[str, Any]], head_top: float, level_y: Any) -> str | None:
+    """용법 칸이 없는 양식에서 "용법: …" 한 줄이 표 머리글 위에 있으면 그 줄의 글만 읽는다 (표 아래 줄은 Table.tail_text에서 읽음).
+    콜론이 있는 "용법:"만 보고, 같은 줄(글자 높이 안)에서 그 오른쪽 글자만 모은다. 다른 줄까지 이어 읽지 않는다"""
+    for i, f in enumerate(fields):
+        t = f["inferText"]
+        m = re.fullmatch(r"용법\s*[:：]\s*(.*)", t)
+        split = (
+            t == "용법" and i + 1 < len(fields) and fields[i + 1]["inferText"] in (":", "：")
+        )  # "용법" ":"으로 나뉜 경우
+        if not (m or split) or level_y(f) >= head_top:
+            continue
+        hh = _box_height(f)
+        same = sorted(
+            (g for g in fields if g is not f and abs(level_y(g) - level_y(f)) <= hh and center(g)[0] > center(f)[0]),
+            key=lambda g: center(g)[0],
+        )
+        words = [m[1]] if m and m[1] else []
+        for g in same:
+            if re.match(r"사용기간|※", g["inferText"]):
+                break
+            if g["inferText"] not in (":", "："):
+                words.append(g["inferText"])
+        text = " ".join(words).strip()
+        if text:
+            return text[:50]
+    return None
 
 
 def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 폴더에서 검증한 코드를 그대로 옮긴 것이라 나누지 않음
@@ -394,4 +423,5 @@ def parse_table(data: dict[str, Any]) -> Table | None:  # noqa: C901 — 시험 
         disease_raw=join_code_boxes(raw) if raw else None,
         has_timing_col=has_timing_col,
         tail_text=" ".join(tokens[end:]),
+        above_timing=None if has_timing_col else _timing_above(fields, head_y - hh, level_y),
     )
