@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { copy } from '@/shared/copy';
 import { C, L, R, S, T } from '@/shared/theme';
-import { BackIcon } from '@/shared/ui/icons';
+import { BackIcon, CloseIcon } from '@/shared/ui/icons';
 
 type BtnKind = 'primary' | 'secondary' | 'ghost' | 'danger';
 
@@ -146,6 +146,8 @@ export function Screen({
   onBack,
   right,
   scrollRef,
+  backIcon = 'back',
+  backLabel,
 }: {
   title: string;
   children: ReactNode;
@@ -156,6 +158,8 @@ export function Screen({
   onBack?: () => void;
   right?: ReactNode; // 제목 줄 오른쪽 버튼
   scrollRef?: Ref<ScrollView>; // 화면 안에서 원하는 위치로 스크롤해야 할 때
+  backIcon?: 'back' | 'close'; // 화면 위에 뜬 창(챗봇)은 뒤로 화살표 대신 × 닫기
+  backLabel?: string; // 스크린 리더 이름 (기본 "뒤로")
 }) {
   const router = useRouter();
   const ins = useSafeAreaInsets();
@@ -169,12 +173,12 @@ export function Screen({
           {canBack ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={copy.common.back}
+              accessibilityLabel={backLabel ?? copy.common.back}
               hitSlop={12}
               onPress={onBack ?? (() => router.back())}
-              style={st.barBack}
+              style={backIcon === 'close' ? st.barClose : st.barBack}
             >
-              <BackIcon />
+              {backIcon === 'close' ? <CloseIcon /> : <BackIcon />}
             </Pressable>
           ) : null}
           <Text style={st.barTitle} numberOfLines={1} accessibilityRole="header">
@@ -400,6 +404,7 @@ const st = StyleSheet.create({
   bar: { backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.border },
   barRow: { height: L.header, flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.side },
   barBack: { width: 28, height: L.touch, justifyContent: 'center', alignItems: 'flex-start', marginLeft: -9 },
+  barClose: { width: 32, height: L.touch, justifyContent: 'center', alignItems: 'flex-start', marginLeft: -4 }, // × 는 그림이 6칸에서 시작해 화살표보다 덜 당김
   barTitle: { flex: 1, fontSize: 17, fontWeight: '800', color: C.text },
   footer: {
     position: 'absolute',
