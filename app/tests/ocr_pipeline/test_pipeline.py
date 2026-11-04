@@ -794,6 +794,48 @@ def test_yongbeop_above_the_table_reads_only_its_own_line_and_needs_a_colon():
     assert [r.timing for r in res.rows] == [None, None]  # 콜론이 없는 "용법"은 용법 줄로 보지 않는다
 
 
+def test_yongbeop_above_the_table_stops_at_the_next_cell_name_on_the_same_line():
+    # 같은 줄 오른쪽 칸("교부일:", "전화:")의 글자까지 용법으로 읽지 않는다 (#242 리뷰)
+    with_colon_word = [
+        _fld("용법:", 100, 60, 50),
+        _fld("식후", 160, 60, 40),
+        _fld("30분", 205, 60, 40),
+        _fld("교부일:", 300, 60, 60),
+        _fld("2026년", 365, 60, 50),
+    ]
+    res = read(_with_above_table(with_colon_word), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후 30분", "식후 30분"]
+    phone = [
+        _fld("용법:", 100, 60, 50),
+        _fld("식후", 160, 60, 40),
+        _fld("전화:", 300, 60, 40),
+        _fld("02-123-4567", 345, 60, 80),
+    ]
+    res = read(_with_above_table(phone), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후", "식후"]
+
+
+def test_yongbeop_above_the_table_stops_at_a_cell_name_read_apart_from_its_colon():
+    split_name = [
+        _fld("용법:", 100, 60, 50),
+        _fld("식후", 160, 60, 40),
+        _fld("교부일", 300, 60, 50),
+        _fld(":", 355, 60, 10),
+        _fld("2026년", 370, 60, 50),
+    ]
+    res = read(_with_above_table(split_name), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후", "식후"]
+    both_split = [
+        _fld("용법", 100, 60, 40),
+        _fld(":", 145, 60, 10),
+        _fld("식후", 160, 60, 40),
+        _fld("교부일", 300, 60, 50),
+        _fld(":", 355, 60, 10),
+    ]
+    res = read(_with_above_table(both_split), matcher(), CODES, today=TODAY)
+    assert [r.timing for r in res.rows] == ["식후", "식후"]
+
+
 def test_yongbeop_above_the_table_is_ignored_when_the_form_has_a_yongbeop_column():
     above = [_fld("용법:", 100, 60, 50), _fld("식전", 160, 60, 40)]
     res = read(_with_above_table(above, with_yongbeop_column=True), matcher(), CODES, today=TODAY)

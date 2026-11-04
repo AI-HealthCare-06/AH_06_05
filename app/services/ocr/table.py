@@ -213,11 +213,18 @@ def _timing_above(fields: list[dict[str, Any]], head_top: float, level_y: Any) -
             key=lambda g: center(g)[0],
         )
         words = [m[1]] if m and m[1] else []
-        for g in same:
-            if re.match(r"사용기간|※", g["inferText"]):
+        for k, g in enumerate(same):
+            w = g["inferText"]
+            if re.match(r"사용기간|※", w):
                 break
-            if g["inferText"] not in (":", "："):
-                words.append(g["inferText"])
+            if w in (":", "："):
+                if k == 0:
+                    continue  # "용법" 바로 뒤에 따로 읽힌 콜론
+                break
+            # 같은 줄의 다음 칸 이름("교부일:", "전화:", 또는 "교부일" ":"으로 나뉜 것)부터는 용법이 아니다
+            if w.endswith((":", "：")) or (k + 1 < len(same) and same[k + 1]["inferText"] in (":", "：")):
+                break
+            words.append(w)
         text = " ".join(words).strip()
         if text:
             return text[:50]
