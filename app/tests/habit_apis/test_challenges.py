@@ -47,7 +47,7 @@ def test_diabetes_walk_and_sulfonylurea_alcohol():
 
 def test_osteoporosis_walk_has_no_speed_and_uses_the_sourced_goal():
     # 골다공증은 "걷기 같은 체중이 실리는 운동"이라 "빠르게"를 뺌. 설명은 검수된 팩트표 목표 문장 (11/4 채연 결정)
-    goal = "주 150분 중등도 이상 유산소 운동과 주 2회 이상 근력 운동을 함께 하는 복합 운동"
+    goal = "주 150분 중등도 이상 유산소 운동과 주 2회 이상 근력 운동을 함께 하기"
     walk = by_key(challenges.recommend(["M81"], [], "monthly"), "walk")
     assert walk["title"] == "걷기 30분" and walk["goal_type"] == "quantity"
     assert walk["target_value"] == 30 and walk["unit"] == "분" and walk["caution_label"] is None
