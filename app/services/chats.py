@@ -56,6 +56,7 @@ WARNING_FIRST_TAIL = "처방한 의사나 약사에게 꼭 알려 주세요."  #
 TITLE_MAX = 30
 PREVIEW_MAX = 60
 DEFAULT_TITLE = "대화"
+CARD_TITLE = "분석 결과 대화"  # 질문도 첫 답도 없이 분석 결과에서 연 대화 (11/4 E2E, 제안)
 
 
 def _now() -> datetime:
@@ -131,11 +132,12 @@ async def sessions_on(user: User, day: str) -> dict[str, Any]:
         raise _bad_period("date") from e
     rows = await repo.sessions_between(user, _kst_midnight(d), _kst_midnight(d + timedelta(days=1)))
     first = await repo.first_questions([r.id for r in rows])
+    answers = await repo.first_answers([r.id for r in rows if r.id not in first])
     return {
         "items": [
             {
                 "sessionId": r.id,
-                "title": r.title or first.get(r.id, "")[:TITLE_MAX] or DEFAULT_TITLE,
+                "title": r.title or first.get(r.id, "")[:TITLE_MAX] or _card_title(answers.get(r.id)),
                 "preview": first.get(r.id, "")[:PREVIEW_MAX],
                 "createdAt": r.created_at.astimezone(config.TIMEZONE).isoformat(),
                 "updatedAt": r.updated_at.astimezone(config.TIMEZONE).isoformat(),
@@ -143,6 +145,14 @@ async def sessions_on(user: User, day: str) -> dict[str, Any]:
             for r in rows
         ]
     }
+
+
+def _card_title(answer: tuple[str, bool] | None) -> str:
+    """질문 없이 경고나 약 카드에서 연 대화: 첫 답의 첫 줄(약 이름과 경고 문장). 카드만 있으면 분석 결과 대화.
+    전에는 모두 "대화"로 보여 어떤 대화인지 알 수 없었음 (11/4 E2E)"""
+    text, card = answer or ("", False)
+    line = text.split("\n", 1)[0].strip()
+    return line[:TITLE_MAX] or (CARD_TITLE if card else DEFAULT_TITLE)
 
 
 def _bad_period(field: str) -> AppError:

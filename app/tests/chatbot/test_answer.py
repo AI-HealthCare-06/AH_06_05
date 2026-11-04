@@ -1265,8 +1265,29 @@ async def test_when_to_take_falls_back_to_evidence_without_prescribed_timing():
     await answer("노바스크는 언제 먹어요?", no_time, [], chat, search=search)
     assert search.calls  # 근거를 찾으러 감
     chat2, search2 = FakeChat(classify=classified()), FakeSearch()
-    await answer("약은 언제 먹는 게 좋나요?", S0, [], chat2, search=search2)
-    assert search2.calls  # 약 하나를 특정하지 못함
+    await answer(
+        "약은 언제 먹는 게 좋나요?",
+        replace(S0, drugs=[replace(d, how="1일 1회") for d in S0.drugs]),
+        [],
+        chat2,
+        search=search2,
+    )
+    assert search2.calls  # 대상 약이 없고 처방에도 먹는 때가 없으면 근거 검색
+
+
+@sync
+async def test_when_to_take_without_a_drug_lists_every_prescribed_timing():
+    """대상 약 없이 묻는 추천 칩 "약은 언제 먹는 게 좋나요?"는 처방에 먹는 때가 적힌 약을 모두 처방대로 보여 줌 (AI 없음).
+    전에는 허가정보만 찾다 근거 없음으로 끝남 (11/4 서버 E2E). 먹는 때가 없는 약은 약사 확인 안내"""
+    info = replace(S0, drugs=[*S0.drugs[:-1], replace(S0.drugs[-1], how="1일 1회")])
+    chat, search = FakeChat(classify=classified()), FakeSearch()
+    r = await answer("약은 언제 먹는 게 좋나요?", info, [], chat, search=search)
+    timed, untimed = info.drugs[:-1], info.drugs[-1]
+    assert r.answer_type == "normal" and r.content.startswith("처방에 적힌 먹는 법이에요.")
+    for d in timed:
+        assert f"{d.name}: {d.how}" in r.content
+    assert f"{untimed.name}은 처방에 먹는 때가 적혀 있지 않아요" in r.content
+    assert r.sources == [f"P:{d.code}" for d in timed] and "answer" not in chat.calls and search.calls == []
 
 
 @pytest.mark.parametrize(
@@ -1407,3 +1428,23 @@ def test_class_code_is_checked_by_first_three_digits_and_keeps_the_safe_side():
     )
     assert drop_other_class([DIURETIC_LINE, NSAID_LINE], apap) == [NSAID_LINE]
     assert drop_other_class([DIURETIC_LINE, NSAID_LINE], S0) == []
+
+
+@sync
+async def test_when_to_take_ignores_a_whole_row_read_as_timing():
+    """사진 읽기가 복용 칸을 줄 전체로 읽어 다른 약 이름과 먹는 때가 섞이면 처방대로 답하지 않음 (11/4 서버 E2E)"""
+    row = f"{S0.drugs[1].name} 1 1 30 저녁 식후"
+    info = replace(S0, drugs=[replace(d, how=row) for d in S0.drugs])
+    chat, search = FakeChat(classify=classified()), FakeSearch()
+    r = await answer("약은 언제 먹는 게 좋나요?", info, [], chat, search=search)
+    assert not (r.content or "").startswith("처방에 적힌")
+    assert search.calls  # 처방을 믿지 않고 근거 검색으로
+
+
+@sync
+async def test_when_to_take_finds_the_drug_in_the_question_before_listing_all():
+    """분류가 대상 약을 비워도 질문 글로 약 하나가 정해지면("혈압약") 그 약만 답함. 모두 나열은 약을 정하지 못할 때만"""
+    chat, search = FakeChat(classify=classified()), FakeSearch()
+    r = await answer("혈압약은 언제 먹어요?", S0, [], chat, search=search)
+    assert r.content.startswith(f"처방에 적힌 {S0.drugs[0].name}의 먹는 법은")
+    assert r.sources == [f"P:{S0.drugs[0].code}"]
